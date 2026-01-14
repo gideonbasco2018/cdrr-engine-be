@@ -99,7 +99,7 @@ class MainDB(Base):
     DB_SURC = Column(Text, nullable=True, comment="Surcharge Amount")
     DB_TOTAL = Column(Text, nullable=True, comment="Total Amount")
     DB_OR_NO = Column(Text, nullable=True, comment="Official Receipt Number")
-    DB_DATE_ISSUED = Column(Date, nullable=True, comment="Date Issued")
+    DB_DATE_ISSUED = Column(Text, nullable=True, comment="Date Issued")
     
     # Receiving Dates (3 columns)
     DB_DATE_RECEIVED_FDAC = Column(Text, nullable=True, comment="Date Received FDAC")
@@ -136,6 +136,7 @@ class MainDB(Base):
     
     # Status & Tracking (6 columns)
     DB_APP_STATUS = Column(String(50), nullable=True, index=True, comment="Application Status")
+    DB_APP_REMARKS = Column(Text, nullable=True, comment="Application Remarks")
     DB_TRASH = Column(String(50), nullable=True, comment="Trash Status")
     DB_TRASH_DATE_ENCODED = Column(DateTime, nullable=True, comment="Trash Date Encoded")
     DB_USER_UPLOADER = Column(String(255), nullable=True, comment="User Uploader")

@@ -1,8 +1,23 @@
+# Core FastAPI
 fastapi
 uvicorn[standard]
+python-multipart
+
+# Database
 sqlalchemy
 pymysql
+cryptography
+
+# Excel processing
+pandas
+openpyxl
+xlrd
+
+# Utilities
 python-dotenv
-python-multipart
-pydantic
-cryptography  # Required for pymysql
+pydantic[email]
+
+# Authentication & Security
+passlib[bcrypt]==1.7.4
+bcrypt==3.2.2
+python-jose[cryptography]
