@@ -64,11 +64,6 @@ def login(
 ):
     """
     Login with username and password
-    
-    Returns JWT access token valid for 30 minutes
-    
-    - **username**: Your username
-    - **password**: Your password
     """
     # Authenticate user
     user = crud_user.authenticate(
@@ -84,10 +79,13 @@ def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Create access token
+    # Create access token WITH ROLE
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.username},
+        data={
+            "sub": user.username,
+            "role": user.role.value  # ADD THIS - include role in token
+        },
         expires_delta=access_token_expires
     )
     

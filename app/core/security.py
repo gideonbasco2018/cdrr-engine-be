@@ -42,13 +42,12 @@ def get_password_hash(password: str) -> str:
     """
     return pwd_context.hash(password)
 
-
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """
     Create JWT access token
     
     Args:
-        data: Data to encode in token
+        data: Data to encode in token (should include "sub" and "role")
         expires_delta: Optional expiration time delta
         
     Returns:
@@ -67,19 +66,18 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return encoded_jwt
 
 
-def decode_access_token(token: str) -> Optional[str]:
+def decode_access_token(token: str) -> Optional[dict]:  # CHANGED: Return dict instead of str
     """
-    Decode JWT token and return username
+    Decode JWT token and return payload
     
     Args:
         token: JWT token string
         
     Returns:
-        Optional[str]: Username if valid, None otherwise
+        Optional[dict]: Payload with username and role if valid, None otherwise
     """
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        return username
+        return payload  # CHANGED: Return full payload
     except JWTError:
         return None
