@@ -5,64 +5,51 @@ Database operations for user authentication and management
 from sqlalchemy.orm import Session
 from typing import Optional
 
-from app.models.user import User
+from app.models.user import User, UserRole
+from app.models.group import Group
 from app.schemas.auth import UserCreate, UserUpdate
 from app.core.security import get_password_hash, verify_password
 
 
 def get_by_id(db: Session, user_id: int) -> Optional[User]:
-    """
-    Get user by ID
-    
-    Args:
-        db: Database session
-        user_id: User ID
-        
-    Returns:
-        Optional[User]: User if found, None otherwise
-    """
+    """Get user by ID"""
     return db.query(User).filter(User.id == user_id).first()
 
 
 def get_by_email(db: Session, email: str) -> Optional[User]:
-    """
-    Get user by email
-    
-    Args:
-        db: Database session
-        email: User email
-        
-    Returns:
-        Optional[User]: User if found, None otherwise
-    """
+    """Get user by email"""
     return db.query(User).filter(User.email == email).first()
 
 
 def get_by_username(db: Session, username: str) -> Optional[User]:
-    """
-    Get user by username
-    
-    Args:
-        db: Database session
-        username: Username
-        
-    Returns:
-        Optional[User]: User if found, None otherwise
-    """
+    """Get user by username"""
     return db.query(User).filter(User.username == username).first()
 
 
 def create(db: Session, user_in: UserCreate) -> User:
     """
-    Create new user
-    
-    Args:
-        db: Database session
-        user_in: User creation schema
-        
-    Returns:
-        User: Created user
+    Create new user with default group if not provided.
     """
+    # Handle group_id - assign default "Users" group if not provided
+    if user_in.group_id:
+        group_id = user_in.group_id
+    else:
+        # Get or create default "Users" group
+        default_group = db.query(Group).filter_by(name="Users").first()
+        if not default_group:
+            default_group = Group(name="Users")
+            db.add(default_group)
+            db.commit()
+            db.refresh(default_group)
+        group_id = default_group.id
+
+    # Handle role - convert from schema enum to model enum
+    role = UserRole.USER  # default
+    if user_in.role:
+        # Convert string to UserRole enum
+        role = UserRole[user_in.role.value.upper()]
+
+    # Create user
     db_user = User(
         email=user_in.email,
         username=user_in.username,
@@ -70,26 +57,18 @@ def create(db: Session, user_in: UserCreate) -> User:
         first_name=user_in.first_name,
         surname=user_in.surname,
         position=user_in.position,
+        role=role,
+        group_id=group_id
     )
-    
+
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
-    
     return db_user
 
+
 def update(db: Session, user_id: int, user_in: UserUpdate) -> Optional[User]:
-    """
-    Update user information
-    
-    Args:
-        db: Database session
-        user_id: User ID
-        user_in: User update schema
-        
-    Returns:
-        Optional[User]: Updated user if found, None otherwise
-    """
+    """Update user information"""
     db_user = get_by_id(db, user_id)
     if not db_user:
         return None
@@ -100,7 +79,7 @@ def update(db: Session, user_id: int, user_in: UserUpdate) -> Optional[User]:
     if 'password' in update_data:
         hashed_password = get_password_hash(update_data['password'])
         setattr(db_user, 'hashed_password', hashed_password)
-        del update_data['password']  # Remove plain password from update_data
+        del update_data['password']
     
     # Update other fields
     for field, value in update_data.items():
@@ -113,17 +92,7 @@ def update(db: Session, user_id: int, user_in: UserUpdate) -> Optional[User]:
 
 
 def authenticate(db: Session, username: str, password: str) -> Optional[User]:
-    """
-    Authenticate user with username and password
-    
-    Args:
-        db: Database session
-        username: Username
-        password: Plain text password
-        
-    Returns:
-        Optional[User]: User if authentication successful, None otherwise
-    """
+    """Authenticate user with username and password"""
     user = get_by_username(db, username)
     
     if not user:
@@ -139,13 +108,5 @@ def authenticate(db: Session, username: str, password: str) -> Optional[User]:
 
 
 def is_active(user: User) -> bool:
-    """
-    Check if user is active
-    
-    Args:
-        user: User object
-        
-    Returns:
-        bool: True if active, False otherwise
-    """
+    """Check if user is active"""
     return user.is_active

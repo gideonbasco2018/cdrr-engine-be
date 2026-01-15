@@ -39,7 +39,7 @@ class User(Base):
     role = Column(Enum(UserRole), default=UserRole.USER, nullable=False)
 
     # ✅ group (NEW)
-    group_id = Column(Integer, ForeignKey("groups.id"), nullable=False)
+    group_id = Column(Integer, ForeignKey("groups.id"), nullable=True)  
     group = relationship("Group")
 
     # status

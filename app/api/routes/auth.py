@@ -15,7 +15,7 @@ from app.core.security import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
 from app.models.user import User
 
 router = APIRouter(
-    prefix="/api/routes/auth",
+    prefix="/api/auth",
     tags=["Authentication"]
 )
 

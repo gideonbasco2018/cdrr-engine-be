@@ -3,18 +3,10 @@ API Routes
 Include all route modules here
 """
 from fastapi import APIRouter
-from app.api.routes import auth, main_db  # Import all routers
+from app.api.routes import auth, main_db, group
 
 api_router = APIRouter()
 
-# Include auth routes
-api_router.include_router(
-    auth.router,
-    tags=["Authentication"]
-)
-
-# Include main_db routes
-api_router.include_router(
-    main_db.router,
-    tags=["Main Database"]
-)
+api_router.include_router(auth.router)
+api_router.include_router(group.router)
+api_router.include_router(main_db.router)

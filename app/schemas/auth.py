@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Optional
 from enum import Enum
 
-# ADD THIS: UserRole Enum for schemas
+# UserRole Enum for schemas
 class UserRoleSchema(str, Enum):
     USER = "User"
     ADMIN = "Admin"
@@ -26,7 +26,8 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     """Schema for user registration"""
     password: str = Field(..., min_length=8, max_length=100, description="Password must be at least 8 characters")
-    role: Optional[UserRoleSchema] = UserRoleSchema.USER  # ADD THIS - default to User
+    role: Optional[UserRoleSchema] = UserRoleSchema.USER
+    group_id: Optional[int] = Field(None, description="Group ID - defaults to 'Users' group if not provided")
 
 
 class UserLogin(BaseModel):
@@ -42,15 +43,16 @@ class UserUpdate(BaseModel):
     surname: Optional[str] = Field(None, min_length=1, max_length=100)
     position: Optional[str] = Field(None, max_length=100)
     is_active: Optional[bool] = None
-    password: Optional[str] = None 
-    # Note: Don't include role here for security - only SuperAdmin should update roles
+    password: Optional[str] = None
+    group_id: Optional[int] = None  # Allow updating group
 
 
 class UserResponse(UserBase):
     """Schema for user response"""
     id: int
-    role: UserRoleSchema  # ADD THIS - include role in response
+    role: UserRoleSchema
     is_active: bool
+    group_id: int  # Include group_id in response
     created_at: datetime
     updated_at: datetime
 
@@ -67,11 +69,11 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     """Schema for token payload data"""
     username: Optional[str] = None
-    role: Optional[str] = None  # ADD THIS - include role in token data
+    role: Optional[str] = None
 
 
 class LoginResponse(BaseModel):
     """Schema for successful login response"""
     access_token: str
     token_type: str
-    user: UserResponse  # This will now include the role field
+    user: UserResponse  # This will now include role and group_id

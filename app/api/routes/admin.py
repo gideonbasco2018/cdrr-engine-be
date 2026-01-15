@@ -14,7 +14,7 @@ from app.schemas.auth import UserResponse
 from app.crud import user as crud_user
 
 router = APIRouter(
-    prefix="/api/routes/admin",
+    prefix="/api/admin",
     tags=["Admin"]
 )
 
