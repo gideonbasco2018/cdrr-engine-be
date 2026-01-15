@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime, BigInteger
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.base_class import Base
@@ -21,9 +21,8 @@ class ApplicationLogs(Base):
     accomplished_date = Column(DateTime, nullable=True)
 
     # Foreign Key - Link to MainDB via DTN
-    main_db_dtn = Column(Integer, ForeignKey('main_db.DB_DTN', ondelete='CASCADE', onupdate='CASCADE'),
-                         nullable=False, index=True)
-    
+    main_db_dtn = Column(BigInteger, ForeignKey('main_db.DB_DTN', ondelete='CASCADE', onupdate='CASCADE'), nullable=False)
+
     # Relationship to MainDB
     main_db = relationship("MainDB", backref="application_logs")
 

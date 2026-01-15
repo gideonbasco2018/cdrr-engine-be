@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import auth, main_db, admin
+from app.api.routes import auth, main_db, group
 
 app = FastAPI(
     title="CDRR ENGINE API",
@@ -11,15 +11,14 @@ app = FastAPI(
     openapi_url="/openapi.json"
 )
 
-# ✅ CORS - Allow both localhost AND Docker container access
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:3000",
-        "http://frontend:5173",  # Docker service name
-        "*"  # Or use wildcard for development
+        "http://frontend:5173",
+        "*"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -27,6 +26,6 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-app.include_router(auth.router) 
+app.include_router(auth.router)
 app.include_router(main_db.router)
-app.include_router(admin.router)
+app.include_router(group.router)
