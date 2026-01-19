@@ -1,8 +1,8 @@
-"""Initial Tables
+"""initial main_db + delegation + logs
 
-Revision ID: 6a25e9198540
+Revision ID: 963e02cc3f6b
 Revises: 
-Create Date: 2026-01-15 13:57:55.949436
+Create Date: 2026-01-16 10:05:41.132081
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import mysql
 
 # revision identifiers, used by Alembic.
-revision: str = '6a25e9198540'
+revision: str = '963e02cc3f6b'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -125,11 +125,43 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_main_db_DB_APP_STATUS'), 'main_db', ['DB_APP_STATUS'], unique=False)
     op.create_index(op.f('ix_main_db_DB_DATE_EXCEL_UPLOAD'), 'main_db', ['DB_DATE_EXCEL_UPLOAD'], unique=False)
-    op.create_index(op.f('ix_main_db_DB_DTN'), 'main_db', ['DB_DTN'], unique=False)
+    op.create_index(op.f('ix_main_db_DB_DTN'), 'main_db', ['DB_DTN'], unique=True)
     op.create_index(op.f('ix_main_db_DB_EST_CAT'), 'main_db', ['DB_EST_CAT'], unique=False)
     op.create_index(op.f('ix_main_db_DB_ID'), 'main_db', ['DB_ID'], unique=False)
+    op.create_table('application_delegation',
+    sa.Column('ID', sa.Integer(), autoincrement=True, nullable=False),
+    sa.Column('DB_MAIN_ID', sa.Integer(), nullable=False, comment='FK to MainDB'),
+    sa.Column('DB_DECKER', sa.Text(), nullable=True, comment='Decker Name'),
+    sa.Column('DB_DECKER_DECISION', sa.Text(), nullable=True, comment='Decker Decision'),
+    sa.Column('DB_DECKER_REMARKS', sa.Text(), nullable=True, comment='Decker Remarks'),
+    sa.Column('DB_DATE_DECKED_END', sa.Text(), nullable=True, comment='Date Decked End'),
+    sa.Column('DB_EVALUATOR', sa.Text(), nullable=True, comment='Evaluator Name'),
+    sa.Column('DB_EVAL_DECISION', sa.Text(), nullable=True, comment='Evaluator Decision'),
+    sa.Column('DB_EVAL_REMARKS', sa.Text(), nullable=True, comment='Evaluator Remarks'),
+    sa.Column('DB_DATE_EVAL_END', sa.Text(), nullable=True, comment='Date Evaluation End'),
+    sa.Column('DB_CHECKER', sa.Text(), nullable=True, comment='Checker Name'),
+    sa.Column('DB_CHECKER_DECISION', sa.Text(), nullable=True, comment='Checker Decision'),
+    sa.Column('DB_CHECKER_REMARKS', sa.Text(), nullable=True, comment='Checker Remarks'),
+    sa.Column('DB_DATE_CHECKER_END', sa.Text(), nullable=True, comment='Date Checker End'),
+    sa.Column('DB_SUPERVISOR', sa.Text(), nullable=True, comment='Supervisor Name'),
+    sa.Column('DB_SUPERVISOR_DECISION', sa.Text(), nullable=True, comment='Supervisor Decision'),
+    sa.Column('DB_SUPERVISOR_REMARKS', sa.Text(), nullable=True, comment='Supervisor Remarks'),
+    sa.Column('DB_DATE_SUPERVISOR_END', sa.Text(), nullable=True, comment='Date Supervisor End'),
+    sa.Column('DB_QA', sa.Text(), nullable=True, comment='QA Name'),
+    sa.Column('DB_QA_DECISION', sa.Text(), nullable=True, comment='QA Decision'),
+    sa.Column('DB_QA_REMARKS', sa.Text(), nullable=True, comment='QA Remarks'),
+    sa.Column('DB_DATE_QA_END', sa.Text(), nullable=True, comment='Date QA End'),
+    sa.Column('DB_DIRECTOR', sa.Text(), nullable=True, comment='Director Name'),
+    sa.Column('DB_DIRECTOR_DECISION', sa.Text(), nullable=True, comment='Director Decision'),
+    sa.Column('DB_DIRECTOR_REMARKS', sa.Text(), nullable=True, comment='Director Remarks'),
+    sa.Column('DB_DATE_DIRECTOR_END', sa.Text(), nullable=True, comment='Date Director End'),
+    sa.ForeignKeyConstraint(['DB_MAIN_ID'], ['main_db.DB_ID'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('ID')
+    )
+    op.create_index(op.f('ix_application_delegation_DB_MAIN_ID'), 'application_delegation', ['DB_MAIN_ID'], unique=True)
     op.create_table('application_logs',
     sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+    sa.Column('main_db_id', sa.Integer(), nullable=False),
     sa.Column('application_step', sa.String(length=255), nullable=True),
     sa.Column('user_name', sa.String(length=255), nullable=True),
     sa.Column('application_status', sa.String(length=255), nullable=True),
@@ -137,14 +169,14 @@ def upgrade() -> None:
     sa.Column('application_remarks', sa.Text(), nullable=True),
     sa.Column('start_date', sa.DateTime(), nullable=True),
     sa.Column('accomplished_date', sa.DateTime(), nullable=True),
-    sa.Column('main_db_dtn', sa.BigInteger(), nullable=False),
     sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
     sa.Column('updated_at', sa.DateTime(), server_default=sa.text('now()'), nullable=True),
-    sa.ForeignKeyConstraint(['main_db_dtn'], ['main_db.DB_DTN'], onupdate='CASCADE', ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['main_db_id'], ['main_db.DB_ID'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_application_logs_application_status'), 'application_logs', ['application_status'], unique=False)
     op.create_index(op.f('ix_application_logs_id'), 'application_logs', ['id'], unique=False)
+    op.create_index(op.f('ix_application_logs_main_db_id'), 'application_logs', ['main_db_id'], unique=False)
     op.create_table('users',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('email', sa.String(length=255), nullable=False),
@@ -154,7 +186,7 @@ def upgrade() -> None:
     sa.Column('surname', sa.String(length=100), nullable=False),
     sa.Column('position', sa.String(length=100), nullable=True),
     sa.Column('role', sa.Enum('USER', 'ADMIN', 'SUPERADMIN', name='userrole'), nullable=False),
-    sa.Column('group_id', sa.Integer(), nullable=False),
+    sa.Column('group_id', sa.Integer(), nullable=True),
     sa.Column('is_active', sa.Boolean(), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
@@ -174,9 +206,12 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_users_id'), table_name='users')
     op.drop_index(op.f('ix_users_email'), table_name='users')
     op.drop_table('users')
+    op.drop_index(op.f('ix_application_logs_main_db_id'), table_name='application_logs')
     op.drop_index(op.f('ix_application_logs_id'), table_name='application_logs')
     op.drop_index(op.f('ix_application_logs_application_status'), table_name='application_logs')
     op.drop_table('application_logs')
+    op.drop_index(op.f('ix_application_delegation_DB_MAIN_ID'), table_name='application_delegation')
+    op.drop_table('application_delegation')
     op.drop_index(op.f('ix_main_db_DB_ID'), table_name='main_db')
     op.drop_index(op.f('ix_main_db_DB_EST_CAT'), table_name='main_db')
     op.drop_index(op.f('ix_main_db_DB_DTN'), table_name='main_db')

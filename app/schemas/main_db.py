@@ -1,10 +1,91 @@
-from pydantic import BaseModel, ConfigDict
-from typing import Optional
+# app/schemas/main_db.py
+
+from pydantic import BaseModel, ConfigDict, field_serializer
+from typing import Optional, List
 from datetime import datetime
 
 
+# -----------------------------
+# ApplicationLogs schema
+# -----------------------------
+class ApplicationLogResponse(BaseModel):
+    id: int
+    main_db_id: int
+    application_step: Optional[str] = None
+    user_name: Optional[str] = None
+    application_status: Optional[str] = None
+    application_decision: Optional[str] = None
+    application_remarks: Optional[str] = None
+    start_date: Optional[datetime] = None
+    accomplished_date: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# -----------------------------
+# ApplicationDelegation schema
+# -----------------------------
+class ApplicationDelegationResponse(BaseModel):
+    DB_DECKER: Optional[str] = None
+    DB_DECKER_DECISION: Optional[str] = None
+    DB_DECKER_REMARKS: Optional[str] = None
+    DB_DATE_DECKED_END: Optional[datetime] = None
+    
+    DB_EVALUATOR: Optional[str] = None
+    DB_EVAL_DECISION: Optional[str] = None
+    DB_EVAL_REMARKS: Optional[str] = None
+    DB_DATE_EVAL_END: Optional[datetime] = None
+    
+    DB_CHECKER: Optional[str] = None
+    DB_CHECKER_DECISION: Optional[str] = None
+    DB_CHECKER_REMARKS: Optional[str] = None
+    DB_DATE_CHECKER_END: Optional[datetime] = None
+    
+    DB_SUPERVISOR: Optional[str] = None
+    DB_SUPERVISOR_DECISION: Optional[str] = None
+    DB_SUPERVISOR_REMARKS: Optional[str] = None
+    DB_DATE_SUPERVISOR_END: Optional[datetime] = None
+    
+    DB_QA: Optional[str] = None
+    DB_QA_DECISION: Optional[str] = None
+    DB_QA_REMARKS: Optional[str] = None
+    DB_DATE_QA_END: Optional[datetime] = None
+    
+    DB_DIRECTOR: Optional[str] = None
+    DB_DIRECTOR_DECISION: Optional[str] = None
+    DB_DIRECTOR_REMARKS: Optional[str] = None
+    DB_DATE_DIRECTOR_END: Optional[datetime] = None
+
+    # ✅ NEW: Releasing Officer fields
+    DB_RELEASING_OFFICER: Optional[str] = None
+    DB_RELEASING_OFFICER_DECISION: Optional[str] = None
+    DB_RELEASING_OFFICER_REMARKS: Optional[str] = None
+    DB_RELEASING_OFFICER_END: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+    
+    # ✅ Automatic serialization to ISO format string for JSON response
+    @field_serializer(
+        'DB_DATE_DECKED_END', 
+        'DB_DATE_EVAL_END',
+        'DB_DATE_CHECKER_END',
+        'DB_DATE_SUPERVISOR_END',
+        'DB_DATE_QA_END',
+        'DB_DATE_DIRECTOR_END',
+        'DB_RELEASING_OFFICER_END'  # ✅ NEW
+    )
+    def serialize_datetime(self, value: Optional[datetime]) -> Optional[str]:
+        return value.isoformat() if value else None
+
+
+# -----------------------------
+# MainDB base schema (create/update)
+# -----------------------------
 class MainDBBase(BaseModel):
-    """Base schema with all fields as Optional strings or appropriate types"""
+    """Base schema with all fields as optional"""
+
     DB_DTN: Optional[int] = None
     DB_EST_CAT: Optional[str] = None
     DB_EST_LTO_COMP: Optional[str] = None
@@ -73,7 +154,6 @@ class MainDBBase(BaseModel):
     DB_PROD_CAT: Optional[str] = None
     DB_CERTIFICATION: Optional[str] = None
 
-    # Financial fields as strings
     DB_FEE: Optional[str] = None
     DB_LRF: Optional[str] = None
     DB_SURC: Optional[str] = None
@@ -108,8 +188,9 @@ class MainDBBase(BaseModel):
     DB_CPR_COND_ADD_REMARKS: Optional[str] = None
 
     DB_APP_STATUS: Optional[str] = None
+    DB_APP_REMARKS: Optional[str] = None
     DB_TRASH: Optional[str] = None
-    DB_TRASH_DATE_ENCODED: Optional[datetime] = None
+    DB_TRASH_DATE_ENCODED: Optional[str] = None
     DB_USER_UPLOADER: Optional[str] = None
     DB_DATE_EXCEL_UPLOAD: Optional[str] = None
 
@@ -119,30 +200,40 @@ class MainDBBase(BaseModel):
 
 
 class MainDBCreate(MainDBBase):
-    """Schema for creating a new record"""
     pass
 
 
 class MainDBUpdate(MainDBBase):
-    """Schema for updating a record - all fields optional"""
     pass
 
 
+# -----------------------------
+# MainDB response schema (with delegation)
+# -----------------------------
 class MainDBResponse(MainDBBase):
     DB_ID: int
     DB_DATE_EXCEL_UPLOAD: Optional[datetime] = None
+    DB_TRASH_DATE_ENCODED: Optional[datetime] = None
+
+    application_delegation: Optional[ApplicationDelegationResponse] = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
+# -----------------------------
+# Paginated list response
+# -----------------------------
 class MainDBListResponse(BaseModel):
     total: int
     page: int
     page_size: int
     total_pages: int
-    data: list[MainDBResponse]
+    data: List[MainDBResponse]
 
 
+# -----------------------------
+# Optional summary schema
+# -----------------------------
 class MainDBSummary(BaseModel):
     total_records: int
     by_status: dict
