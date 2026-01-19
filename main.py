@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import auth, main_db, group, deck  
+from app.api.routes import auth, main_db, group, deck ,evaluation
 
 app = FastAPI(
     title="CDRR ENGINE API",
@@ -30,3 +30,4 @@ app.include_router(auth.router)
 app.include_router(main_db.router)
 app.include_router(group.router)
 app.include_router(deck.router)
+app.include_router(evaluation.router)
