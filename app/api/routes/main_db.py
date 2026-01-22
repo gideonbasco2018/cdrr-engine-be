@@ -7,14 +7,26 @@ import io
 from datetime import datetime
 import math
 import numpy as np
+from dateutil import parser
 
 from app.db.session import get_db
-from app.schemas.main_db import MainDBCreate, MainDBUpdate, MainDBResponse, MainDBListResponse, MainDBSummary
+from app.schemas.main_db import (
+    MainDBCreate, 
+    MainDBUpdate, 
+    MainDBResponse, 
+    MainDBListResponse, 
+    MainDBSummary, 
+    ApplicationLogResponse
+)
 from app.crud import main_db as crud
+from app.crud.main_db import get_main_db_records, get_application_logs
+from app.models.application_delegation import ApplicationDelegation
+from app.core.deps import get_current_active_user  
 
 router = APIRouter(
     prefix="/api/main-db",
-    tags=["Main Database"]
+    tags=["Main Database"],
+    dependencies=[Depends(get_current_active_user)] 
 )
 
 # ---------------------
@@ -110,125 +122,142 @@ COLUMN_MAPPING = {
     "Is in PM": "DB_IS_IN_PM"
 }
 
+# Application Delegation Column Mapping
+DELEGATION_COLUMN_MAPPING = {
+    "Decker": "DB_DECKER",
+    "Decker Decision": "DB_DECKER_DECISION",
+    "Decker Remarks": "DB_DECKER_REMARKS",
+    "Date Decked End": "DB_DATE_DECKED_END",
+    "Evaluator": "DB_EVALUATOR",
+    "Evaluator Decision": "DB_EVAL_DECISION",
+    "Evaluator Remarks": "DB_EVAL_REMARKS",
+    "Date Eval End": "DB_DATE_EVAL_END",
+    "Checker": "DB_CHECKER",
+    "Checker Decision": "DB_CHECKER_DECISION",
+    "Checker Remarks": "DB_CHECKER_REMARKS",
+    "Date Checker End": "DB_DATE_CHECKER_END",
+    "Supervisor": "DB_SUPERVISOR",
+    "Supervisor Decision": "DB_SUPERVISOR_DECISION",
+    "Supervisor Remarks": "DB_SUPERVISOR_REMARKS",
+    "Date Supervisor End": "DB_DATE_SUPERVISOR_END",
+    "QA": "DB_QA",
+    "QA Decision": "DB_QA_DECISION",
+    "QA Remarks": "DB_QA_REMARKS",
+    "Date QA End": "DB_DATE_QA_END",
+    "Director": "DB_DIRECTOR",
+    "Director Decision": "DB_DIRECTOR_DECISION",
+    "Director Remarks": "DB_DIRECTOR_REMARKS",
+    "Date Director End": "DB_DATE_DIRECTOR_END",
+    "Releasing Officer": "DB_RELEASING_OFFICER",
+    "Releasing Officer Decision": "DB_RELEASING_OFFICER_DECISION",
+    "Releasing Officer Remarks": "DB_RELEASING_OFFICER_REMARKS",
+    "Date Releasing Officer End": "DB_RELEASING_OFFICER_END"
+}
+
 # Date and numeric field definitions
 DATE_FIELDS = {
     'DB_EST_VALIDITY', 'DB_EXPIRY_DATE', 'DB_CPR_VALIDITY', 
     'DB_DATE_ISSUED', 'DB_DATE_DECK', 'DB_DATE_RECEIVED_FDAC',
     'DB_DATE_RECEIVED_CENT', 'DB_SECPA_EXP_DATE', 'DB_SECPA_ISSUED_ON',
-    'DB_DATE_REMARKS', 'DB_DATE_RELEASED', 'DB_DATE_EXCEL_UPLOAD'
+    'DB_DATE_REMARKS', 'DB_DATE_RELEASED'
 }
 
-NUMERIC_FIELDS = {'DB_FEE', 'DB_LRF', 'DB_SURC', 'DB_TOTAL'}
+DELEGATION_DATE_FIELDS = {
+    'DB_DATE_DECKED_END', 'DB_DATE_EVAL_END', 'DB_DATE_CHECKER_END',
+    'DB_DATE_SUPERVISOR_END', 'DB_DATE_QA_END', 'DB_DATE_DIRECTOR_END',
+    'DB_RELEASING_OFFICER_END'
+}
+
+NUMERIC_STRING_FIELDS = {'DB_FEE', 'DB_LRF', 'DB_SURC', 'DB_TOTAL'}
+
 
 # ---------------------
 # Helper Functions
 # ---------------------
-def convert_pandas_value(value, field_name):
-    """
-    Convert pandas types to Python native types based on field type
-    """
-    # Handle None and NaN first
-    if value is None or pd.isna(value):
+def parse_date_value(value):
+    """Parse various date formats and return datetime object or None"""
+    if pd.isna(value) or value is None or value == '':
         return None
     
-    # Handle date fields
-    if field_name in DATE_FIELDS:
-        if isinstance(value, (pd.Timestamp, datetime)):
-            return value.strftime("%Y-%m-%d")
-        elif isinstance(value, (int, float)):
-            try:
-                date_val = datetime(1899, 12, 30) + pd.to_timedelta(value, unit="D")
-                return date_val.strftime("%Y-%m-%d")
-            except:
-                return None
-        elif isinstance(value, str):
-            stripped = value.strip()
-            return stripped if stripped else None
-        else:
-            return None
+    # If already a datetime/Timestamp, return it
+    if isinstance(value, (datetime, pd.Timestamp)):
+        return value
     
-    # Handle numeric fields that should be strings
-    elif field_name in NUMERIC_FIELDS:
-        if isinstance(value, (int, float)):
-            try:
-                return str(int(float(value)))
-            except:
-                return None
-        elif isinstance(value, str):
-            stripped = value.strip()
-            if stripped:
-                try:
-                    return str(int(float(stripped)))
-                except:
-                    return stripped
-            return None
-        else:
-            return None
+    # If numeric (Excel serial date or invalid), return None
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        return None
     
-    # Handle DB_IS_IN_PM (should be int)
-    elif field_name == 'DB_IS_IN_PM':
+    # Try to parse string dates
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+        
         try:
-            return int(float(value))
+            # Use dateutil parser which handles many formats
+            parsed_date = parser.parse(value, fuzzy=True)
+            return parsed_date
         except:
-            return 0
-    
-    # Handle DB_DTN (should be int)
-    elif field_name == 'DB_DTN':
-        if isinstance(value, (int, float)):
-            try:
-                return int(float(value))
-            except:
-                return None
-        elif isinstance(value, str):
-            stripped = value.strip()
-            if stripped:
-                try:
-                    return int(float(stripped))
-                except:
-                    return None
-            return None
-        else:
             return None
     
-    # Handle regular string fields
-    else:
-        if isinstance(value, str):
-            stripped = value.strip()
-            return stripped if stripped else None
-        elif isinstance(value, (int, float)):
-            return str(value)
-        else:
-            return str(value) if value else None
+    return None
 
 
 # ---------------------
-# CRUD Endpoints
+# Routes
 # ---------------------
+
 @router.get("/", response_model=MainDBListResponse)
-def get_records(
-    page: int = Query(1, ge=1, description="Page number"),
-    page_size: int = Query(10, ge=1, le=100, description="Records per page"),
-    search: Optional[str] = Query(None, description="Search term"),
-    status: Optional[str] = Query(None, description="Filter by status"),
-    category: Optional[str] = Query(None, description="Filter by category"),
-    sort_by: str = Query("DB_DATE_EXCEL_UPLOAD", description="Sort by field"),
-    sort_order: str = Query("desc", pattern="^(asc|desc)$", description="Sort order"),
+def get_main_db(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=1000),
+    search: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    sort_by: str = Query("DB_DATE_EXCEL_UPLOAD"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     db: Session = Depends(get_db)
 ):
-    """Get paginated list of records with filtering and searching"""
+    """Get paginated list of main database records"""
     skip = (page - 1) * page_size
-    records, total = crud.get_main_db_records(
-        db=db, skip=skip, limit=page_size,
-        search=search, status=status,
-        category=category, sort_by=sort_by, sort_order=sort_order
+    records, total = get_main_db_records(
+        db=db,
+        skip=skip,
+        limit=page_size,
+        search=search,
+        status=status,
+        category=category,
+        sort_by=sort_by,
+        sort_order=sort_order
     )
     total_pages = math.ceil(total / page_size) if total > 0 else 0
-    return {"total": total, "page": page, "page_size": page_size, "total_pages": total_pages, "data": records}
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "data": records
+    }
+
+
+@router.get("/logs/{main_id}", response_model=List[ApplicationLogResponse])
+def get_logs(
+    main_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    db: Session = Depends(get_db)
+):
+    """Get application logs for a specific MainDB record"""
+    skip = (page - 1) * page_size
+    logs, _ = get_application_logs(db=db, main_id=main_id, skip=skip, limit=page_size)
+    return logs
+
 
 @router.get("/summary", response_model=MainDBSummary)
 def get_summary(db: Session = Depends(get_db)):
     """Get summary statistics"""
     return crud.get_main_db_summary(db)
+
 
 @router.get("/filters/{field}")
 def get_filter_options(field: str, db: Session = Depends(get_db)):
@@ -236,33 +265,33 @@ def get_filter_options(field: str, db: Session = Depends(get_db)):
     values = crud.get_unique_values(db, field)
     return {"field": field, "values": values}
 
-
 @router.post("/upload-excel")
-async def upload_excel(file: UploadFile = File(...), username: str = Query("system"), db: Session = Depends(get_db)):
-    """Upload an Excel file and insert records into the database"""
-    print("🚀🚀🚀 NEWEST CODE VERSION 2.0 🚀🚀🚀")
+async def upload_excel(
+    file: UploadFile = File(...), 
+    username: str = Query("system"), 
+    db: Session = Depends(get_db)
+):
+    """Upload an Excel file and insert records into MainDB and ApplicationDelegation"""
+    print("🚀 Starting Excel upload process...")
     
     if not file.filename.endswith((".xls", ".xlsx")):
-        raise HTTPException(status_code=400, detail="Invalid file type")
+        raise HTTPException(status_code=400, detail="Invalid file type. Must be .xls or .xlsx")
 
-    contents = await file.read()
-    df = pd.read_excel(io.BytesIO(contents))
+    try:
+        contents = await file.read()
+        df = pd.read_excel(io.BytesIO(contents))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read Excel file: {str(e)}")
 
     if df.empty:
         raise HTTPException(status_code=400, detail="Excel file is empty")
 
-    # ===== CONVERT ALL DATAFRAME COLUMNS IMMEDIATELY =====
-    print("🔄 Converting DataFrame columns...")
+    # Convert datetime columns to strings for MainDB fields
     for col in df.columns:
-        print(f"  Checking column: {col[:30]}...")
-        # Convert Timestamp columns to strings
         if pd.api.types.is_datetime64_any_dtype(df[col]):
-            print(f"    ✅ Found datetime column, converting...")
             df[col] = df[col].apply(lambda x: x.strftime("%Y-%m-%d") if pd.notna(x) else None)
-        # Check for Timestamps in object columns
         elif df[col].dtype == 'object':
             if df[col].apply(lambda x: isinstance(x, pd.Timestamp)).any():
-                print(f"    ✅ Found Timestamps in object column, converting...")
                 df[col] = df[col].apply(lambda x: x.strftime("%Y-%m-%d") if isinstance(x, pd.Timestamp) else x)
     
     print(f"📊 Total rows in Excel: {len(df)}")
@@ -271,47 +300,60 @@ async def upload_excel(file: UploadFile = File(...), username: str = Query("syst
     for index, row in df.iterrows():
         try:
             record_data = {}
-            
-            # Process each Excel column - values should already be converted
+            delegation_data = {}
+
+            # Map Excel to MainDB columns
             for excel_col, db_col in COLUMN_MAPPING.items():
                 raw_value = row.get(excel_col)
-                
-                print(f"Row {index+2}, {db_col}: type={type(raw_value).__name__}, value={repr(raw_value)[:30]}")
-                
-                # Handle NaN/None
                 if pd.isna(raw_value) or raw_value is None:
                     record_data[db_col] = None
-                    continue
-                
-                # Handle numeric values that should be strings
-                if isinstance(raw_value, (int, float, np.integer, np.floating)):
-                    if db_col in {'DB_FEE', 'DB_LRF', 'DB_SURC', 'DB_TOTAL'}:
+                elif isinstance(raw_value, (int, float, np.integer, np.floating)):
+                    if db_col in NUMERIC_STRING_FIELDS:
                         record_data[db_col] = str(int(raw_value))
-                    elif db_col in {'DB_DTN', 'DB_IS_IN_PM'}:
-                        record_data[db_col] = int(raw_value)
                     else:
-                        record_data[db_col] = str(raw_value)
-                    continue
+                        record_data[db_col] = int(raw_value) if db_col in {'DB_DTN', 'DB_IS_IN_PM'} else str(raw_value)
+                else:
+                    record_data[db_col] = str(raw_value).strip() if isinstance(raw_value, str) else str(raw_value)
+
+            # Map Excel to ApplicationDelegation columns with proper date handling
+            for excel_col, db_col in DELEGATION_COLUMN_MAPPING.items():
+                raw_value = row.get(excel_col)
                 
-                # Handle strings
-                if isinstance(raw_value, str):
-                    stripped = raw_value.strip()
-                    record_data[db_col] = stripped if stripped else None
-                    continue
-                
-                # This should NEVER be reached if conversion worked
-                print(f"⚠️⚠️⚠️ UNEXPECTED TYPE: {type(raw_value)} for {db_col}")
-                record_data[db_col] = str(raw_value)
+                # Handle date fields specially
+                if db_col in DELEGATION_DATE_FIELDS:
+                    parsed_date = parse_date_value(raw_value)
+                    delegation_data[db_col] = parsed_date
+                else:
+                    # Handle text fields
+                    if pd.isna(raw_value) or raw_value is None:
+                        delegation_data[db_col] = None
+                    elif isinstance(raw_value, str):
+                        delegation_data[db_col] = raw_value.strip()
+                    elif isinstance(raw_value, (int, float, np.integer, np.floating)):
+                        delegation_data[db_col] = None  # Skip numeric values for text fields
+                    else:
+                        delegation_data[db_col] = str(raw_value)
 
             # Add metadata
             record_data["DB_USER_UPLOADER"] = username
             record_data["DB_DATE_EXCEL_UPLOAD"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # Create record
-            print(f"📝 Creating record for row {index + 2}...")
-            crud.create_main_db_record(db, MainDBCreate(**record_data))
+            # Create MainDB record
+            db_record = crud.create_main_db_record(db, MainDBCreate(**record_data))
+
+            # Always create ApplicationDelegation record (1:1)
+            delegation_data["DB_MAIN_ID"] = db_record.DB_ID
+            
+            # Ensure all delegation fields exist with None defaults
+            for col in DELEGATION_COLUMN_MAPPING.values():
+                delegation_data.setdefault(col, None)
+
+            delegation_record = ApplicationDelegation(**delegation_data)
+            db.add(delegation_record)
+            db.commit()
+            print(f"  ✅ Created delegation record for MainDB ID {db_record.DB_ID}")
+
             success += 1
-            print(f"✅ Row {index + 2} inserted successfully")
 
         except Exception as e:
             print(f"❌ Error on row {index + 2}: {str(e)}")
@@ -329,19 +371,43 @@ async def upload_excel(file: UploadFile = File(...), username: str = Query("syst
         "success": True,
         "message": f"Upload complete: {success} records inserted successfully",
         "stats": {"total": len(df), "success": success, "errors": len(errors)},
-        "errors": errors[:10]
+        "errors": errors[:10]  # return first 10 errors
     }
 
 
 @router.get("/download-template")
 async def download_template():
-    """Download Excel template with proper column headers"""
+    """Download Excel template with proper column headers including delegation columns"""
     try:
-        template_data = {col: [""] for col in COLUMN_MAPPING.keys()}
+        # Combine both MainDB and Delegation columns
+        all_columns = {**COLUMN_MAPPING, **DELEGATION_COLUMN_MAPPING}
+        template_data = {col: [""] for col in all_columns.keys()}
         df = pd.DataFrame(template_data)
+        
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df.to_excel(writer, index=False, sheet_name="Template")
+            
+            # Optional: Add a second sheet with instructions
+            instructions = pd.DataFrame({
+                "Column Group": [
+                    "Main Database Columns",
+                    "Application Delegation Columns",
+                    "Date Format Instructions"
+                ],
+                "Description": [
+                    "Columns from DTN to 'Is in PM' are for main database records",
+                    "Columns from Decker to 'Date Releasing Officer End' are for application delegation tracking",
+                    "For date fields, use formats like: 2026-01-02, Jan 2 2026, 01/02/2026, etc."
+                ],
+                "Note": [
+                    "All main database columns are optional",
+                    "Delegation columns are optional. Fill only if you have delegation data.",
+                    "Date fields will be automatically parsed. Leave empty if no date."
+                ]
+            })
+            instructions.to_excel(writer, index=False, sheet_name="Instructions")
+        
         output.seek(0)
         return StreamingResponse(
             output, 
@@ -351,8 +417,12 @@ async def download_template():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate template: {str(e)}")
 
+
 @router.get("/upload-history")
-async def get_upload_history(limit: int = Query(50, ge=1, le=100), db: Session = Depends(get_db)):
+async def get_upload_history(
+    limit: int = Query(50, ge=1, le=100), 
+    db: Session = Depends(get_db)
+):
     """Get upload history grouped by user and date"""
     try:
         history = crud.get_upload_history(db=db, limit=limit)
@@ -360,31 +430,46 @@ async def get_upload_history(limit: int = Query(50, ge=1, le=100), db: Session =
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch upload history: {str(e)}")
 
+
 @router.get("/{record_id}", response_model=MainDBResponse)
 def get_record(record_id: int, db: Session = Depends(get_db)):
     """Get a single record by ID"""
     record = crud.get_main_db_record(db, record_id)
     if not record:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Record with ID {record_id} not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail=f"Record with ID {record_id} not found"
+        )
     return record
+
 
 @router.post("/", response_model=MainDBResponse, status_code=status.HTTP_201_CREATED)
 def create_record(record: MainDBCreate, db: Session = Depends(get_db)):
     """Create a new record"""
     return crud.create_main_db_record(db, record)
 
+
 @router.post("/bulk", response_model=List[MainDBResponse], status_code=status.HTTP_201_CREATED)
 def create_bulk_records(records: List[MainDBCreate], db: Session = Depends(get_db)):
-    """Bulk create records (for Excel import)"""
+    """Bulk create records"""
     return crud.bulk_create_main_db_records(db, records)
 
+
 @router.put("/{record_id}", response_model=MainDBResponse)
-def update_record(record_id: int, record_update: MainDBUpdate, db: Session = Depends(get_db)):
+def update_record(
+    record_id: int, 
+    record_update: MainDBUpdate, 
+    db: Session = Depends(get_db)
+):
     """Update an existing record"""
     updated_record = crud.update_main_db_record(db, record_id, record_update)
     if not updated_record:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Record with ID {record_id} not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail=f"Record with ID {record_id} not found"
+        )
     return updated_record
+
 
 @router.delete("/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_record(
@@ -392,21 +477,29 @@ def delete_record(
     hard_delete: bool = Query(False, description="Permanently delete (default: soft delete)"), 
     db: Session = Depends(get_db)
 ):
-    """Delete a record"""
+    """Delete a record (soft delete by default)"""
     if hard_delete:
         success = crud.hard_delete_main_db_record(db, record_id)
     else:
         success = crud.delete_main_db_record(db, record_id)
+    
     if not success:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Record with ID {record_id} not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail=f"Record with ID {record_id} not found"
+        )
     return None
+
 
 @router.post("/{record_id}/restore", response_model=MainDBResponse)
 def restore_record(record_id: int, db: Session = Depends(get_db)):
     """Restore a soft-deleted record"""
     record = crud.get_main_db_record(db, record_id)
     if not record:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Record with ID {record_id} not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail=f"Record with ID {record_id} not found"
+        )
     record.DB_TRASH = None
     record.DB_TRASH_DATE_ENCODED = None
     db.commit()

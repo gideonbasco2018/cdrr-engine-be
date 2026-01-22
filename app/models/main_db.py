@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, BigInteger, String, Text, Date, DateTime
 from sqlalchemy.dialects.mysql import TINYINT
 from sqlalchemy.sql import func
 from app.db.base_class import Base
-
+from sqlalchemy.orm import relationship
 
 class MainDB(Base):
     """
@@ -15,7 +15,7 @@ class MainDB(Base):
     DB_ID = Column(Integer, primary_key=True, autoincrement=True, index=True)
     
     # Establishment Information (10 columns)
-    DB_DTN = Column(BigInteger, nullable=True, index=True, comment="Document Tracking Number")
+    DB_DTN = Column(BigInteger, nullable=True, unique=True, index=True, comment="Document Tracking Number")
     DB_EST_CAT = Column(String(100), nullable=True, index=True, comment="Establishment Category")
     DB_EST_LTO_COMP = Column(Text, nullable=True, comment="LTO Company Name")
     DB_EST_LTO_ADD = Column(Text, nullable=True, comment="LTO Address")
@@ -153,3 +153,16 @@ class MainDB(Base):
     
     class Config:
         orm_mode = True
+
+    application_delegation = relationship(
+        "ApplicationDelegation",
+        back_populates="main",
+        uselist=False,
+        cascade="all, delete-orphan"
+    )
+
+    application_logs = relationship(
+        "ApplicationLogs",
+        back_populates="main_db",
+        cascade="all, delete-orphan"
+    )

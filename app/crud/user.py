@@ -3,7 +3,7 @@ CRUD Operations for User
 Database operations for user authentication and management
 """
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 
 from app.models.user import User, UserRole
 from app.models.group import Group
@@ -25,6 +25,21 @@ def get_by_username(db: Session, username: str) -> Optional[User]:
     """Get user by username"""
     return db.query(User).filter(User.username == username).first()
 
+# ✅ NEW: Get users by group
+def get_users_by_group(db: Session, group_id: int) -> List[User]:
+    """
+    Get all active users from a specific group
+    
+    Returns list of users who can be assigned to tasks.
+    Ordered by name for better UX in dropdowns.
+    """
+    return db.query(User).filter(
+        User.group_id == group_id,
+        User.is_active == True
+    ).order_by(
+        User.first_name, 
+        User.surname
+    ).all()
 
 def create(db: Session, user_in: UserCreate) -> User:
     """
