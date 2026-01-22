@@ -234,8 +234,12 @@ class MainDBListResponse(BaseModel):
 # -----------------------------
 # Optional summary schema
 # -----------------------------
+
+
 class MainDBSummary(BaseModel):
     total_records: int
+    decked_count: int = 0  # ✅ NEW
+    not_decked_count: int = 0  # ✅ NEW
     by_status: dict
     by_category: dict
     recent_uploads: int

@@ -21,10 +21,12 @@ from app.schemas.main_db import (
 from app.crud import main_db as crud
 from app.crud.main_db import get_main_db_records, get_application_logs
 from app.models.application_delegation import ApplicationDelegation
+from app.core.deps import get_current_active_user  
 
 router = APIRouter(
     prefix="/api/main-db",
-    tags=["Main Database"]
+    tags=["Main Database"],
+    dependencies=[Depends(get_current_active_user)] 
 )
 
 # ---------------------
@@ -208,7 +210,7 @@ def parse_date_value(value):
 @router.get("/", response_model=MainDBListResponse)
 def get_main_db(
     page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1, le=100),
+    page_size: int = Query(10, ge=1, le=1000),
     search: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     category: Optional[str] = Query(None),

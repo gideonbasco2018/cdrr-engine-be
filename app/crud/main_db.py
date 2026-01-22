@@ -1,14 +1,16 @@
+# FILE: app/crud/main_db.py
 """
 CRUD Operations for Main DB
 Database operations for pharmaceutical reports
 """
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, desc, or_, text
+from sqlalchemy import func, desc, or_, cast, String, nullslast, nullsfirst
 from typing import Optional, List, Tuple
 from datetime import datetime, timedelta
 
 from app.models.main_db import MainDB
 from app.models.application_logs import ApplicationLogs
+from app.models.application_delegation import ApplicationDelegation
 from app.schemas.main_db import MainDBCreate, MainDBUpdate
 
 # -----------------------------
@@ -35,34 +37,110 @@ def get_main_db_records(
     sort_order: str = "desc"
 ) -> Tuple[List[MainDB], int]:
     """Fetch MainDB records with ApplicationDelegation (1-to-1)"""
-    query = db.query(MainDB).options(joinedload(MainDB.application_delegation))
+    print(f"🔍 CRUD: status={status}, sort_by={sort_by}, sort_order={sort_order}")
+    
+    # Start with base query
+    query = db.query(MainDB)
+    
+    # Track if we've already joined ApplicationDelegation
+    delegation_joined = False
 
-    if status:
-        query = query.filter(MainDB.DB_APP_STATUS == status)
+    # ✅ Filter by evaluator status (decked/not-decked)
+    if status == "not_decked":
+        query = query.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+        delegation_joined = True
+        query = query.filter(
+            or_(
+                ApplicationDelegation.DB_EVALUATOR.is_(None),
+                ApplicationDelegation.DB_EVALUATOR == "",
+                ApplicationDelegation.DB_EVALUATOR == "N/A"
+            )
+        )
+        print("✅ Applied not_decked filter")
+    elif status == "decked":
+        query = query.join(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+        delegation_joined = True
+        query = query.filter(
+            ApplicationDelegation.DB_EVALUATOR.isnot(None),
+            ApplicationDelegation.DB_EVALUATOR != "",
+            ApplicationDelegation.DB_EVALUATOR != "N/A"
+        )
+        print("✅ Applied decked filter")
 
+    # Filter by category
     if category:
         query = query.filter(MainDB.DB_EST_CAT == category)
 
+    # ✅ Search with proper type handling
     if search:
         search_pattern = f"%{search}%"
-        query = query.filter(
-            or_(
-                MainDB.DB_DTN.like(search_pattern),
-                MainDB.DB_EST_LTO_COMP.like(search_pattern),
-                MainDB.DB_PROD_BR_NAME.like(search_pattern),
-                MainDB.DB_PROD_GEN_NAME.like(search_pattern),
-                MainDB.DB_REG_NO.like(search_pattern),
-                MainDB.DB_EST_CAT.like(search_pattern)
-            )
-        )
+        search_conditions = [
+            MainDB.DB_EST_LTO_COMP.like(search_pattern),
+            MainDB.DB_PROD_BR_NAME.like(search_pattern),
+            MainDB.DB_PROD_GEN_NAME.like(search_pattern),
+            MainDB.DB_REG_NO.like(search_pattern),
+            MainDB.DB_EST_CAT.like(search_pattern)
+        ]
+        
+        # Handle DTN search (integer field)
+        if search.isdigit():
+            search_conditions.append(MainDB.DB_DTN == int(search))
+        else:
+            search_conditions.append(cast(MainDB.DB_DTN, String).like(search_pattern))
+        
+        query = query.filter(or_(*search_conditions))
 
+    # Get total BEFORE applying sorting and pagination
     total = query.count()
+    print(f"📊 Total records found: {total}")
 
-    if hasattr(MainDB, sort_by):
+    # ✅ Handle sorting by delegation fields
+    delegation_sort_fields = ['DB_DATE_DECKED_END', 'DB_DATE_EVAL_END', 
+                             'DB_DATE_CHECKER_END', 'DB_DATE_SUPERVISOR_END',
+                             'DB_DATE_QA_END', 'DB_DATE_DIRECTOR_END',
+                             'DB_RELEASING_OFFICER_END']
+    
+    if sort_by in delegation_sort_fields:
+        # Join delegation if not already joined
+        if not delegation_joined:
+            query = query.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+            delegation_joined = True
+        
+        sort_column = getattr(ApplicationDelegation, sort_by)
+        print(f"📅 Sorting by delegation field: {sort_by}")
+        
+        # ✅ CRITICAL FIX: Use nullslast/nullsfirst functions properly
+        if sort_order.lower() == "desc":
+            # Most recent dates first, NULL dates last
+            query = query.order_by(nullslast(desc(sort_column)))
+        else:
+            # Oldest dates first, NULL dates last
+            query = query.order_by(nullslast(sort_column))
+    elif hasattr(MainDB, sort_by):
+        # Sort by MainDB field
         sort_column = getattr(MainDB, sort_by)
-        query = query.order_by(desc(sort_column) if sort_order.lower() == "desc" else sort_column)
+        print(f"📅 Sorting by MainDB field: {sort_by}")
+        if sort_order.lower() == "desc":
+            query = query.order_by(desc(sort_column))
+        else:
+            query = query.order_by(sort_column)
+    else:
+        # Fallback to default sort
+        print(f"⚠️ Unknown sort field: {sort_by}, using default")
+        query = query.order_by(desc(MainDB.DB_DATE_EXCEL_UPLOAD))
 
+    # Apply pagination
     records = query.offset(skip).limit(limit).all()
+    print(f"✅ Returning {len(records)} records (skip={skip}, limit={limit})")
+    
+    # ✅ Now eager load delegation data for the returned records
+    # This ensures we have the delegation info even if we didn't join for filtering
+    if not delegation_joined and records:
+        # Load delegation relationships
+        for record in records:
+            # Force load the relationship
+            _ = record.application_delegation
+    
     return records, total
 
 
@@ -216,19 +294,46 @@ def bulk_delete_main_db_records(db: Session, record_ids: List[int]) -> int:
 # Summary / Statistics
 # -----------------------------
 def get_main_db_summary(db: Session) -> dict:
-    """Summary statistics"""
+    """Summary statistics with evaluator counts"""
     total_records = db.query(MainDB).count()
+    
+    # Count records with evaluator (decked)
+    decked_count = db.query(MainDB).join(
+        ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID
+    ).filter(
+        ApplicationDelegation.DB_EVALUATOR.isnot(None),
+        ApplicationDelegation.DB_EVALUATOR != "",
+        ApplicationDelegation.DB_EVALUATOR != "N/A"
+    ).count()
+    
+    # Count records without evaluator (not decked)
+    not_decked_count = db.query(MainDB).outerjoin(
+        ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID
+    ).filter(
+        or_(
+            ApplicationDelegation.DB_EVALUATOR.is_(None),
+            ApplicationDelegation.DB_EVALUATOR == "",
+            ApplicationDelegation.DB_EVALUATOR == "N/A"
+        )
+    ).count()
+    
     status_counts = db.query(MainDB.DB_APP_STATUS, func.count(MainDB.DB_ID)).group_by(MainDB.DB_APP_STATUS).all()
     category_counts = db.query(MainDB.DB_EST_CAT, func.count(MainDB.DB_ID)).group_by(MainDB.DB_EST_CAT).all()
     seven_days_ago = datetime.now() - timedelta(days=7)
     recent_uploads = db.query(MainDB).filter(MainDB.DB_DATE_EXCEL_UPLOAD >= seven_days_ago).count()
 
-    return {
+    result = {
         "total_records": total_records,
+        "decked_count": decked_count,
+        "not_decked_count": not_decked_count,
         "by_status": {status or "Unknown": count for status, count in status_counts},
         "by_category": {category or "Unknown": count for category, count in category_counts},
         "recent_uploads": recent_uploads
     }
+    
+    print(f"📊 Summary Stats: Total={total_records}, Decked={decked_count}, Not Decked={not_decked_count}")
+    
+    return result
 
 
 def get_upload_statistics(db: Session) -> dict:
@@ -283,47 +388,27 @@ def get_upload_history(db: Session, limit: int = 50) -> List[dict]:
         List of upload history records
     """
     try:
-        # Using raw SQL for better performance
-        query = text("""
-            SELECT 
-                DB_USER_UPLOADER as uploader,
-                DATE(DB_DATE_EXCEL_UPLOAD) as upload_date,
-                COUNT(*) as record_count
-            FROM main_db
-            WHERE DB_DATE_EXCEL_UPLOAD IS NOT NULL
-            GROUP BY DB_USER_UPLOADER, DATE(DB_DATE_EXCEL_UPLOAD)
-            ORDER BY DB_DATE_EXCEL_UPLOAD DESC
-            LIMIT :limit
-        """)
-        result = db.execute(query, {"limit": limit})
-        rows = result.fetchall()
-        history = [
-            {"uploader": row[0] or "Unknown", "upload_date": str(row[1]) if row[1] else None, "record_count": row[2]}
-            for row in rows
-        ]
-        return history
+        results = db.query(
+            MainDB.DB_USER_UPLOADER,
+            func.date(MainDB.DB_DATE_EXCEL_UPLOAD).label('upload_date'),
+            func.count(MainDB.DB_ID).label('record_count')
+        ).filter(
+            MainDB.DB_DATE_EXCEL_UPLOAD.isnot(None)
+        ).group_by(
+            MainDB.DB_USER_UPLOADER,
+            func.date(MainDB.DB_DATE_EXCEL_UPLOAD)
+        ).order_by(
+            desc(func.date(MainDB.DB_DATE_EXCEL_UPLOAD))
+        ).limit(limit).all()
 
+        return [
+            {
+                "uploader": row[0] or "Unknown", 
+                "upload_date": str(row[1]) if row[1] else None, 
+                "record_count": row[2]
+            }
+            for row in results
+        ]
     except Exception as e:
         print(f"Error fetching upload history: {e}")
-        # Fallback to ORM query
-        try:
-            results = db.query(
-                MainDB.DB_USER_UPLOADER,
-                func.date(MainDB.DB_DATE_EXCEL_UPLOAD).label('upload_date'),
-                func.count(MainDB.DB_ID).label('record_count')
-            ).filter(
-                MainDB.DB_DATE_EXCEL_UPLOAD.isnot(None)
-            ).group_by(
-                MainDB.DB_USER_UPLOADER,
-                func.date(MainDB.DB_DATE_EXCEL_UPLOAD)
-            ).order_by(
-                desc(func.date(MainDB.DB_DATE_EXCEL_UPLOAD))
-            ).limit(limit).all()
-
-            return [
-                {"uploader": row[0] or "Unknown", "upload_date": str(row[1]) if row[1] else None, "record_count": row[2]}
-                for row in results
-            ]
-        except Exception as e2:
-            print(f"Fallback query failed: {e2}")
-            return []
+        return []
