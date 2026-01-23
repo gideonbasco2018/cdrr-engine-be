@@ -1,7 +1,9 @@
 # app/crud/analytics.py
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, extract
 from app.models.main_db import MainDB
+from datetime import datetime
+from typing import List
 
 
 def _build_date_filters(date_column, year: int, month: int | None, day: int | None):
@@ -62,3 +64,55 @@ def count_received_central(
         .scalar()
         or 0
     )
+
+
+def get_monthly_breakdown(db: Session, year: int | None = None) -> List[dict]:
+    """
+    Get monthly breakdown of received applications (Jan-Dec)
+    If year is None, use current year
+    """
+    if year is None:
+        year = datetime.now().year
+    
+    monthly_data = []
+    month_names = [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    ]
+    
+    for month_num in range(1, 13):
+        fdac_count = count_received_fdac(db=db, year=year, month=month_num)
+        central_count = count_received_central(db=db, year=year, month=month_num)
+        
+        monthly_data.append({
+            "period": month_names[month_num - 1],
+            "month": month_num,
+            "year": year,
+            "fdac": fdac_count,
+            "central": central_count,
+            "total": fdac_count + central_count,
+        })
+    
+    return monthly_data
+
+
+def get_yearly_breakdown(db: Session, num_years: int = 5) -> List[dict]:
+    """
+    Get yearly breakdown of received applications (last N years)
+    """
+    current_year = datetime.now().year
+    yearly_data = []
+    
+    for year in range(current_year - num_years + 1, current_year + 1):
+        fdac_count = count_received_fdac(db=db, year=year)
+        central_count = count_received_central(db=db, year=year)
+        
+        yearly_data.append({
+            "period": str(year),
+            "year": year,
+            "fdac": fdac_count,
+            "central": central_count,
+            "total": fdac_count + central_count,
+        })
+    
+    return yearly_data
