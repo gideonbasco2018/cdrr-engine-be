@@ -1,4 +1,5 @@
-FROM python:3.11-slim
+# Base stage - shared dependencies
+FROM python:3.11-slim AS base
 
 WORKDIR /app
 
@@ -9,10 +10,8 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
+# Copy and install Python dependencies
 COPY requirements.txt .
-
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
@@ -21,5 +20,14 @@ COPY . .
 # Expose port
 EXPOSE 8000
 
-# Run the application
+# ============================================
+# Development stage
+# ============================================
+FROM base AS development
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+# ============================================
+# Production stage
+# ============================================
+FROM base AS production
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
