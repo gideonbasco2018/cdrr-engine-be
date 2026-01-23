@@ -7,8 +7,10 @@ from app.db.session import get_db
 from app.schemas.analytics import ReceivedAnalyticsResponse
 from app.crud import analytics as crud_analytics
 
-router = APIRouter(prefix="/analytics", tags=["Analytics"])
-
+router = APIRouter(
+    prefix="/api/analytics",
+    tags=["Analytics"]
+)
 
 @router.get(
     "/received",
