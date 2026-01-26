@@ -15,10 +15,6 @@ router = APIRouter(
     prefix="/api/analytics",
     tags=["Analytics"]
 )
-<<<<<<< HEAD
-=======
-
->>>>>>> 6eb3909 (Update backend in production)
 
 @router.get(
     "/received",
