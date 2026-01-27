@@ -58,7 +58,6 @@ class ApplicationDelegationResponse(BaseModel):
     DB_DIRECTOR_REMARKS: Optional[str] = None
     DB_DATE_DIRECTOR_END: Optional[datetime] = None
 
-    # ✅ NEW: Releasing Officer fields
     DB_RELEASING_OFFICER: Optional[str] = None
     DB_RELEASING_OFFICER_DECISION: Optional[str] = None
     DB_RELEASING_OFFICER_REMARKS: Optional[str] = None
@@ -66,7 +65,6 @@ class ApplicationDelegationResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
     
-    # ✅ Automatic serialization to ISO format string for JSON response
     @field_serializer(
         'DB_DATE_DECKED_END', 
         'DB_DATE_EVAL_END',
@@ -74,7 +72,7 @@ class ApplicationDelegationResponse(BaseModel):
         'DB_DATE_SUPERVISOR_END',
         'DB_DATE_QA_END',
         'DB_DATE_DIRECTOR_END',
-        'DB_RELEASING_OFFICER_END'  # ✅ NEW
+        'DB_RELEASING_OFFICER_END'
     )
     def serialize_datetime(self, value: Optional[datetime]) -> Optional[str]:
         return value.isoformat() if value else None
@@ -197,6 +195,7 @@ class MainDBBase(BaseModel):
     DB_PHARMA_PROD_CAT: Optional[str] = None
     DB_PHARMA_PROD_CAT_LABEL: Optional[str] = None
     DB_IS_IN_PM: Optional[int] = None
+    DB_TIMELINE_CITIZEN_CHARTER: Optional[int] = None  # ✅ NEW
 
 
 class MainDBCreate(MainDBBase):
@@ -234,12 +233,10 @@ class MainDBListResponse(BaseModel):
 # -----------------------------
 # Optional summary schema
 # -----------------------------
-
-
 class MainDBSummary(BaseModel):
     total_records: int
-    decked_count: int = 0  # ✅ NEW
-    not_decked_count: int = 0  # ✅ NEW
+    decked_count: int = 0
+    not_decked_count: int = 0
     by_status: dict
     by_category: dict
     recent_uploads: int

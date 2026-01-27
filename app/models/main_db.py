@@ -147,6 +147,8 @@ class MainDB(Base):
     DB_PHARMA_PROD_CAT = Column(String(255), nullable=True, comment="Pharmaceutical Product Category")
     DB_PHARMA_PROD_CAT_LABEL = Column(String(255), nullable=True, comment="Pharmaceutical Product Category Label")
     DB_IS_IN_PM = Column(TINYINT, nullable=True, default=0, comment="Is in PM")
+
+    DB_TIMELINE_CITIZEN_CHARTER = Column(Integer, nullable=True, comment="Timeline for Citizen Charter")
     
     def __repr__(self):
         return f"<MainDB(id={self.DB_ID}, dtn={self.DB_DTN}, est_cat={self.DB_EST_CAT})>"

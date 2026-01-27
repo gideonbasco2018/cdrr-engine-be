@@ -119,7 +119,8 @@ COLUMN_MAPPING = {
     "Trash": "DB_TRASH",
     "Pharma Prod Cat": "DB_PHARMA_PROD_CAT",
     "Pharma Prod Cat Label": "DB_PHARMA_PROD_CAT_LABEL",
-    "Is in PM": "DB_IS_IN_PM"
+    "Is in PM": "DB_IS_IN_PM",
+    "Timeline Citizen Charter": "DB_TIMELINE_CITIZEN_CHARTER"  # ✅ NEW
 }
 
 # Application Delegation Column Mapping
@@ -169,6 +170,9 @@ DELEGATION_DATE_FIELDS = {
 }
 
 NUMERIC_STRING_FIELDS = {'DB_FEE', 'DB_LRF', 'DB_SURC', 'DB_TOTAL'}
+
+# ✅ NEW: Integer fields that should be stored as integers, not strings
+INTEGER_FIELDS = {'DB_DTN', 'DB_IS_IN_PM', 'DB_TIMELINE_CITIZEN_CHARTER'}
 
 
 # ---------------------
@@ -302,16 +306,23 @@ async def upload_excel(
             record_data = {}
             delegation_data = {}
 
-            # Map Excel to MainDB columns
+            # Map Excel to MainDB columns with proper type handling
             for excel_col, db_col in COLUMN_MAPPING.items():
                 raw_value = row.get(excel_col)
+                
                 if pd.isna(raw_value) or raw_value is None:
                     record_data[db_col] = None
                 elif isinstance(raw_value, (int, float, np.integer, np.floating)):
+                    # ✅ Handle different numeric field types
                     if db_col in NUMERIC_STRING_FIELDS:
+                        # Fee, LRF, SURC, Total - store as string
                         record_data[db_col] = str(int(raw_value))
+                    elif db_col in INTEGER_FIELDS:
+                        # DTN, Is in PM, Timeline - store as integer
+                        record_data[db_col] = int(raw_value)
                     else:
-                        record_data[db_col] = int(raw_value) if db_col in {'DB_DTN', 'DB_IS_IN_PM'} else str(raw_value)
+                        # Everything else becomes string
+                        record_data[db_col] = str(raw_value)
                 else:
                     record_data[db_col] = str(raw_value).strip() if isinstance(raw_value, str) else str(raw_value)
 
@@ -393,17 +404,20 @@ async def download_template():
                 "Column Group": [
                     "Main Database Columns",
                     "Application Delegation Columns",
-                    "Date Format Instructions"
+                    "Date Format Instructions",
+                    "Numeric Field Instructions"
                 ],
                 "Description": [
-                    "Columns from DTN to 'Is in PM' are for main database records",
+                    "Columns from DTN to 'Timeline Citizen Charter' are for main database records",
                     "Columns from Decker to 'Date Releasing Officer End' are for application delegation tracking",
-                    "For date fields, use formats like: 2026-01-02, Jan 2 2026, 01/02/2026, etc."
+                    "For date fields, use formats like: 2026-01-02, Jan 2 2026, 01/02/2026, etc.",
+                    "Timeline Citizen Charter should be a whole number (e.g., 30, 45, 60)"
                 ],
                 "Note": [
                     "All main database columns are optional",
                     "Delegation columns are optional. Fill only if you have delegation data.",
-                    "Date fields will be automatically parsed. Leave empty if no date."
+                    "Date fields will be automatically parsed. Leave empty if no date.",
+                    "Enter numbers without decimals for timeline fields."
                 ]
             })
             instructions.to_excel(writer, index=False, sheet_name="Instructions")
