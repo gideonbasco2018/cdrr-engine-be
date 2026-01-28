@@ -215,6 +215,130 @@ async def get_all_drugs(
         )
 
 
+# ==================== EXPORT DRUGS TO EXCEL ====================
+# ⚠️ IMPORTANT: This route MUST come BEFORE /drugs/{drug_id}
+@router.get("/drugs/export")
+async def export_drugs_to_excel(
+    search: Optional[str] = Query(None, description="Search by registration number, generic name, or brand name"),
+    include_deleted: bool = Query(False, description="Include soft-deleted records")
+):
+    """
+    Export all FDA drug registrations to Excel (no pagination limit)
+    """
+    try:
+        # Get ALL records (no pagination)
+        result = crud.export_all_drugs(
+            search=search,
+            include_deleted=include_deleted
+        )
+        
+        drugs_data = result.get('drugs', [])
+        
+        if not drugs_data:
+            raise HTTPException(
+                status_code=404,
+                detail="No data found to export"
+            )
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(drugs_data)
+        
+        # Reorder columns for better readability
+        column_order = [
+            'id',
+            'registration_number',
+            'generic_name',
+            'brand_name',
+            'dosage_strength',
+            'dosage_form',
+            'classification',
+            'packaging',
+            'pharmacologic_category',
+            'manufacturer',
+            'country',
+            'trader',
+            'importer',
+            'distributor',
+            'app_type',
+            'issuance_date',
+            'expiry_date',
+            'uploaded_by',
+            'date_uploaded',
+            'created_at',
+            'updated_at',
+        ]
+        
+        # Only include columns that exist in the dataframe
+        available_columns = [col for col in column_order if col in df.columns]
+        df = df[available_columns]
+        
+        # Create Excel file in memory
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='FDA Drug Registrations')
+            
+            # Get the worksheet
+            worksheet = writer.sheets['FDA Drug Registrations']
+            
+            # Set column widths
+            column_widths = {
+                'A': 10,  # id
+                'B': 20,  # registration_number
+                'C': 40,  # generic_name
+                'D': 30,  # brand_name
+                'E': 15,  # dosage_strength
+                'F': 20,  # dosage_form
+                'G': 15,  # classification
+                'H': 40,  # packaging
+                'I': 30,  # pharmacologic_category
+                'J': 40,  # manufacturer
+                'K': 20,  # country
+                'L': 40,  # trader
+                'M': 40,  # importer
+                'N': 40,  # distributor
+                'O': 15,  # app_type
+                'P': 15,  # issuance_date
+                'Q': 15,  # expiry_date
+                'R': 20,  # uploaded_by
+                'S': 20,  # date_uploaded
+                'T': 20,  # created_at
+                'U': 20,  # updated_at
+            }
+            
+            for col_letter, width in column_widths.items():
+                worksheet.column_dimensions[col_letter].width = width
+            
+            # Style header row
+            from openpyxl.styles import Font, PatternFill
+            header_fill = PatternFill(start_color="4CAF50", end_color="4CAF50", fill_type="solid")
+            header_font = Font(bold=True, color="FFFFFF")
+            
+            for cell in worksheet[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+        
+        output.seek(0)
+        
+        # Return as downloadable file
+        filename = f"FDA_Drugs_Export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to export drugs: {str(e)}"
+        )
+
+
 # ==================== GET DRUG BY ID ====================
 @router.get("/drugs/{drug_id}")
 async def get_drug_by_id(drug_id: int):

@@ -421,3 +421,78 @@ def delete_drug(drug_id: int) -> Dict[str, Any]:
         
     finally:
         engine.dispose()
+
+
+# ==================== EXPORT ====================
+def export_all_drugs(
+    search: Optional[str] = None,
+    include_deleted: bool = False
+) -> Dict[str, Any]:
+    """
+    Get ALL drug registrations for export (no pagination limit)
+    """
+    engine = get_fda_db_engine()
+    
+    try:
+        with engine.connect() as connection:
+            # Build WHERE clause
+            where_conditions = []
+            params = {}
+            
+            if not include_deleted:
+                where_conditions.append("date_deleted IS NULL")
+            
+            if search:
+                where_conditions.append("""
+                    (registration_number LIKE :search 
+                    OR generic_name LIKE :search 
+                    OR brand_name LIKE :search)
+                """)
+                params['search'] = f"%{search}%"
+            
+            where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+            
+            # Get ALL data (no LIMIT)
+            data_query = text(f"""
+                SELECT *
+                FROM fda_drug_registrations
+                WHERE {where_clause}
+                ORDER BY created_at DESC
+            """)
+            
+            result = connection.execute(data_query, params)
+            
+            drugs = []
+            for row in result:
+                drugs.append({
+                    'id': row[0],
+                    'registration_number': row[1],
+                    'generic_name': row[2],
+                    'brand_name': row[3],
+                    'dosage_strength': row[4],
+                    'dosage_form': row[5],
+                    'classification': row[6],
+                    'packaging': row[7],
+                    'pharmacologic_category': row[8],
+                    'manufacturer': row[9],
+                    'country': row[10],
+                    'trader': row[11],
+                    'importer': row[12],
+                    'distributor': row[13],
+                    'app_type': row[14],
+                    'issuance_date': row[15].isoformat() if row[15] else None,
+                    'expiry_date': row[16].isoformat() if row[16] else None,
+                    'uploaded_by': row[17],
+                    'date_uploaded': row[18].isoformat() if row[18] else None,
+                    'date_deleted': row[19].isoformat() if row[19] else None,
+                    'created_at': row[20].isoformat() if row[20] else None,
+                    'updated_at': row[21].isoformat() if row[21] else None,
+                })
+            
+            return {
+                "drugs": drugs,
+                "total": len(drugs)
+            }
+        
+    finally:
+        engine.dispose()
