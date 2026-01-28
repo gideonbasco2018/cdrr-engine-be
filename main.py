@@ -8,7 +8,9 @@ from app.api.routes import (
     evaluation, 
     application_logs,
     doctrack,
-    analytics
+    analytics,
+    fdaeservices,
+    fda_verification
 )
 app = FastAPI(
     title="CDRR ENGINE API",
@@ -42,3 +44,5 @@ app.include_router(evaluation.router)
 app.include_router(application_logs.router)
 app.include_router(doctrack.router)
 app.include_router(analytics.router)
+app.include_router(fdaeservices.router)
+app.include_router(fda_verification.router)
