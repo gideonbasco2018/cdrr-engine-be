@@ -9,7 +9,7 @@ from app.api.routes import (
     application_logs,
     doctrack,
     analytics,
-    fdaeservices,
+    fda_verification_test_conn,
     fda_verification
 )
 app = FastAPI(
@@ -44,5 +44,5 @@ app.include_router(evaluation.router)
 app.include_router(application_logs.router)
 app.include_router(doctrack.router)
 app.include_router(analytics.router)
-app.include_router(fdaeservices.router)
+app.include_router(fda_verification_test_conn.router)
 app.include_router(fda_verification.router)

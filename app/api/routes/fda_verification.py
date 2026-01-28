@@ -1,15 +1,20 @@
 # app/api/routes/fda_verification.py
-from fastapi import APIRouter, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 import pandas as pd
 import io
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
-# Import CRUD functions
+from app.core.deps import get_current_active_user
+from app.db.deps import DBSessionDep
 from app.crud import fda_verification as crud
 
-router = APIRouter(prefix="/api", tags=["FDA Verification"])
+router = APIRouter(
+    prefix="/api/fda",
+    tags=["FDA Verification"],
+    dependencies=[Depends(get_current_active_user)]  # 🔐 LOGIN REQUIRED BY DEFAULT
+)
 
 
 # ==================== DOWNLOAD TEMPLATE ====================
