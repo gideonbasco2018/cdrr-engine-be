@@ -37,12 +37,12 @@ def create_drug(drug_data: Dict[str, Any]) -> Dict[str, Any]:
                 INSERT INTO fda_drug_registrations (
                     registration_number, generic_name, brand_name, dosage_strength,
                     dosage_form, classification, packaging, pharmacologic_category,
-                    manufacturer, country, trader, importer, distributor, app_type,
+                    manufacturer, country_of_origin, trader, importer, distributor, app_type,
                     issuance_date, expiry_date, uploaded_by
                 ) VALUES (
                     :registration_number, :generic_name, :brand_name, :dosage_strength,
                     :dosage_form, :classification, :packaging, :pharmacologic_category,
-                    :manufacturer, :country, :trader, :importer, :distributor, :app_type,
+                    :manufacturer, :country_of_origin, :trader, :importer, :distributor, :app_type,
                     :issuance_date, :expiry_date, :uploaded_by
                 )
             """)
@@ -83,12 +83,12 @@ def bulk_create_drugs(drugs_data: List[Dict[str, Any]]) -> Dict[str, Any]:
                         INSERT INTO fda_drug_registrations (
                             registration_number, generic_name, brand_name, dosage_strength,
                             dosage_form, classification, packaging, pharmacologic_category,
-                            manufacturer, country, trader, importer, distributor, app_type,
+                            manufacturer, country_of_origin, trader, importer, distributor, app_type,
                             issuance_date, expiry_date, uploaded_by
                         ) VALUES (
                             :registration_number, :generic_name, :brand_name, :dosage_strength,
                             :dosage_form, :classification, :packaging, :pharmacologic_category,
-                            :manufacturer, :country, :trader, :importer, :distributor, :app_type,
+                            :manufacturer, :country_of_origin, :trader, :importer, :distributor, :app_type,
                             :issuance_date, :expiry_date, :uploaded_by
                         )
                     """)
@@ -192,6 +192,7 @@ def get_all_drugs(
             
             drugs = []
             for row in result:
+                # ✅ FIXED: Updated indices to match table structure with app_status
                 drugs.append({
                     'id': row[0],
                     'registration_number': row[1],
@@ -203,7 +204,7 @@ def get_all_drugs(
                     'packaging': row[7],
                     'pharmacologic_category': row[8],
                     'manufacturer': row[9],
-                    'country': row[10],
+                    'country_of_origin': row[10],
                     'trader': row[11],
                     'importer': row[12],
                     'distributor': row[13],
@@ -212,9 +213,11 @@ def get_all_drugs(
                     'expiry_date': row[16].isoformat() if row[16] else None,
                     'uploaded_by': row[17],
                     'date_uploaded': row[18].isoformat() if row[18] else None,
-                    'date_deleted': row[19].isoformat() if row[19] else None,
-                    'created_at': row[20].isoformat() if row[20] else None,
-                    'updated_at': row[21].isoformat() if row[21] else None,
+                    'app_status': row[19] if row[19] is not None else 0,  # ✅ NEW: Added app_status (tinyint)
+                    'is_deleted': row[20] is not None,  # ✅ NEW: Added is_deleted flag
+                    'date_deleted': row[20].isoformat() if row[20] else None,  # ✅ FIXED: Correct index
+                    'created_at': row[21].isoformat() if row[21] else None,   # ✅ FIXED: Correct index
+                    'updated_at': row[22].isoformat() if row[22] else None,   # ✅ FIXED: Correct index
                 })
             
             total_pages = (total + page_size - 1) // page_size
@@ -253,6 +256,7 @@ def get_drug_by_id(drug_id: int) -> Optional[Dict[str, Any]]:
             if not row:
                 return None
             
+            # ✅ FIXED: Updated indices to match table structure with app_status
             return {
                 'id': row[0],
                 'registration_number': row[1],
@@ -264,7 +268,7 @@ def get_drug_by_id(drug_id: int) -> Optional[Dict[str, Any]]:
                 'packaging': row[7],
                 'pharmacologic_category': row[8],
                 'manufacturer': row[9],
-                'country': row[10],
+                'country_of_origin': row[10],
                 'trader': row[11],
                 'importer': row[12],
                 'distributor': row[13],
@@ -273,9 +277,11 @@ def get_drug_by_id(drug_id: int) -> Optional[Dict[str, Any]]:
                 'expiry_date': row[16].isoformat() if row[16] else None,
                 'uploaded_by': row[17],
                 'date_uploaded': row[18].isoformat() if row[18] else None,
-                'date_deleted': row[19].isoformat() if row[19] else None,
-                'created_at': row[20].isoformat() if row[20] else None,
-                'updated_at': row[21].isoformat() if row[21] else None,
+                'app_status': row[19] if row[19] is not None else 0,  # ✅ NEW: Added app_status
+                'is_deleted': row[20] is not None,  # ✅ NEW: Added is_deleted flag
+                'date_deleted': row[20].isoformat() if row[20] else None,  # ✅ FIXED: Correct index
+                'created_at': row[21].isoformat() if row[21] else None,   # ✅ FIXED: Correct index
+                'updated_at': row[22].isoformat() if row[22] else None,   # ✅ FIXED: Correct index
             }
         
     finally:
@@ -322,7 +328,7 @@ def verify_registration(registration_number: str) -> Dict[str, Any]:
                 'dosage_form': row[5],
                 'classification': row[6],
                 'manufacturer': row[9],
-                'country': row[10],
+                'country_of_origin': row[10],
                 'expiry_date': row[16].isoformat() if row[16] else None,
                 'is_expired': is_expired
             }
@@ -464,6 +470,7 @@ def export_all_drugs(
             
             drugs = []
             for row in result:
+                # ✅ FIXED: Updated indices to match table structure with app_status
                 drugs.append({
                     'id': row[0],
                     'registration_number': row[1],
@@ -475,7 +482,7 @@ def export_all_drugs(
                     'packaging': row[7],
                     'pharmacologic_category': row[8],
                     'manufacturer': row[9],
-                    'country': row[10],
+                    'country_of_origin': row[10],
                     'trader': row[11],
                     'importer': row[12],
                     'distributor': row[13],
@@ -484,9 +491,11 @@ def export_all_drugs(
                     'expiry_date': row[16].isoformat() if row[16] else None,
                     'uploaded_by': row[17],
                     'date_uploaded': row[18].isoformat() if row[18] else None,
-                    'date_deleted': row[19].isoformat() if row[19] else None,
-                    'created_at': row[20].isoformat() if row[20] else None,
-                    'updated_at': row[21].isoformat() if row[21] else None,
+                    'app_status': row[19] if row[19] is not None else 0,  # ✅ NEW: Added app_status
+                    'is_deleted': row[20] is not None,  # ✅ NEW: Added is_deleted flag
+                    'date_deleted': row[20].isoformat() if row[20] else None,  # ✅ FIXED: Correct index
+                    'created_at': row[21].isoformat() if row[21] else None,   # ✅ FIXED: Correct index
+                    'updated_at': row[22].isoformat() if row[22] else None,   # ✅ FIXED: Correct index
                 })
             
             return {
