@@ -81,7 +81,6 @@ async def download_template():
             detail=f"Failed to generate template: {str(e)}"
         )
 
-
 # ==================== UPLOAD EXCEL ====================
 @router.post("/upload-excel")
 async def upload_excel(
@@ -101,7 +100,12 @@ async def upload_excel(
     try:
         # Read Excel file
         contents = await file.read()
-        df = pd.read_excel(io.BytesIO(contents))
+        
+        # Force dosage_strength as string to preserve percentage format
+        df = pd.read_excel(
+            io.BytesIO(contents),
+            dtype={'dosage_strength': str}
+        )
         
         # Validate required columns
         required_columns = ['registration_number']
@@ -124,11 +128,27 @@ async def upload_excel(
         # Prepare data for bulk insert
         drugs_data = []
         for index, row in df.iterrows():
+            # ================== FIX PERCENTAGE ISSUE ==================
+            raw_val = row.get('dosage_strength')
+            
+            dosage_strength = None
+            if pd.notna(raw_val):
+                dosage_strength = str(raw_val).strip()
+                
+                # If Excel still converted to decimal (0.7), convert back to percentage
+                if '%' not in dosage_strength:
+                    try:
+                        num_val = float(dosage_strength)
+                        if 0 < num_val <= 1:
+                            dosage_strength = f"{num_val * 100:g}%"
+                    except ValueError:
+                        pass  # Keep original string
+            
             data = {
                 'registration_number': str(row.get('registration_number', '')).strip(),
                 'generic_name': str(row.get('generic_name', '')) if pd.notna(row.get('generic_name')) else None,
                 'brand_name': str(row.get('brand_name', '')) if pd.notna(row.get('brand_name')) else None,
-                'dosage_strength': str(row.get('dosage_strength', '')) if pd.notna(row.get('dosage_strength')) else None,
+                'dosage_strength': dosage_strength,
                 'dosage_form': str(row.get('dosage_form', '')) if pd.notna(row.get('dosage_form')) else None,
                 'classification': str(row.get('classification', '')) if pd.notna(row.get('classification')) else None,
                 'packaging': str(row.get('packaging', '')) if pd.notna(row.get('packaging')) else None,
@@ -174,7 +194,6 @@ async def upload_excel(
             status_code=500,
             detail=f"Failed to process Excel file: {str(e)}"
         )
-
 
 # ==================== GET ALL DRUGS ====================
 @router.get("/drugs")
