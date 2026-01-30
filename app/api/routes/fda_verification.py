@@ -24,8 +24,9 @@ async def download_template():
     Download Excel template for FDA drug registration upload
     """
     try:
-        # Create sample data
+        # Create sample data (reference_number first)
         sample_data = {
+            'reference_number': ['REF-2024-001', 'REF-2024-002'],
             'registration_number': ['DR-XYZ123456', 'DR-ABC789012'],
             'generic_name': ['Paracetamol', 'Ibuprofen'],
             'brand_name': ['Biogesic', 'Advil'],
@@ -55,11 +56,25 @@ async def download_template():
             # Get the worksheet
             worksheet = writer.sheets['FDA Drug Registration']
             
-            # Set column widths
+            # Set column widths (reference_number first)
             column_widths = {
-                'A': 20, 'B': 40, 'C': 30, 'D': 15, 'E': 20,
-                'F': 15, 'G': 40, 'H': 30, 'I': 40, 'J': 20,
-                'K': 40, 'L': 40, 'M': 40, 'N': 15, 'O': 15, 'P': 15
+                'A': 20,  # reference_number
+                'B': 20,  # registration_number
+                'C': 40,  # generic_name
+                'D': 30,  # brand_name
+                'E': 15,  # dosage_strength
+                'F': 20,  # dosage_form
+                'G': 15,  # classification
+                'H': 40,  # packaging
+                'I': 30,  # pharmacologic_category
+                'J': 40,  # manufacturer
+                'K': 20,  # country_of_origin
+                'L': 40,  # trader
+                'M': 40,  # importer
+                'N': 40,  # distributor
+                'O': 15,  # app_type
+                'P': 15,  # issuance_date
+                'Q': 15   # expiry_date
             }
             for col, width in column_widths.items():
                 worksheet.column_dimensions[col].width = width
@@ -146,6 +161,7 @@ async def upload_excel(
                         pass  # Keep original string
             
             data = {
+                'reference_number': str(row.get('reference_number', '')) if pd.notna(row.get('reference_number')) else None,
                 'registration_number': str(row.get('registration_number', '')).strip(),
                 'generic_name': str(row.get('generic_name', '')) if pd.notna(row.get('generic_name')) else None,
                 'brand_name': str(row.get('brand_name', '')) if pd.notna(row.get('brand_name')) else None,
@@ -264,9 +280,10 @@ async def export_drugs_to_excel(
         # Convert to DataFrame
         df = pd.DataFrame(drugs_data)
         
-        # Reorder columns for better readability
+        # Reorder columns for better readability (reference_number first)
         column_order = [
             'id',
+            'reference_number',
             'registration_number',
             'generic_name',
             'brand_name',
@@ -303,31 +320,32 @@ async def export_drugs_to_excel(
             # Get the worksheet
             worksheet = writer.sheets['FDA Drug Registrations']
             
-            # Set column widths
+            # Set column widths (reference_number first)
             column_widths = {
                 'A': 10,  # id
-                'B': 20,  # registration_number
-                'C': 40,  # generic_name
-                'D': 30,  # brand_name
-                'E': 15,  # dosage_strength
-                'F': 20,  # dosage_form
-                'G': 15,  # classification
-                'H': 40,  # packaging
-                'I': 30,  # pharmacologic_category
-                'J': 40,  # manufacturer
-                'K': 20,  # country_of_origin
-                'L': 40,  # trader
-                'M': 40,  # importer
-                'N': 40,  # distributor
-                'O': 15,  # app_type
-                'P': 15,  # issuance_date
-                'Q': 15,  # expiry_date
-                'R': 20,  # uploaded_by
-                'S': 20,  # date_uploaded
-                'T': 12,  # is_canceled
-                'U': 20,  # canceled_by
-                'V': 20,  # date_canceled
-                'W': 20,  # date_modified
+                'B': 20,  # reference_number
+                'C': 20,  # registration_number
+                'D': 40,  # generic_name
+                'E': 30,  # brand_name
+                'F': 15,  # dosage_strength
+                'G': 20,  # dosage_form
+                'H': 15,  # classification
+                'I': 40,  # packaging
+                'J': 30,  # pharmacologic_category
+                'K': 40,  # manufacturer
+                'L': 20,  # country_of_origin
+                'M': 40,  # trader
+                'N': 40,  # importer
+                'O': 40,  # distributor
+                'P': 15,  # app_type
+                'Q': 15,  # issuance_date
+                'R': 15,  # expiry_date
+                'S': 20,  # uploaded_by
+                'T': 20,  # date_uploaded
+                'U': 12,  # is_canceled
+                'V': 20,  # canceled_by
+                'W': 20,  # date_canceled
+                'X': 20,  # date_modified
             }
             
             for col_letter, width in column_widths.items():

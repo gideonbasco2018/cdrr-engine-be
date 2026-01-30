@@ -35,12 +35,12 @@ def create_drug(drug_data: Dict[str, Any]) -> Dict[str, Any]:
         with engine.connect() as connection:
             query = text("""
                 INSERT INTO fda_drug_registrations (
-                    registration_number, generic_name, brand_name, dosage_strength,
+                    reference_number, registration_number, generic_name, brand_name, dosage_strength,
                     dosage_form, classification, packaging, pharmacologic_category,
                     manufacturer, country_of_origin, trader, importer, distributor, app_type,
                     issuance_date, expiry_date, uploaded_by, date_uploaded
                 ) VALUES (
-                    :registration_number, :generic_name, :brand_name, :dosage_strength,
+                    :reference_number, :registration_number, :generic_name, :brand_name, :dosage_strength,
                     :dosage_form, :classification, :packaging, :pharmacologic_category,
                     :manufacturer, :country_of_origin, :trader, :importer, :distributor, :app_type,
                     :issuance_date, :expiry_date, :uploaded_by, NOW()
@@ -81,12 +81,12 @@ def bulk_create_drugs(drugs_data: List[Dict[str, Any]]) -> Dict[str, Any]:
                 try:
                     query = text("""
                         INSERT INTO fda_drug_registrations (
-                            registration_number, generic_name, brand_name, dosage_strength,
+                            reference_number, registration_number, generic_name, brand_name, dosage_strength,
                             dosage_form, classification, packaging, pharmacologic_category,
                             manufacturer, country_of_origin, trader, importer, distributor, app_type,
                             issuance_date, expiry_date, uploaded_by, date_uploaded
                         ) VALUES (
-                            :registration_number, :generic_name, :brand_name, :dosage_strength,
+                            :reference_number, :registration_number, :generic_name, :brand_name, :dosage_strength,
                             :dosage_form, :classification, :packaging, :pharmacologic_category,
                             :manufacturer, :country_of_origin, :trader, :importer, :distributor, :app_type,
                             :issuance_date, :expiry_date, :uploaded_by, NOW()
@@ -157,6 +157,7 @@ def get_all_drugs(
             if search:
                 where_conditions.append("""
                     (registration_number LIKE :search 
+                    OR reference_number LIKE :search
                     OR generic_name LIKE :search 
                     OR brand_name LIKE :search)
                 """)
@@ -182,7 +183,7 @@ def get_all_drugs(
             
             data_query = text(f"""
                 SELECT 
-                    id, registration_number, generic_name, brand_name, dosage_strength,
+                    id, reference_number, registration_number, generic_name, brand_name, dosage_strength,
                     dosage_form, classification, packaging, pharmacologic_category,
                     manufacturer, country_of_origin, trader, importer, distributor,
                     app_type, issuance_date, expiry_date, uploaded_by, date_uploaded,
@@ -199,28 +200,29 @@ def get_all_drugs(
             for row in result:
                 drugs.append({
                     'id': row[0],
-                    'registration_number': row[1],
-                    'generic_name': row[2],
-                    'brand_name': row[3],
-                    'dosage_strength': row[4],
-                    'dosage_form': row[5],
-                    'classification': row[6],
-                    'packaging': row[7],
-                    'pharmacologic_category': row[8],
-                    'manufacturer': row[9],
-                    'country_of_origin': row[10],
-                    'trader': row[11],
-                    'importer': row[12],
-                    'distributor': row[13],
-                    'app_type': row[14],
-                    'issuance_date': row[15].isoformat() if row[15] else None,
-                    'expiry_date': row[16].isoformat() if row[16] else None,
-                    'uploaded_by': row[17],
-                    'date_uploaded': row[18].isoformat() if row[18] else None,
-                    'is_canceled': row[19] if row[19] else 'N',
-                    'canceled_by': row[20],
-                    'date_canceled': row[21].isoformat() if row[21] else None,
-                    'date_modified': row[22].isoformat() if row[22] else None,
+                    'reference_number': row[1],
+                    'registration_number': row[2],
+                    'generic_name': row[3],
+                    'brand_name': row[4],
+                    'dosage_strength': row[5],
+                    'dosage_form': row[6],
+                    'classification': row[7],
+                    'packaging': row[8],
+                    'pharmacologic_category': row[9],
+                    'manufacturer': row[10],
+                    'country_of_origin': row[11],
+                    'trader': row[12],
+                    'importer': row[13],
+                    'distributor': row[14],
+                    'app_type': row[15],
+                    'issuance_date': row[16].isoformat() if row[16] else None,
+                    'expiry_date': row[17].isoformat() if row[17] else None,
+                    'uploaded_by': row[18],
+                    'date_uploaded': row[19].isoformat() if row[19] else None,
+                    'is_canceled': row[20] if row[20] else 'N',
+                    'canceled_by': row[21],
+                    'date_canceled': row[22].isoformat() if row[22] else None,
+                    'date_modified': row[23].isoformat() if row[23] else None,
                 })
             
             total_pages = (total + page_size - 1) // page_size
@@ -249,7 +251,7 @@ def get_drug_by_id(drug_id: int) -> Optional[Dict[str, Any]]:
         with engine.connect() as connection:
             query = text("""
                 SELECT 
-                    id, registration_number, generic_name, brand_name, dosage_strength,
+                    id, reference_number, registration_number, generic_name, brand_name, dosage_strength,
                     dosage_form, classification, packaging, pharmacologic_category,
                     manufacturer, country_of_origin, trader, importer, distributor,
                     app_type, issuance_date, expiry_date, uploaded_by, date_uploaded,
@@ -266,28 +268,29 @@ def get_drug_by_id(drug_id: int) -> Optional[Dict[str, Any]]:
             
             return {
                 'id': row[0],
-                'registration_number': row[1],
-                'generic_name': row[2],
-                'brand_name': row[3],
-                'dosage_strength': row[4],
-                'dosage_form': row[5],
-                'classification': row[6],
-                'packaging': row[7],
-                'pharmacologic_category': row[8],
-                'manufacturer': row[9],
-                'country_of_origin': row[10],
-                'trader': row[11],
-                'importer': row[12],
-                'distributor': row[13],
-                'app_type': row[14],
-                'issuance_date': row[15].isoformat() if row[15] else None,
-                'expiry_date': row[16].isoformat() if row[16] else None,
-                'uploaded_by': row[17],
-                'date_uploaded': row[18].isoformat() if row[18] else None,
-                'is_canceled': row[19] if row[19] else 'N',
-                'canceled_by': row[20],
-                'date_canceled': row[21].isoformat() if row[21] else None,
-                'date_modified': row[22].isoformat() if row[22] else None,
+                'reference_number': row[1],
+                'registration_number': row[2],
+                'generic_name': row[3],
+                'brand_name': row[4],
+                'dosage_strength': row[5],
+                'dosage_form': row[6],
+                'classification': row[7],
+                'packaging': row[8],
+                'pharmacologic_category': row[9],
+                'manufacturer': row[10],
+                'country_of_origin': row[11],
+                'trader': row[12],
+                'importer': row[13],
+                'distributor': row[14],
+                'app_type': row[15],
+                'issuance_date': row[16].isoformat() if row[16] else None,
+                'expiry_date': row[17].isoformat() if row[17] else None,
+                'uploaded_by': row[18],
+                'date_uploaded': row[19].isoformat() if row[19] else None,
+                'is_canceled': row[20] if row[20] else 'N',
+                'canceled_by': row[21],
+                'date_canceled': row[22].isoformat() if row[22] else None,
+                'date_modified': row[23].isoformat() if row[23] else None,
             }
         
     finally:
@@ -304,7 +307,7 @@ def verify_registration(registration_number: str) -> Dict[str, Any]:
         with engine.connect() as connection:
             query = text("""
                 SELECT 
-                    id, registration_number, generic_name, brand_name, dosage_strength,
+                    id, reference_number, registration_number, generic_name, brand_name, dosage_strength,
                     dosage_form, classification, manufacturer, country_of_origin,
                     expiry_date, is_canceled
                 FROM fda_drug_registrations
@@ -323,8 +326,8 @@ def verify_registration(registration_number: str) -> Dict[str, Any]:
                 }
             
             # Check if expired or canceled
-            expiry_date = row[9]
-            is_canceled = row[10]
+            expiry_date = row[10]
+            is_canceled = row[11]
             
             is_expired = False
             if expiry_date and expiry_date < datetime.now().date():
@@ -334,15 +337,16 @@ def verify_registration(registration_number: str) -> Dict[str, Any]:
             
             drug = {
                 'id': row[0],
-                'registration_number': row[1],
-                'generic_name': row[2],
-                'brand_name': row[3],
-                'dosage_strength': row[4],
-                'dosage_form': row[5],
-                'classification': row[6],
-                'manufacturer': row[7],
-                'country_of_origin': row[8],
-                'expiry_date': row[9].isoformat() if row[9] else None,
+                'reference_number': row[1],
+                'registration_number': row[2],
+                'generic_name': row[3],
+                'brand_name': row[4],
+                'dosage_strength': row[5],
+                'dosage_form': row[6],
+                'classification': row[7],
+                'manufacturer': row[8],
+                'country_of_origin': row[9],
+                'expiry_date': row[10].isoformat() if row[10] else None,
                 'is_expired': is_expired,
                 'is_canceled': is_canceled if is_canceled else 'N'
             }
@@ -521,6 +525,7 @@ def export_all_drugs(
             if search:
                 where_conditions.append("""
                     (registration_number LIKE :search 
+                    OR reference_number LIKE :search
                     OR generic_name LIKE :search 
                     OR brand_name LIKE :search)
                 """)
@@ -531,7 +536,7 @@ def export_all_drugs(
             # Get ALL data (no LIMIT)
             data_query = text(f"""
                 SELECT 
-                    id, registration_number, generic_name, brand_name, dosage_strength,
+                    id, reference_number, registration_number, generic_name, brand_name, dosage_strength,
                     dosage_form, classification, packaging, pharmacologic_category,
                     manufacturer, country_of_origin, trader, importer, distributor,
                     app_type, issuance_date, expiry_date, uploaded_by, date_uploaded,
@@ -547,28 +552,29 @@ def export_all_drugs(
             for row in result:
                 drugs.append({
                     'id': row[0],
-                    'registration_number': row[1],
-                    'generic_name': row[2],
-                    'brand_name': row[3],
-                    'dosage_strength': row[4],
-                    'dosage_form': row[5],
-                    'classification': row[6],
-                    'packaging': row[7],
-                    'pharmacologic_category': row[8],
-                    'manufacturer': row[9],
-                    'country_of_origin': row[10],
-                    'trader': row[11],
-                    'importer': row[12],
-                    'distributor': row[13],
-                    'app_type': row[14],
-                    'issuance_date': row[15].isoformat() if row[15] else None,
-                    'expiry_date': row[16].isoformat() if row[16] else None,
-                    'uploaded_by': row[17],
-                    'date_uploaded': row[18].isoformat() if row[18] else None,
-                    'is_canceled': row[19] if row[19] else 'N',
-                    'canceled_by': row[20],
-                    'date_canceled': row[21].isoformat() if row[21] else None,
-                    'date_modified': row[22].isoformat() if row[22] else None,
+                    'reference_number': row[1],
+                    'registration_number': row[2],
+                    'generic_name': row[3],
+                    'brand_name': row[4],
+                    'dosage_strength': row[5],
+                    'dosage_form': row[6],
+                    'classification': row[7],
+                    'packaging': row[8],
+                    'pharmacologic_category': row[9],
+                    'manufacturer': row[10],
+                    'country_of_origin': row[11],
+                    'trader': row[12],
+                    'importer': row[13],
+                    'distributor': row[14],
+                    'app_type': row[15],
+                    'issuance_date': row[16].isoformat() if row[16] else None,
+                    'expiry_date': row[17].isoformat() if row[17] else None,
+                    'uploaded_by': row[18],
+                    'date_uploaded': row[19].isoformat() if row[19] else None,
+                    'is_canceled': row[20] if row[20] else 'N',
+                    'canceled_by': row[21],
+                    'date_canceled': row[22].isoformat() if row[22] else None,
+                    'date_modified': row[23].isoformat() if row[23] else None,
                 })
             
             return {
