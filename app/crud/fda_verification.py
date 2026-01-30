@@ -38,12 +38,12 @@ def create_drug(drug_data: Dict[str, Any]) -> Dict[str, Any]:
                     registration_number, generic_name, brand_name, dosage_strength,
                     dosage_form, classification, packaging, pharmacologic_category,
                     manufacturer, country_of_origin, trader, importer, distributor, app_type,
-                    issuance_date, expiry_date, uploaded_by
+                    issuance_date, expiry_date, uploaded_by, date_uploaded
                 ) VALUES (
                     :registration_number, :generic_name, :brand_name, :dosage_strength,
                     :dosage_form, :classification, :packaging, :pharmacologic_category,
                     :manufacturer, :country_of_origin, :trader, :importer, :distributor, :app_type,
-                    :issuance_date, :expiry_date, :uploaded_by
+                    :issuance_date, :expiry_date, :uploaded_by, NOW()
                 )
             """)
             
@@ -84,12 +84,12 @@ def bulk_create_drugs(drugs_data: List[Dict[str, Any]]) -> Dict[str, Any]:
                             registration_number, generic_name, brand_name, dosage_strength,
                             dosage_form, classification, packaging, pharmacologic_category,
                             manufacturer, country_of_origin, trader, importer, distributor, app_type,
-                            issuance_date, expiry_date, uploaded_by
+                            issuance_date, expiry_date, uploaded_by, date_uploaded
                         ) VALUES (
                             :registration_number, :generic_name, :brand_name, :dosage_strength,
                             :dosage_form, :classification, :packaging, :pharmacologic_category,
                             :manufacturer, :country_of_origin, :trader, :importer, :distributor, :app_type,
-                            :issuance_date, :expiry_date, :uploaded_by
+                            :issuance_date, :expiry_date, :uploaded_by, NOW()
                         )
                     """)
                     
@@ -138,7 +138,7 @@ def get_all_drugs(
     page: int = 1,
     page_size: int = 10,
     search: Optional[str] = None,
-    include_deleted: bool = False
+    include_canceled: bool = False
 ) -> Dict[str, Any]:
     """
     Get all drug registrations with pagination and search
@@ -151,8 +151,8 @@ def get_all_drugs(
             where_conditions = []
             params = {}
             
-            if not include_deleted:
-                where_conditions.append("date_deleted IS NULL")
+            if not include_canceled:
+                where_conditions.append("(is_canceled IS NULL OR is_canceled = 'N')")
             
             if search:
                 where_conditions.append("""
@@ -181,10 +181,15 @@ def get_all_drugs(
             params['offset'] = offset
             
             data_query = text(f"""
-                SELECT *
+                SELECT 
+                    id, registration_number, generic_name, brand_name, dosage_strength,
+                    dosage_form, classification, packaging, pharmacologic_category,
+                    manufacturer, country_of_origin, trader, importer, distributor,
+                    app_type, issuance_date, expiry_date, uploaded_by, date_uploaded,
+                    is_canceled, canceled_by, date_canceled, date_modified
                 FROM fda_drug_registrations
                 WHERE {where_clause}
-                ORDER BY created_at DESC
+                ORDER BY date_modified DESC, id DESC
                 LIMIT :limit OFFSET :offset
             """)
             
@@ -192,7 +197,6 @@ def get_all_drugs(
             
             drugs = []
             for row in result:
-                # ✅ FIXED: Updated indices to match table structure with app_status
                 drugs.append({
                     'id': row[0],
                     'registration_number': row[1],
@@ -213,11 +217,10 @@ def get_all_drugs(
                     'expiry_date': row[16].isoformat() if row[16] else None,
                     'uploaded_by': row[17],
                     'date_uploaded': row[18].isoformat() if row[18] else None,
-                    'app_status': row[19] if row[19] is not None else 0,  # ✅ NEW: Added app_status (tinyint)
-                    'is_deleted': row[20] is not None,  # ✅ NEW: Added is_deleted flag
-                    'date_deleted': row[20].isoformat() if row[20] else None,  # ✅ FIXED: Correct index
-                    'created_at': row[21].isoformat() if row[21] else None,   # ✅ FIXED: Correct index
-                    'updated_at': row[22].isoformat() if row[22] else None,   # ✅ FIXED: Correct index
+                    'is_canceled': row[19] if row[19] else 'N',
+                    'canceled_by': row[20],
+                    'date_canceled': row[21].isoformat() if row[21] else None,
+                    'date_modified': row[22].isoformat() if row[22] else None,
                 })
             
             total_pages = (total + page_size - 1) // page_size
@@ -245,9 +248,14 @@ def get_drug_by_id(drug_id: int) -> Optional[Dict[str, Any]]:
     try:
         with engine.connect() as connection:
             query = text("""
-                SELECT *
+                SELECT 
+                    id, registration_number, generic_name, brand_name, dosage_strength,
+                    dosage_form, classification, packaging, pharmacologic_category,
+                    manufacturer, country_of_origin, trader, importer, distributor,
+                    app_type, issuance_date, expiry_date, uploaded_by, date_uploaded,
+                    is_canceled, canceled_by, date_canceled, date_modified
                 FROM fda_drug_registrations
-                WHERE id = :drug_id AND date_deleted IS NULL
+                WHERE id = :drug_id AND (is_canceled IS NULL OR is_canceled = 'N')
             """)
             
             result = connection.execute(query, {'drug_id': drug_id})
@@ -256,7 +264,6 @@ def get_drug_by_id(drug_id: int) -> Optional[Dict[str, Any]]:
             if not row:
                 return None
             
-            # ✅ FIXED: Updated indices to match table structure with app_status
             return {
                 'id': row[0],
                 'registration_number': row[1],
@@ -277,11 +284,10 @@ def get_drug_by_id(drug_id: int) -> Optional[Dict[str, Any]]:
                 'expiry_date': row[16].isoformat() if row[16] else None,
                 'uploaded_by': row[17],
                 'date_uploaded': row[18].isoformat() if row[18] else None,
-                'app_status': row[19] if row[19] is not None else 0,  # ✅ NEW: Added app_status
-                'is_deleted': row[20] is not None,  # ✅ NEW: Added is_deleted flag
-                'date_deleted': row[20].isoformat() if row[20] else None,  # ✅ FIXED: Correct index
-                'created_at': row[21].isoformat() if row[21] else None,   # ✅ FIXED: Correct index
-                'updated_at': row[22].isoformat() if row[22] else None,   # ✅ FIXED: Correct index
+                'is_canceled': row[19] if row[19] else 'N',
+                'canceled_by': row[20],
+                'date_canceled': row[21].isoformat() if row[21] else None,
+                'date_modified': row[22].isoformat() if row[22] else None,
             }
         
     finally:
@@ -297,10 +303,13 @@ def verify_registration(registration_number: str) -> Dict[str, Any]:
     try:
         with engine.connect() as connection:
             query = text("""
-                SELECT *
+                SELECT 
+                    id, registration_number, generic_name, brand_name, dosage_strength,
+                    dosage_form, classification, manufacturer, country_of_origin,
+                    expiry_date, is_canceled
                 FROM fda_drug_registrations
                 WHERE registration_number = :registration_number 
-                AND date_deleted IS NULL
+                AND (is_canceled IS NULL OR is_canceled = 'N')
             """)
             
             result = connection.execute(query, {'registration_number': registration_number})
@@ -313,11 +322,15 @@ def verify_registration(registration_number: str) -> Dict[str, Any]:
                     "data": None
                 }
             
-            # Check if expired
-            expiry_date = row[16]
+            # Check if expired or canceled
+            expiry_date = row[9]
+            is_canceled = row[10]
+            
             is_expired = False
             if expiry_date and expiry_date < datetime.now().date():
                 is_expired = True
+            
+            is_valid = not is_expired and (is_canceled is None or is_canceled == 'N')
             
             drug = {
                 'id': row[0],
@@ -327,15 +340,16 @@ def verify_registration(registration_number: str) -> Dict[str, Any]:
                 'dosage_strength': row[4],
                 'dosage_form': row[5],
                 'classification': row[6],
-                'manufacturer': row[9],
-                'country_of_origin': row[10],
-                'expiry_date': row[16].isoformat() if row[16] else None,
-                'is_expired': is_expired
+                'manufacturer': row[7],
+                'country_of_origin': row[8],
+                'expiry_date': row[9].isoformat() if row[9] else None,
+                'is_expired': is_expired,
+                'is_canceled': is_canceled if is_canceled else 'N'
             }
             
             return {
                 "found": True,
-                "is_valid": not is_expired,
+                "is_valid": is_valid,
                 "data": drug
             }
         
@@ -355,7 +369,7 @@ def update_drug(drug_id: int, update_data: Dict[str, Any]) -> Dict[str, Any]:
             # Check if exists
             check_query = text("""
                 SELECT id FROM fda_drug_registrations
-                WHERE id = :drug_id AND date_deleted IS NULL
+                WHERE id = :drug_id AND (is_canceled IS NULL OR is_canceled = 'N')
             """)
             result = connection.execute(check_query, {'drug_id': drug_id})
             
@@ -373,6 +387,9 @@ def update_drug(drug_id: int, update_data: Dict[str, Any]) -> Dict[str, Any]:
             
             if not set_clauses:
                 return {"success": False, "error": "No data to update"}
+            
+            # Always update date_modified
+            set_clauses.append("date_modified = NOW()")
             
             update_query = text(f"""
                 UPDATE fda_drug_registrations
@@ -392,35 +409,88 @@ def update_drug(drug_id: int, update_data: Dict[str, Any]) -> Dict[str, Any]:
         engine.dispose()
 
 
-# ==================== DELETE ====================
-def delete_drug(drug_id: int) -> Dict[str, Any]:
+# ==================== CANCEL / RESTORE ====================
+def cancel_drug(drug_id: int, canceled_by: str) -> Dict[str, Any]:
     """
-    Soft delete a drug registration
+    Cancel a drug registration (set is_canceled = 'Y')
     """
     engine = get_fda_db_engine()
     
     try:
         with engine.connect() as connection:
-            # Check if exists
+            # Check if exists and not already canceled
             check_query = text("""
-                SELECT id FROM fda_drug_registrations
-                WHERE id = :drug_id AND date_deleted IS NULL
-            """)
-            result = connection.execute(check_query, {'drug_id': drug_id})
-            
-            if not result.fetchone():
-                return {"success": False, "error": "Drug not found"}
-            
-            # Soft delete
-            delete_query = text("""
-                UPDATE fda_drug_registrations
-                SET date_deleted = NOW()
+                SELECT id, is_canceled FROM fda_drug_registrations
                 WHERE id = :drug_id
             """)
-            connection.execute(delete_query, {'drug_id': drug_id})
+            result = connection.execute(check_query, {'drug_id': drug_id})
+            row = result.fetchone()
+            
+            if not row:
+                return {"success": False, "error": "Drug not found"}
+            
+            if row[1] == 'Y':
+                return {"success": False, "error": "Drug is already canceled"}
+            
+            # Cancel the drug
+            cancel_query = text("""
+                UPDATE fda_drug_registrations
+                SET is_canceled = 'Y',
+                    canceled_by = :canceled_by,
+                    date_canceled = NOW(),
+                    date_modified = NOW()
+                WHERE id = :drug_id
+            """)
+            connection.execute(cancel_query, {
+                'drug_id': drug_id,
+                'canceled_by': canceled_by
+            })
             connection.commit()
             
-            return {"success": True, "message": "Drug deleted successfully"}
+            return {"success": True, "message": "Drug registration canceled successfully"}
+            
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+        
+    finally:
+        engine.dispose()
+
+
+def restore_drug(drug_id: int) -> Dict[str, Any]:
+    """
+    Restore a canceled drug registration (set is_canceled = 'N')
+    """
+    engine = get_fda_db_engine()
+    
+    try:
+        with engine.connect() as connection:
+            # Check if exists and is canceled
+            check_query = text("""
+                SELECT id, is_canceled FROM fda_drug_registrations
+                WHERE id = :drug_id
+            """)
+            result = connection.execute(check_query, {'drug_id': drug_id})
+            row = result.fetchone()
+            
+            if not row:
+                return {"success": False, "error": "Drug not found"}
+            
+            if row[1] != 'Y':
+                return {"success": False, "error": "Drug is not canceled"}
+            
+            # Restore the drug
+            restore_query = text("""
+                UPDATE fda_drug_registrations
+                SET is_canceled = 'N',
+                    canceled_by = NULL,
+                    date_canceled = NULL,
+                    date_modified = NOW()
+                WHERE id = :drug_id
+            """)
+            connection.execute(restore_query, {'drug_id': drug_id})
+            connection.commit()
+            
+            return {"success": True, "message": "Drug registration restored successfully"}
             
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -432,7 +502,7 @@ def delete_drug(drug_id: int) -> Dict[str, Any]:
 # ==================== EXPORT ====================
 def export_all_drugs(
     search: Optional[str] = None,
-    include_deleted: bool = False
+    include_canceled: bool = False
 ) -> Dict[str, Any]:
     """
     Get ALL drug registrations for export (no pagination limit)
@@ -445,8 +515,8 @@ def export_all_drugs(
             where_conditions = []
             params = {}
             
-            if not include_deleted:
-                where_conditions.append("date_deleted IS NULL")
+            if not include_canceled:
+                where_conditions.append("(is_canceled IS NULL OR is_canceled = 'N')")
             
             if search:
                 where_conditions.append("""
@@ -460,17 +530,21 @@ def export_all_drugs(
             
             # Get ALL data (no LIMIT)
             data_query = text(f"""
-                SELECT *
+                SELECT 
+                    id, registration_number, generic_name, brand_name, dosage_strength,
+                    dosage_form, classification, packaging, pharmacologic_category,
+                    manufacturer, country_of_origin, trader, importer, distributor,
+                    app_type, issuance_date, expiry_date, uploaded_by, date_uploaded,
+                    is_canceled, canceled_by, date_canceled, date_modified
                 FROM fda_drug_registrations
                 WHERE {where_clause}
-                ORDER BY created_at DESC
+                ORDER BY date_modified DESC, id DESC
             """)
             
             result = connection.execute(data_query, params)
             
             drugs = []
             for row in result:
-                # ✅ FIXED: Updated indices to match table structure with app_status
                 drugs.append({
                     'id': row[0],
                     'registration_number': row[1],
@@ -491,11 +565,10 @@ def export_all_drugs(
                     'expiry_date': row[16].isoformat() if row[16] else None,
                     'uploaded_by': row[17],
                     'date_uploaded': row[18].isoformat() if row[18] else None,
-                    'app_status': row[19] if row[19] is not None else 0,  # ✅ NEW: Added app_status
-                    'is_deleted': row[20] is not None,  # ✅ NEW: Added is_deleted flag
-                    'date_deleted': row[20].isoformat() if row[20] else None,  # ✅ FIXED: Correct index
-                    'created_at': row[21].isoformat() if row[21] else None,   # ✅ FIXED: Correct index
-                    'updated_at': row[22].isoformat() if row[22] else None,   # ✅ FIXED: Correct index
+                    'is_canceled': row[19] if row[19] else 'N',
+                    'canceled_by': row[20],
+                    'date_canceled': row[21].isoformat() if row[21] else None,
+                    'date_modified': row[22].isoformat() if row[22] else None,
                 })
             
             return {
