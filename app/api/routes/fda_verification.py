@@ -81,6 +81,7 @@ async def download_template():
             detail=f"Failed to generate template: {str(e)}"
         )
 
+
 # ==================== UPLOAD EXCEL ====================
 @router.post("/upload-excel")
 async def upload_excel(
@@ -195,13 +196,14 @@ async def upload_excel(
             detail=f"Failed to process Excel file: {str(e)}"
         )
 
+
 # ==================== GET ALL DRUGS ====================
 @router.get("/drugs")
 async def get_all_drugs(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(10, ge=1, le=100, description="Items per page"),
     search: Optional[str] = Query(None, description="Search by registration number, generic name, or brand name"),
-    include_deleted: bool = Query(False, description="Include soft-deleted records")
+    include_canceled: bool = Query(False, description="Include canceled records")
 ):
     """
     Get all FDA drug registrations with pagination and search
@@ -211,7 +213,7 @@ async def get_all_drugs(
             page=page,
             page_size=page_size,
             search=search,
-            include_deleted=include_deleted
+            include_canceled=include_canceled
         )
         
         return {
@@ -239,7 +241,7 @@ async def get_all_drugs(
 @router.get("/drugs/export")
 async def export_drugs_to_excel(
     search: Optional[str] = Query(None, description="Search by registration number, generic name, or brand name"),
-    include_deleted: bool = Query(False, description="Include soft-deleted records")
+    include_canceled: bool = Query(False, description="Include canceled records")
 ):
     """
     Export all FDA drug registrations to Excel (no pagination limit)
@@ -248,7 +250,7 @@ async def export_drugs_to_excel(
         # Get ALL records (no pagination)
         result = crud.export_all_drugs(
             search=search,
-            include_deleted=include_deleted
+            include_canceled=include_canceled
         )
         
         drugs_data = result.get('drugs', [])
@@ -274,7 +276,7 @@ async def export_drugs_to_excel(
             'packaging',
             'pharmacologic_category',
             'manufacturer',
-            'country',
+            'country_of_origin',
             'trader',
             'importer',
             'distributor',
@@ -283,8 +285,10 @@ async def export_drugs_to_excel(
             'expiry_date',
             'uploaded_by',
             'date_uploaded',
-            'created_at',
-            'updated_at',
+            'is_canceled',
+            'canceled_by',
+            'date_canceled',
+            'date_modified',
         ]
         
         # Only include columns that exist in the dataframe
@@ -311,7 +315,7 @@ async def export_drugs_to_excel(
                 'H': 40,  # packaging
                 'I': 30,  # pharmacologic_category
                 'J': 40,  # manufacturer
-                'K': 20,  # country
+                'K': 20,  # country_of_origin
                 'L': 40,  # trader
                 'M': 40,  # importer
                 'N': 40,  # distributor
@@ -320,8 +324,10 @@ async def export_drugs_to_excel(
                 'Q': 15,  # expiry_date
                 'R': 20,  # uploaded_by
                 'S': 20,  # date_uploaded
-                'T': 20,  # created_at
-                'U': 20,  # updated_at
+                'T': 12,  # is_canceled
+                'U': 20,  # canceled_by
+                'V': 20,  # date_canceled
+                'W': 20,  # date_modified
             }
             
             for col_letter, width in column_widths.items():
@@ -406,7 +412,7 @@ async def verify_registration(registration_number: str):
         
         return {
             "status": "found",
-            "message": "Registration number is valid" if result['is_valid'] else "Registration number is expired",
+            "message": "Registration number is valid" if result['is_valid'] else "Registration number is expired or canceled",
             "is_valid": result['is_valid'],
             "data": result['data']
         }
@@ -447,18 +453,21 @@ async def update_drug(drug_id: int, update_data: dict):
         )
 
 
-# ==================== DELETE DRUG (SOFT DELETE) ====================
-@router.delete("/drugs/{drug_id}")
-async def delete_drug(drug_id: int):
+# ==================== CANCEL DRUG REGISTRATION ====================
+@router.put("/drugs/{drug_id}/cancel")
+async def cancel_drug(
+    drug_id: int,
+    canceled_by: str = Query(..., description="Username of user canceling the registration")
+):
     """
-    Soft delete a drug registration
+    Cancel a drug registration (sets is_canceled = 'Y')
     """
     try:
-        result = crud.delete_drug(drug_id)
+        result = crud.cancel_drug(drug_id, canceled_by)
         
         if not result['success']:
             raise HTTPException(
-                status_code=404,
+                status_code=404 if result['error'] == "Drug not found" else 400,
                 detail=result['error']
             )
         
@@ -472,5 +481,34 @@ async def delete_drug(drug_id: int):
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to delete drug: {str(e)}"
+            detail=f"Failed to cancel drug: {str(e)}"
+        )
+
+
+# ==================== RESTORE CANCELED DRUG ====================
+@router.put("/drugs/{drug_id}/restore")
+async def restore_drug(drug_id: int):
+    """
+    Restore a canceled drug registration (sets is_canceled = 'N')
+    """
+    try:
+        result = crud.restore_drug(drug_id)
+        
+        if not result['success']:
+            raise HTTPException(
+                status_code=404 if result['error'] == "Drug not found" else 400,
+                detail=result['error']
+            )
+        
+        return {
+            "status": "success",
+            "message": result['message']
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to restore drug: {str(e)}"
         )
