@@ -1,6 +1,7 @@
 """
 CRUD Operations for User
 Database operations for user authentication and management
+UPDATED: New users are created as INACTIVE by default
 """
 from sqlalchemy.orm import Session
 from typing import Optional, List
@@ -25,10 +26,10 @@ def get_by_username(db: Session, username: str) -> Optional[User]:
     """Get user by username"""
     return db.query(User).filter(User.username == username).first()
 
-# ✅ NEW: Get users by group
+
 def get_users_by_group(db: Session, group_id: int) -> List[User]:
     """
-    Get all active users from a specific group
+    Get all ACTIVE users from a specific group
     
     Returns list of users who can be assigned to tasks.
     Ordered by name for better UX in dropdowns.
@@ -41,15 +42,19 @@ def get_users_by_group(db: Session, group_id: int) -> List[User]:
         User.surname
     ).all()
 
+
 def create(db: Session, user_in: UserCreate) -> User:
     """
     Create new user with default group if not provided.
+    
+    ⚠️ IMPORTANT: New users are created as INACTIVE (is_active=False)
+    Admin approval is required to activate the account.
     """
     # Handle group_id - assign default "Users" group if not provided
-    if user_in.group_id:
+    if hasattr(user_in, 'group_id') and user_in.group_id:
         group_id = user_in.group_id
     else:
-        # Get or create default "Users" group
+        # Get or create default "Users" group (group_id = 1)
         default_group = db.query(Group).filter_by(name="Users").first()
         if not default_group:
             default_group = Group(name="Users")
@@ -58,22 +63,25 @@ def create(db: Session, user_in: UserCreate) -> User:
             db.refresh(default_group)
         group_id = default_group.id
 
-    # Handle role - convert from schema enum to model enum
-    role = UserRole.USER  # default
-    if user_in.role:
-        # Convert string to UserRole enum
-        role = UserRole[user_in.role.value.upper()]
+    # Handle role - default to USER
+    role = UserRole.USER
+    if hasattr(user_in, 'role') and user_in.role:
+        if isinstance(user_in.role, str):
+            role = UserRole[user_in.role.upper()]
+        else:
+            role = user_in.role
 
-    # Create user
+    # Create user - INACTIVE by default
     db_user = User(
         email=user_in.email,
         username=user_in.username,
         hashed_password=get_password_hash(user_in.password),
         first_name=user_in.first_name,
         surname=user_in.surname,
-        position=user_in.position,
+        position=user_in.position if hasattr(user_in, 'position') else None,
         role=role,
-        group_id=group_id
+        group_id=group_id,
+        is_active=False  # 🔒 INACTIVE by default - requires admin approval
     )
 
     db.add(db_user)
@@ -107,7 +115,11 @@ def update(db: Session, user_id: int, user_in: UserUpdate) -> Optional[User]:
 
 
 def authenticate(db: Session, username: str, password: str) -> Optional[User]:
-    """Authenticate user with username and password"""
+    """
+    Authenticate user with username and password
+    
+    ⚠️ Returns None if user is inactive
+    """
     user = get_by_username(db, username)
     
     if not user:
@@ -125,3 +137,68 @@ def authenticate(db: Session, username: str, password: str) -> Optional[User]:
 def is_active(user: User) -> bool:
     """Check if user is active"""
     return user.is_active
+
+
+# ========================================
+# ADMIN FUNCTIONS - User Approval
+# ========================================
+
+def get_all_users(db: Session, skip: int = 0, limit: int = 100) -> List[User]:
+    """
+    Get all users (both active and inactive)
+    
+    For admin purposes
+    """
+    return db.query(User).offset(skip).limit(limit).all()
+
+
+def get_pending_users(db: Session) -> List[User]:
+    """
+    Get all users pending approval (is_active = False)
+    
+    For admin to review and approve/reject
+    """
+    return db.query(User).filter(User.is_active == False).order_by(User.created_at.desc()).all()
+
+
+def get_active_users(db: Session) -> List[User]:
+    """
+    Get all active users (is_active = True)
+    """
+    return db.query(User).filter(User.is_active == True).order_by(User.first_name, User.surname).all()
+
+
+def activate_user(db: Session, user_id: int) -> Optional[User]:
+    """
+    Activate a user account (set is_active = True)
+    
+    For admin approval workflow
+    """
+    db_user = get_by_id(db, user_id)
+    
+    if not db_user:
+        return None
+    
+    db_user.is_active = True
+    db.commit()
+    db.refresh(db_user)
+    
+    return db_user
+
+
+def deactivate_user(db: Session, user_id: int) -> Optional[User]:
+    """
+    Deactivate a user account (set is_active = False)
+    
+    For admin to suspend/ban users
+    """
+    db_user = get_by_id(db, user_id)
+    
+    if not db_user:
+        return None
+    
+    db_user.is_active = False
+    db.commit()
+    db.refresh(db_user)
+    
+    return db_user

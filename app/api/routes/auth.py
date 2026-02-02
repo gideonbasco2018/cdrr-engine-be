@@ -1,6 +1,7 @@
 """
-Authentication Routes
+Authentication Routes - COMPLETE
 Login, registration, and user management endpoints
+UPDATED: Handles inactive users with proper error messages
 """
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,7 +13,7 @@ from app.db.session import get_db
 from app.core.deps import get_current_active_user
 from app.crud import user as crud_user
 from app.schemas.auth import Token, UserCreate, UserResponse, LoginResponse, UserUpdate
-from app.core.security import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
+from app.core.security import create_access_token, verify_password, ACCESS_TOKEN_EXPIRE_MINUTES
 from app.models.user import User, UserRole
 
 router = APIRouter(
@@ -28,6 +29,8 @@ def register(
 ):
     """
     Register a new user
+    
+    ⚠️ New users are created as INACTIVE and require admin approval
     
     - **email**: User's email address (must be unique)
     - **username**: Username (must be unique)
@@ -52,7 +55,7 @@ def register(
             detail="Username already taken"
         )
     
-    # Create new user
+    # Create new user (will be inactive by default)
     user = crud_user.create(db, user_in=user_in)
     
     return user
@@ -65,13 +68,11 @@ def login(
 ):
     """
     Login with username and password
+    
+    ⚠️ Only ACTIVE users can log in
     """
-    # Authenticate user
-    user = crud_user.authenticate(
-        db,
-        username=form_data.username,
-        password=form_data.password
-    )
+    # First check if user exists
+    user = crud_user.get_by_username(db, username=form_data.username)
     
     if not user:
         raise HTTPException(
@@ -80,12 +81,28 @@ def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
+    # Verify password before checking active status
+    if not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Check if user is active AFTER verifying password
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is pending approval. Please wait for admin confirmation or contact support.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
     # Create access token WITH ROLE
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={
             "sub": user.username,
-            "role": user.role.value  # ADD THIS - include role in token
+            "role": user.role.value
         },
         expires_delta=access_token_expires
     )
@@ -145,7 +162,11 @@ def update_current_user(
     
     return updated_user
 
-# ✅ UPDATED: Get users by group_id (with optional parameter)
+
+# ========================================
+# USER MANAGEMENT ENDPOINTS
+# ========================================
+
 @router.get("/users/group", response_model=List[UserResponse])
 def get_group_users(
     group_id: Optional[int] = None,
@@ -153,40 +174,25 @@ def get_group_users(
     db: Session = Depends(get_db)
 ):
     """
-    Get list of active users from a specific group
+    Get list of ACTIVE users from a specific group
     
     Query Parameters:
     - **group_id**: (Optional) Specific group ID to get users from.
                     If not provided, returns users from current user's group.
-    
-    Returns all users in the group who can be assigned as:
-    - Deckers
-    - Evaluators
-    - Reviewers
-    - etc.
     """
-    # If no group_id provided, use current user's group
     target_group_id = group_id if group_id is not None else current_user.group_id
-    
-    # Optional: Check if user has permission to view other groups
-    # Uncomment if you want to restrict access
-    # if target_group_id != current_user.group_id and current_user.role != UserRole.ADMIN:
-    #     raise HTTPException(
-    #         status_code=status.HTTP_403_FORBIDDEN,
-    #         detail="You don't have permission to view users from other groups"
-    #     )
     
     users = crud_user.get_users_by_group(db, group_id=target_group_id)
     
     if not users:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No users found in group {target_group_id}"
+            detail=f"No active users found in group {target_group_id}"
         )
     
     return users
 
-# ✅ ALTERNATIVE: More RESTful approach with path parameter
+
 @router.get("/users/group/{group_id}", response_model=List[UserResponse])
 def get_users_by_specific_group(
     group_id: int,
@@ -194,42 +200,24 @@ def get_users_by_specific_group(
     db: Session = Depends(get_db)
 ):
     """
-    Get list of active users from a specific group by group ID
+    Get list of ACTIVE users from a specific group by group ID
     
-    Path Parameters:
-    - **group_id**: The group ID to fetch users from
-    
-    Permission Rules:
-    - Users can view their own group
-    - Admins can view all groups
-    - Deckers (group 2) can view Evaluators (group 3)
-    - Evaluators (group 3) can view Checkers (group 4)
-    - Checkers (group 4) can view Evaluators (group 3)
+    Returns only active users (is_active = True)
     """
     # Define allowed cross-group access
     allowed_access = False
     
-    # 1. User viewing their own group
     if group_id == current_user.group_id:
         allowed_access = True
-    
-    # 2. Admin can view all groups
-    elif current_user.role == UserRole.ADMIN:
+    elif current_user.role in [UserRole.ADMIN, UserRole.SUPERADMIN]:
         allowed_access = True
-    
-    # 3. Decker (group 2) can view Evaluator (group 3)
     elif current_user.group_id == 2 and group_id == 3:
         allowed_access = True
-    
-    # 4. Evaluator (group 3) can view Checker (group 4)
     elif current_user.group_id == 3 and group_id == 4:
         allowed_access = True
-    
-    # 5. Checker (group 4) can view Evaluator (group 3) - for returning tasks
     elif current_user.group_id == 4 and group_id == 3:
         allowed_access = True
     
-    # Check permission
     if not allowed_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -241,19 +229,132 @@ def get_users_by_specific_group(
     if not users:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No users found in group {group_id}"
+            detail=f"No active users found in group {group_id}"
         )
     
     return users
 
-# ✅ Get current user's group users (shortcut)
+
 @router.get("/users/my-group", response_model=List[UserResponse])
 def get_my_group_users(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """
-    Get list of active users from current user's group
+    Get list of ACTIVE users from current user's group
     """
     users = crud_user.get_users_by_group(db, group_id=current_user.group_id)
+    return users
+
+
+# ========================================
+# ADMIN-ONLY: USER APPROVAL ENDPOINTS
+# ========================================
+
+@router.get("/admin/users/pending", response_model=List[UserResponse])
+def get_pending_users(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all users pending approval (is_active = False)
+    
+    🔒 ADMIN ONLY
+    """
+    # Check if user is admin
+    if current_user.role not in [UserRole.ADMIN, UserRole.SUPERADMIN]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can view pending users"
+        )
+    
+    pending_users = crud_user.get_pending_users(db)
+    return pending_users
+
+
+@router.post("/admin/users/{user_id}/activate", response_model=UserResponse)
+def activate_user(
+    user_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Activate a user account (approve registration)
+    
+    🔒 ADMIN ONLY
+    """
+    # Check if user is admin
+    if current_user.role not in [UserRole.ADMIN, UserRole.SUPERADMIN]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can activate users"
+        )
+    
+    user = crud_user.activate_user(db, user_id=user_id)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    return user
+
+
+@router.post("/admin/users/{user_id}/deactivate", response_model=UserResponse)
+def deactivate_user(
+    user_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Deactivate a user account (suspend/ban user)
+    
+    🔒 ADMIN ONLY
+    """
+    # Check if user is admin
+    if current_user.role not in [UserRole.ADMIN, UserRole.SUPERADMIN]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can deactivate users"
+        )
+    
+    # Prevent deactivating yourself
+    if user_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot deactivate your own account"
+        )
+    
+    user = crud_user.deactivate_user(db, user_id=user_id)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    return user
+
+
+@router.get("/admin/users", response_model=List[UserResponse])
+def get_all_users(
+    skip: int = 0,
+    limit: int = 100,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all users (both active and inactive)
+    
+    🔒 ADMIN ONLY
+    """
+    # Check if user is admin
+    if current_user.role not in [UserRole.ADMIN, UserRole.SUPERADMIN]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can view all users"
+        )
+    
+    users = crud_user.get_all_users(db, skip=skip, limit=limit)
     return users
