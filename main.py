@@ -4,7 +4,7 @@ from app.core.config import settings
 from app.api.routes import (
     auth, 
     main_db, 
-    group, 
+    groups, 
     deck,
     evaluation, 
     application_logs,
@@ -37,7 +37,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(main_db.router)
-app.include_router(group.router)
+app.include_router(groups.router)
 app.include_router(deck.router)
 app.include_router(evaluation.router)
 app.include_router(application_logs.router)
