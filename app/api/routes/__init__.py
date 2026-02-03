@@ -12,7 +12,8 @@ from app.api.routes import (
     doctrack, 
     analytics, 
     fda_verification_test_conn, 
-    fda_verification
+    fda_verification,
+    fda_verification_statistics
 )
 api_router = APIRouter()
 
@@ -25,3 +26,5 @@ api_router.include_router(doctrack.router)
 api_router.include_router(analytics.router)
 api_router.include_router(fda_verification_test_conn.router)
 api_router.include_router(fda_verification.router)
+api_router.include_router(fda_verification_statistics.router)
+

@@ -6,7 +6,6 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Enum,
-    ForeignKey
 )
 from sqlalchemy.orm import relationship
 from app.db.base_class import Base
@@ -38,9 +37,19 @@ class User(Base):
     # role
     role = Column(Enum(UserRole), default=UserRole.USER, nullable=False)
 
-    # ✅ group (NEW)
-    group_id = Column(Integer, ForeignKey("groups.id"), nullable=True)  
-    group = relationship("Group")
+    # 🔗 ASSOCIATION OBJECT RELATIONSHIP
+    user_groups = relationship(
+        "UserGroup",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
+
+    # 🔁 CONVENIENCE MANY-TO-MANY (read-only)
+    groups = relationship(
+        "Group",
+        secondary="user_groups",
+        viewonly=True
+    )
 
     # status
     is_active = Column(Boolean, default=True)
@@ -52,3 +61,12 @@ class User(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+    # 🔙 Backward compatibility (KEEP SAFE)
+    @property
+    def group_id(self):
+        return self.groups[0].id if self.groups else None
+
+    @property
+    def group(self):
+        return self.groups[0] if self.groups else None

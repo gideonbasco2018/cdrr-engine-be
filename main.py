@@ -11,7 +11,8 @@ from app.api.routes import (
     doctrack,
     analytics,
     fda_verification_test_conn,
-    fda_verification
+    fda_verification,
+    fda_verification_statistics
 )
 
 # Dynamic docs URL based on environment
@@ -44,6 +45,7 @@ app.include_router(doctrack.router)
 app.include_router(analytics.router)
 app.include_router(fda_verification_test_conn.router)
 app.include_router(fda_verification.router)
+app.include_router(fda_verification_statistics.router)
 
 @app.get("/")
 def root():

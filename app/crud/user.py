@@ -1,204 +1,217 @@
 """
 CRUD Operations for User
 Database operations for user authentication and management
-UPDATED: New users are created as INACTIVE by default
+UPDATED: Uses UserGroup association table (many-to-many)
+New users are created as INACTIVE by default
 """
+
 from sqlalchemy.orm import Session
 from typing import Optional, List
 
 from app.models.user import User, UserRole
 from app.models.group import Group
+from app.models.user_groups import UserGroup
 from app.schemas.auth import UserCreate, UserUpdate
 from app.core.security import get_password_hash, verify_password
 
 
+# ======================================================
+# BASIC GETTERS
+# ======================================================
+
 def get_by_id(db: Session, user_id: int) -> Optional[User]:
-    """Get user by ID"""
     return db.query(User).filter(User.id == user_id).first()
 
 
 def get_by_email(db: Session, email: str) -> Optional[User]:
-    """Get user by email"""
     return db.query(User).filter(User.email == email).first()
 
 
 def get_by_username(db: Session, username: str) -> Optional[User]:
-    """Get user by username"""
     return db.query(User).filter(User.username == username).first()
 
 
+# ======================================================
+# GROUP-BASED QUERIES
+# ======================================================
+
 def get_users_by_group(db: Session, group_id: int) -> List[User]:
     """
-    Get all ACTIVE users from a specific group
-    
-    Returns list of users who can be assigned to tasks.
-    Ordered by name for better UX in dropdowns.
+    Get all ACTIVE users belonging to a specific group
     """
-    return db.query(User).filter(
-        User.group_id == group_id,
-        User.is_active == True
-    ).order_by(
-        User.first_name, 
-        User.surname
-    ).all()
+    return (
+        db.query(User)
+        .join(UserGroup)
+        .filter(
+            UserGroup.group_id == group_id,
+            User.is_active == True
+        )
+        .order_by(User.first_name, User.surname)
+        .all()
+    )
 
+
+# ======================================================
+# CREATE USER
+# ======================================================
 
 def create(db: Session, user_in: UserCreate) -> User:
     """
-    Create new user with default group if not provided.
-    
-    ⚠️ IMPORTANT: New users are created as INACTIVE (is_active=False)
-    Admin approval is required to activate the account.
+    Create new user and assign group(s)
+
+    ⚠️ New users are INACTIVE by default
     """
-    # Handle group_id - assign default "Users" group if not provided
-    if hasattr(user_in, 'group_id') and user_in.group_id:
-        group_id = user_in.group_id
-    else:
-        # Get or create default "Users" group (group_id = 1)
-        default_group = db.query(Group).filter_by(name="Users").first()
-        if not default_group:
-            default_group = Group(name="Users")
-            db.add(default_group)
-            db.commit()
-            db.refresh(default_group)
-        group_id = default_group.id
 
-    # Handle role - default to USER
+    # ----------------------------------
+    # Resolve role
+    # ----------------------------------
     role = UserRole.USER
-    if hasattr(user_in, 'role') and user_in.role:
-        if isinstance(user_in.role, str):
-            role = UserRole[user_in.role.upper()]
-        else:
-            role = user_in.role
+    if hasattr(user_in, "role") and user_in.role:
+        role = (
+            UserRole[user_in.role.upper()]
+            if isinstance(user_in.role, str)
+            else user_in.role
+        )
 
-    # Create user - INACTIVE by default
+    # ----------------------------------
+    # Create user
+    # ----------------------------------
     db_user = User(
         email=user_in.email,
         username=user_in.username,
         hashed_password=get_password_hash(user_in.password),
         first_name=user_in.first_name,
         surname=user_in.surname,
-        position=user_in.position if hasattr(user_in, 'position') else None,
+        position=getattr(user_in, "position", None),
         role=role,
-        group_id=group_id,
-        is_active=False  # 🔒 INACTIVE by default - requires admin approval
+        is_active=False,  # 🔒 inactive by default
     )
 
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
+
+    # ----------------------------------
+    # Assign group
+    # ----------------------------------
+    if hasattr(user_in, "group_id") and user_in.group_id:
+        group = db.query(Group).filter(Group.id == user_in.group_id).first()
+    else:
+        # Default "Users" group
+        group = db.query(Group).filter(Group.name == "Users").first()
+        if not group:
+            group = Group(name="Users")
+            db.add(group)
+            db.commit()
+            db.refresh(group)
+
+    db.add(UserGroup(user_id=db_user.id, group_id=group.id))
+    db.commit()
+    db.refresh(db_user)
+
     return db_user
 
 
+# ======================================================
+# UPDATE USER
+# ======================================================
+
 def update(db: Session, user_id: int, user_in: UserUpdate) -> Optional[User]:
-    """Update user information"""
     db_user = get_by_id(db, user_id)
     if not db_user:
         return None
 
     update_data = user_in.dict(exclude_unset=True)
-    
-    # Handle password separately - hash it before storing
-    if 'password' in update_data:
-        hashed_password = get_password_hash(update_data['password'])
-        setattr(db_user, 'hashed_password', hashed_password)
-        del update_data['password']
-    
-    # Update other fields
+
+    # Handle password
+    if "password" in update_data:
+        db_user.hashed_password = get_password_hash(update_data.pop("password"))
+
+    # Handle group update
+    if "group_id" in update_data:
+        new_group_id = update_data.pop("group_id")
+
+        # remove old group links
+        db.query(UserGroup).filter(UserGroup.user_id == db_user.id).delete()
+
+        # add new group link
+        db.add(UserGroup(user_id=db_user.id, group_id=new_group_id))
+
+    # Update remaining fields
     for field, value in update_data.items():
         setattr(db_user, field, value)
 
     db.commit()
     db.refresh(db_user)
-    
     return db_user
 
 
+# ======================================================
+# AUTHENTICATION
+# ======================================================
+
 def authenticate(db: Session, username: str, password: str) -> Optional[User]:
-    """
-    Authenticate user with username and password
-    
-    ⚠️ Returns None if user is inactive
-    """
     user = get_by_username(db, username)
-    
+
     if not user:
         return None
-    
+
     if not verify_password(password, user.hashed_password):
         return None
-    
+
     if not user.is_active:
         return None
-    
+
     return user
 
 
 def is_active(user: User) -> bool:
-    """Check if user is active"""
     return user.is_active
 
 
-# ========================================
-# ADMIN FUNCTIONS - User Approval
-# ========================================
+# ======================================================
+# ADMIN FUNCTIONS
+# ======================================================
 
 def get_all_users(db: Session, skip: int = 0, limit: int = 100) -> List[User]:
-    """
-    Get all users (both active and inactive)
-    
-    For admin purposes
-    """
     return db.query(User).offset(skip).limit(limit).all()
 
 
 def get_pending_users(db: Session) -> List[User]:
-    """
-    Get all users pending approval (is_active = False)
-    
-    For admin to review and approve/reject
-    """
-    return db.query(User).filter(User.is_active == False).order_by(User.created_at.desc()).all()
+    return (
+        db.query(User)
+        .filter(User.is_active == False)
+        .order_by(User.created_at.desc())
+        .all()
+    )
 
 
 def get_active_users(db: Session) -> List[User]:
-    """
-    Get all active users (is_active = True)
-    """
-    return db.query(User).filter(User.is_active == True).order_by(User.first_name, User.surname).all()
+    return (
+        db.query(User)
+        .filter(User.is_active == True)
+        .order_by(User.first_name, User.surname)
+        .all()
+    )
 
 
 def activate_user(db: Session, user_id: int) -> Optional[User]:
-    """
-    Activate a user account (set is_active = True)
-    
-    For admin approval workflow
-    """
-    db_user = get_by_id(db, user_id)
-    
-    if not db_user:
+    user = get_by_id(db, user_id)
+    if not user:
         return None
-    
-    db_user.is_active = True
+
+    user.is_active = True
     db.commit()
-    db.refresh(db_user)
-    
-    return db_user
+    db.refresh(user)
+    return user
 
 
 def deactivate_user(db: Session, user_id: int) -> Optional[User]:
-    """
-    Deactivate a user account (set is_active = False)
-    
-    For admin to suspend/ban users
-    """
-    db_user = get_by_id(db, user_id)
-    
-    if not db_user:
+    user = get_by_id(db, user_id)
+    if not user:
         return None
-    
-    db_user.is_active = False
+
+    user.is_active = False
     db.commit()
-    db.refresh(db_user)
-    
-    return db_user
+    db.refresh(user)
+    return user
