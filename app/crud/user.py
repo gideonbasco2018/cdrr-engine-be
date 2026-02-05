@@ -3,6 +3,7 @@ CRUD Operations for User
 Database operations for user authentication and management
 UPDATED: Uses UserGroup association table (many-to-many)
 New users are created as INACTIVE by default
+Added manual password reset functionality
 """
 
 from sqlalchemy.orm import Session
@@ -144,6 +145,26 @@ def update(db: Session, user_id: int, user_in: UserUpdate) -> Optional[User]:
     db.commit()
     db.refresh(db_user)
     return db_user
+
+
+# ======================================================
+# PASSWORD RESET
+# ======================================================
+
+def reset_user_password(db: Session, user_id: int, new_password: str) -> Optional[User]:
+    """
+    Manually reset user's password to a specified password
+    """
+    user = get_by_id(db, user_id)
+    if not user:
+        return None
+
+    # Update user's password
+    user.hashed_password = get_password_hash(new_password)
+    db.commit()
+    db.refresh(user)
+
+    return user
 
 
 # ======================================================
