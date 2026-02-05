@@ -4,6 +4,8 @@ from app.models.application_logs import ApplicationLogs
 from app.models.user import User
 from app.models.group import Group
 from app.models.user_groups import UserGroup
+from app.models.menu_permissions import MenuItem, menu_group_permissions
+
 
 __all__ = [
     "MainDB",
@@ -11,5 +13,8 @@ __all__ = [
     "ApplicationLogs",
     "User",
     "Group",
-    "UserGroup"
+    "UserGroup",
+    "MenuItem",
+    "menu_group_permissions"
 ]
+

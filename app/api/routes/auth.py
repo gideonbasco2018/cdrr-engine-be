@@ -1,7 +1,7 @@
 """
 Authentication Routes - COMPLETE
 Login, registration, and user management endpoints
-UPDATED: Supports many-to-many user-groups safely
+UPDATED: Supports many-to-many user-groups safely + Password Reset
 """
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -282,6 +282,46 @@ def deactivate_user(
         )
 
     return user
+
+
+from pydantic import BaseModel
+
+class PasswordResetRequest(BaseModel):
+    new_password: str
+
+@router.post("/admin/users/{user_id}/reset-password")
+def reset_user_password(
+    user_id: int,
+    password_data: PasswordResetRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Manually reset a user's password
+    Admin/SuperAdmin only
+    """
+    if current_user.role not in [UserRole.ADMIN, UserRole.SUPERADMIN]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can reset passwords",
+        )
+
+    user = crud_user.reset_user_password(
+        db, 
+        user_id=user_id, 
+        new_password=password_data.new_password
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    
+    return {
+        "success": True,
+        "message": f"Password for {user.username} has been reset successfully.",
+    }
 
 
 @router.get("/admin/users", response_model=List[UserResponse])
