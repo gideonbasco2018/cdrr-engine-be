@@ -237,6 +237,7 @@ class MainDBSummary(BaseModel):
     total_records: int
     decked_count: int = 0
     not_decked_count: int = 0
+    otc_count: int = 0 
     by_status: dict
     by_category: dict
     recent_uploads: int

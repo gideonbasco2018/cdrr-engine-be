@@ -125,3 +125,13 @@ class LoginResponse(BaseModel):
     access_token: str
     token_type: str
     user: UserResponse
+
+class AdminUserUpdate(BaseModel):
+    """Schema for admin updating another user's details"""
+    username: Optional[str] = None
+    email: Optional[EmailStr] = None
+    role: Optional[str] = None  # "User", "Admin", or "SuperAdmin"
+    first_name: Optional[str] = None
+    surname: Optional[str] = None
+    position: Optional[str] = None
+    group_id: Optional[int] = None

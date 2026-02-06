@@ -18,6 +18,7 @@ from app.schemas.auth import (
     UserResponse,
     LoginResponse,
     UserUpdate,
+    AdminUserUpdate,
 )
 from app.core.security import (
     create_access_token,
@@ -25,6 +26,7 @@ from app.core.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
 )
 from app.models.user import User, UserRole
+from pydantic import BaseModel, EmailStr
 
 router = APIRouter(
     prefix="/api/auth",
@@ -283,9 +285,6 @@ def deactivate_user(
 
     return user
 
-
-from pydantic import BaseModel
-
 class PasswordResetRequest(BaseModel):
     new_password: str
 
@@ -338,3 +337,76 @@ def get_all_users(
         )
 
     return crud_user.get_all_users(db, skip=skip, limit=limit)
+
+@router.patch("/admin/users/{user_id}", response_model=UserResponse)
+def admin_update_user(
+    user_id: int,
+    user_update: AdminUserUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Update another user's details (Admin/SuperAdmin only)
+    Can update: username, email, role, first_name, surname, position, group_id
+    """
+    # Permission check
+    if current_user.role not in [UserRole.ADMIN, UserRole.SUPERADMIN]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can update user details",
+        )
+
+    # Prevent updating yourself (use /me endpoint instead)
+    if user_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Use /api/auth/me to update your own profile",
+        )
+
+    # Check if user exists
+    target_user = crud_user.get_by_id(db, user_id=user_id)
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    # Validation: Check if new username is already taken
+    if user_update.username and user_update.username != target_user.username:
+        existing = crud_user.get_by_username(db, username=user_update.username)
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already taken",
+            )
+
+    # Validation: Check if new email is already taken
+    if user_update.email and user_update.email != target_user.email:
+        existing = crud_user.get_by_email(db, email=user_update.email)
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered",
+            )
+
+    # Convert role string to enum if provided
+    update_dict = user_update.dict(exclude_unset=True)
+    if "role" in update_dict:
+        try:
+            update_dict["role"] = UserRole[update_dict["role"].upper()]
+        except KeyError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid role. Must be one of: User, Admin, SuperAdmin",
+            )
+
+    # Perform update
+    updated_user = crud_user.admin_update_user(db, user_id=user_id, update_data=update_dict)
+
+    if not updated_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    return updated_user
