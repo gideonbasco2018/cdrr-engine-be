@@ -5,7 +5,7 @@ Database operations for pharmaceutical reports
 """
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, desc, or_, cast, String, nullslast, nullsfirst
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 from datetime import datetime, timedelta
 
 from app.models.main_db import MainDB
@@ -31,19 +31,34 @@ def get_main_db_records(
     skip: int = 0,
     limit: int = 100,
     search: Optional[str] = None,
-    status: Optional[str] = None,
-    category: Optional[str] = None,
+    filters: Optional[Dict[str, any]] = None,
     sort_by: str = "DB_DATE_EXCEL_UPLOAD",
     sort_order: str = "desc"
 ) -> Tuple[List[MainDB], int]:
-    """Fetch MainDB records with ApplicationDelegation (1-to-1)"""
-    print(f"🔍 CRUD: status={status}, sort_by={sort_by}, sort_order={sort_order}")
+    """Fetch MainDB records with ApplicationDelegation (1-to-1) and flexible filtering"""
+    print(f"🔍 CRUD: filters={filters}, sort_by={sort_by}, sort_order={sort_order}")
     
     # Start with base query
     query = db.query(MainDB)
     
     # Track if we've already joined ApplicationDelegation
     delegation_joined = False
+
+    # Extract filters (for backward compatibility)
+    if filters is None:
+        filters = {}
+    
+    status = filters.get("status")
+    category = filters.get("category")
+    prescription = filters.get("prescription")
+    prescription_not = filters.get("prescription_not")
+    dtn = filters.get("dtn")
+    manufacturer = filters.get("manufacturer")
+    lto_company = filters.get("lto_company")
+    brand_name = filters.get("brand_name")
+    generic_name = filters.get("generic_name")
+    app_status = filters.get("app_status")
+    app_type = filters.get("app_type")  # ✅ NEW
 
     # ✅ Filter by evaluator status (decked/not-decked)
     if status == "not_decked":
@@ -67,11 +82,86 @@ def get_main_db_records(
         )
         print("✅ Applied decked filter")
 
-    # Filter by category
+    # ✅ Filter by category (Establishment Category)
     if category:
         query = query.filter(MainDB.DB_EST_CAT == category)
+        print(f"✅ Applied category filter: {category}")
 
-    # ✅ Search with proper type handling
+    # ✅ Filter by Prescription Classification
+    if prescription:
+        # ✅ UPDATED - Handle __EMPTY__ for no prescription type
+        if prescription == "__EMPTY__" or prescription == "":
+            query = query.filter(
+                or_(
+                    MainDB.DB_PROD_CLASS_PRESCRIP.is_(None),
+                    MainDB.DB_PROD_CLASS_PRESCRIP == ""
+                )
+            )
+            print(f"✅ Applied prescription filter: NULL/Empty (received: {prescription})")
+        else:
+            query = query.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
+            print(f"✅ Applied prescription filter: {prescription}")
+
+    # ✅ Filter by NOT Prescription (for Manual - exclude OTC)
+    if prescription_not:
+        query = query.filter(MainDB.DB_PROD_CLASS_PRESCRIP != prescription_not)
+        print(f"✅ Applied prescription_not filter (exclude): {prescription_not}")
+
+    # ✅ Filter by DTN (exact match for integer)
+    if dtn:
+        query = query.filter(MainDB.DB_DTN == dtn)
+        print(f"✅ Applied DTN filter: {dtn}")
+
+    # ✅ Filter by Manufacturer (partial match)
+    if manufacturer:
+        query = query.filter(MainDB.DB_PROD_MANU.like(f"%{manufacturer}%"))
+        print(f"✅ Applied manufacturer filter: {manufacturer}")
+
+    # ✅ Filter by LTO Company (partial match)
+    if lto_company:
+        query = query.filter(MainDB.DB_EST_LTO_COMP.like(f"%{lto_company}%"))
+        print(f"✅ Applied LTO company filter: {lto_company}")
+
+    # ✅ Filter by Brand Name (partial match)
+    if brand_name:
+        query = query.filter(MainDB.DB_PROD_BR_NAME.like(f"%{brand_name}%"))
+        print(f"✅ Applied brand name filter: {brand_name}")
+
+    # ✅ Filter by Generic Name (partial match)
+    if generic_name:
+        query = query.filter(MainDB.DB_PROD_GEN_NAME.like(f"%{generic_name}%"))
+        print(f"✅ Applied generic name filter: {generic_name}")
+
+    # ✅ Filter by Application Status
+    if app_status:
+        # ✅ UPDATED - Handle __EMPTY__ for no application status
+        if app_status == "__EMPTY__" or app_status == "":
+            query = query.filter(
+                or_(
+                    MainDB.DB_APP_STATUS.is_(None),
+                    MainDB.DB_APP_STATUS == ""
+                )
+            )
+            print(f"✅ Applied app_status filter: NULL/Empty (received: {app_status})")
+        else:
+            query = query.filter(MainDB.DB_APP_STATUS == app_status)
+            print(f"✅ Applied application status filter: {app_status}")
+
+    # ✅ NEW - Filter by Application Type
+    if app_type is not None:  # Check for None explicitly
+        if app_type == "__EMPTY__" or app_type == "":  # ✅ Handle both __EMPTY__ and empty string
+            query = query.filter(
+                or_(
+                    MainDB.DB_APP_TYPE.is_(None),
+                    MainDB.DB_APP_TYPE == ""
+                )
+            )
+            print(f"✅ Applied app_type filter: NULL/Empty (received: {app_type})")
+        else:
+            query = query.filter(MainDB.DB_APP_TYPE == app_type)
+            print(f"✅ Applied app_type filter: {app_type}")
+
+    # ✅ Search with proper type handling (global search across multiple fields)
     if search:
         search_pattern = f"%{search}%"
         search_conditions = [
@@ -79,7 +169,9 @@ def get_main_db_records(
             MainDB.DB_PROD_BR_NAME.like(search_pattern),
             MainDB.DB_PROD_GEN_NAME.like(search_pattern),
             MainDB.DB_REG_NO.like(search_pattern),
-            MainDB.DB_EST_CAT.like(search_pattern)
+            MainDB.DB_EST_CAT.like(search_pattern),
+            MainDB.DB_PROD_MANU.like(search_pattern),
+            MainDB.DB_PROD_CLASS_PRESCRIP.like(search_pattern)
         ]
         
         # Handle DTN search (integer field)
@@ -89,6 +181,7 @@ def get_main_db_records(
             search_conditions.append(cast(MainDB.DB_DTN, String).like(search_pattern))
         
         query = query.filter(or_(*search_conditions))
+        print(f"✅ Applied global search: {search}")
 
     # Get total BEFORE applying sorting and pagination
     total = query.count()
@@ -294,7 +387,7 @@ def bulk_delete_main_db_records(db: Session, record_ids: List[int]) -> int:
 # Summary / Statistics
 # -----------------------------
 def get_main_db_summary(db: Session) -> dict:
-    """Summary statistics with evaluator counts"""
+    """Summary statistics with evaluator counts and OTC count"""
     total_records = db.query(MainDB).count()
     
     # Count records with evaluator (decked)
@@ -317,6 +410,9 @@ def get_main_db_summary(db: Session) -> dict:
         )
     ).count()
     
+    # ✅ Count OTC records
+    otc_count = db.query(MainDB).filter(MainDB.DB_PROD_CLASS_PRESCRIP == "OTC").count()
+    
     status_counts = db.query(MainDB.DB_APP_STATUS, func.count(MainDB.DB_ID)).group_by(MainDB.DB_APP_STATUS).all()
     category_counts = db.query(MainDB.DB_EST_CAT, func.count(MainDB.DB_ID)).group_by(MainDB.DB_EST_CAT).all()
     seven_days_ago = datetime.now() - timedelta(days=7)
@@ -326,12 +422,13 @@ def get_main_db_summary(db: Session) -> dict:
         "total_records": total_records,
         "decked_count": decked_count,
         "not_decked_count": not_decked_count,
+        "otc_count": otc_count,
         "by_status": {status or "Unknown": count for status, count in status_counts},
         "by_category": {category or "Unknown": count for category, count in category_counts},
         "recent_uploads": recent_uploads
     }
     
-    print(f"📊 Summary Stats: Total={total_records}, Decked={decked_count}, Not Decked={not_decked_count}")
+    print(f"📊 Summary Stats: Total={total_records}, Decked={decked_count}, Not Decked={not_decked_count}, OTC={otc_count}")
     
     return result
 

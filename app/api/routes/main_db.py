@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import func, or_  # ✅ FIXED - Added or_ import
 from typing import Optional, List
 import pandas as pd
 import io
@@ -20,6 +21,7 @@ from app.schemas.main_db import (
 )
 from app.crud import main_db as crud
 from app.crud.main_db import get_main_db_records, get_application_logs
+from app.models.main_db import MainDB  # ✅ FIXED - Added MainDB import
 from app.models.application_delegation import ApplicationDelegation
 from app.core.deps import get_current_active_user  
 
@@ -120,7 +122,7 @@ COLUMN_MAPPING = {
     "Pharma Prod Cat": "DB_PHARMA_PROD_CAT",
     "Pharma Prod Cat Label": "DB_PHARMA_PROD_CAT_LABEL",
     "Is in PM": "DB_IS_IN_PM",
-    "Timeline Citizen Charter": "DB_TIMELINE_CITIZEN_CHARTER"  # ✅ NEW
+    "Timeline Citizen Charter": "DB_TIMELINE_CITIZEN_CHARTER"
 }
 
 # Application Delegation Column Mapping
@@ -171,7 +173,7 @@ DELEGATION_DATE_FIELDS = {
 
 NUMERIC_STRING_FIELDS = {'DB_FEE', 'DB_LRF', 'DB_SURC', 'DB_TOTAL'}
 
-# ✅ NEW: Integer fields that should be stored as integers, not strings
+# ✅ Integer fields that should be stored as integers, not strings
 INTEGER_FIELDS = {'DB_DTN', 'DB_IS_IN_PM', 'DB_TIMELINE_CITIZEN_CHARTER'}
 
 
@@ -218,19 +220,45 @@ def get_main_db(
     search: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
+    # ✅ NEW FILTERS - All optional and reusable
+    prescription: Optional[str] = Query(None, description="Filter by Prescription (e.g., 'OTC', 'Rx')"),
+    prescription_not: Optional[str] = Query(None, description="Exclude by Prescription (e.g., NOT 'Over-the-Counter (OTC) Drug')"),
+    dtn: Optional[int] = Query(None, description="Filter by DTN (Document Tracking Number)"),
+    manufacturer: Optional[str] = Query(None, description="Filter by Manufacturer"),
+    lto_company: Optional[str] = Query(None, description="Filter by LTO Company"),
+    brand_name: Optional[str] = Query(None, description="Filter by Brand Name"),
+    generic_name: Optional[str] = Query(None, description="Filter by Generic Name"),
+    app_status: Optional[str] = Query(None, description="Filter by Application Status"),
+    app_type: Optional[str] = Query(None, description="Filter by Application Type (DB_APP_TYPE). Use empty string for records without app type."),
+    # END NEW FILTERS
     sort_by: str = Query("DB_DATE_EXCEL_UPLOAD"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     db: Session = Depends(get_db)
 ):
-    """Get paginated list of main database records"""
+    """Get paginated list of main database records with flexible filtering"""
     skip = (page - 1) * page_size
+    
+    # Build filters dictionary
+    filters = {
+        "status": status,
+        "category": category,
+        "prescription": prescription,
+        "prescription_not": prescription_not,
+        "dtn": dtn,
+        "manufacturer": manufacturer,
+        "lto_company": lto_company,
+        "brand_name": brand_name,
+        "generic_name": generic_name,
+        "app_status": app_status,
+        "app_type": app_type
+    }
+    
     records, total = get_main_db_records(
         db=db,
         skip=skip,
         limit=page_size,
         search=search,
-        status=status,
-        category=category,
+        filters=filters,
         sort_by=sort_by,
         sort_order=sort_order
     )
@@ -243,6 +271,394 @@ def get_main_db(
         "data": records
     }
 
+
+# ✅ NEW ENDPOINT - Get unique app types with counts
+@router.get("/app-types")
+def get_app_types(
+    status: Optional[str] = Query(None, description="Filter by decking status: 'not_decked' or 'decked'"),
+    db: Session = Depends(get_db)
+):
+    """Get unique DB_APP_TYPE values with counts, optionally filtered by decking status"""
+    query = db.query(
+        MainDB.DB_APP_TYPE,
+        func.count(MainDB.DB_ID).label('count')
+    )
+    
+    # Apply status filter if provided
+    if status == "not_decked":
+        query = query.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+        query = query.filter(
+            or_(
+                ApplicationDelegation.DB_EVALUATOR.is_(None),
+                ApplicationDelegation.DB_EVALUATOR == "",
+                ApplicationDelegation.DB_EVALUATOR == "N/A"
+            )
+        )
+    elif status == "decked":
+        query = query.join(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+        query = query.filter(
+            ApplicationDelegation.DB_EVALUATOR.isnot(None),
+            ApplicationDelegation.DB_EVALUATOR != "",
+            ApplicationDelegation.DB_EVALUATOR != "N/A"
+        )
+    
+    # Get records WITH app_type (not null and not empty)
+    results_with_type = query.filter(
+        MainDB.DB_APP_TYPE.isnot(None),
+        MainDB.DB_APP_TYPE != ""
+    ).group_by(MainDB.DB_APP_TYPE)\
+        .order_by(MainDB.DB_APP_TYPE)\
+        .all()
+    
+    # Get count of records WITHOUT app_type (null or empty)
+    query_no_type = db.query(func.count(MainDB.DB_ID))
+    
+    # Apply same status filter for no app_type records
+    if status == "not_decked":
+        query_no_type = query_no_type.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+        query_no_type = query_no_type.filter(
+            or_(
+                ApplicationDelegation.DB_EVALUATOR.is_(None),
+                ApplicationDelegation.DB_EVALUATOR == "",
+                ApplicationDelegation.DB_EVALUATOR == "N/A"
+            )
+        )
+    elif status == "decked":
+        query_no_type = query_no_type.join(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+        query_no_type = query_no_type.filter(
+            ApplicationDelegation.DB_EVALUATOR.isnot(None),
+            ApplicationDelegation.DB_EVALUATOR != "",
+            ApplicationDelegation.DB_EVALUATOR != "N/A"
+        )
+    
+    no_type_count = query_no_type.filter(
+        or_(
+            MainDB.DB_APP_TYPE.is_(None),
+            MainDB.DB_APP_TYPE == ""
+        )
+    ).scalar()
+    
+    # Build response
+    app_types = [
+        {"value": app_type, "count": count} 
+        for app_type, count in results_with_type
+    ]
+    
+    # Add "No Application Type" if there are records without app_type
+    if no_type_count and no_type_count > 0:
+        app_types.insert(0, {"value": None, "count": no_type_count})
+    
+    return {"app_types": app_types}
+
+
+@router.get("/prescription-types")
+def get_prescription_types(
+    status: Optional[str] = Query(None, description="Filter by decking status: 'not_decked' or 'decked'"),
+    app_type: Optional[str] = Query(None, description="Filter by application type"),
+    db: Session = Depends(get_db)
+):
+    """Get unique DB_PROD_CLASS_PRESCRIP values with counts, filtered by status and app_type"""
+    query = db.query(
+        MainDB.DB_PROD_CLASS_PRESCRIP,
+        func.count(MainDB.DB_ID).label('count')
+    )
+    
+    # Apply status filter if provided
+    if status == "not_decked":
+        query = query.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+        query = query.filter(
+            or_(
+                ApplicationDelegation.DB_EVALUATOR.is_(None),
+                ApplicationDelegation.DB_EVALUATOR == "",
+                ApplicationDelegation.DB_EVALUATOR == "N/A"
+            )
+        )
+    elif status == "decked":
+        query = query.join(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+        query = query.filter(
+            ApplicationDelegation.DB_EVALUATOR.isnot(None),
+            ApplicationDelegation.DB_EVALUATOR != "",
+            ApplicationDelegation.DB_EVALUATOR != "N/A"
+        )
+    
+    # Apply app_type filter if provided
+    if app_type is not None:
+        if app_type == "__EMPTY__" or app_type == "":
+            query = query.filter(
+                or_(
+                    MainDB.DB_APP_TYPE.is_(None),
+                    MainDB.DB_APP_TYPE == ""
+                )
+            )
+        else:
+            query = query.filter(MainDB.DB_APP_TYPE == app_type)
+    
+    # Get records WITH prescription type (not null and not empty)
+    results_with_type = query.filter(
+        MainDB.DB_PROD_CLASS_PRESCRIP.isnot(None),
+        MainDB.DB_PROD_CLASS_PRESCRIP != ""
+    ).group_by(MainDB.DB_PROD_CLASS_PRESCRIP)\
+        .order_by(MainDB.DB_PROD_CLASS_PRESCRIP)\
+        .all()
+    
+    # Get count of records WITHOUT prescription type (null or empty)
+    query_no_type = db.query(func.count(MainDB.DB_ID))
+    
+    # Apply same status filter for no prescription type records
+    if status == "not_decked":
+        query_no_type = query_no_type.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+        query_no_type = query_no_type.filter(
+            or_(
+                ApplicationDelegation.DB_EVALUATOR.is_(None),
+                ApplicationDelegation.DB_EVALUATOR == "",
+                ApplicationDelegation.DB_EVALUATOR == "N/A"
+            )
+        )
+    elif status == "decked":
+        query_no_type = query_no_type.join(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+        query_no_type = query_no_type.filter(
+            ApplicationDelegation.DB_EVALUATOR.isnot(None),
+            ApplicationDelegation.DB_EVALUATOR != "",
+            ApplicationDelegation.DB_EVALUATOR != "N/A"
+        )
+    
+    # Apply same app_type filter for no prescription type records
+    if app_type is not None:
+        if app_type == "__EMPTY__" or app_type == "":
+            query_no_type = query_no_type.filter(
+                or_(
+                    MainDB.DB_APP_TYPE.is_(None),
+                    MainDB.DB_APP_TYPE == ""
+                )
+            )
+        else:
+            query_no_type = query_no_type.filter(MainDB.DB_APP_TYPE == app_type)
+    
+    no_type_count = query_no_type.filter(
+        or_(
+            MainDB.DB_PROD_CLASS_PRESCRIP.is_(None),
+            MainDB.DB_PROD_CLASS_PRESCRIP == ""
+        )
+    ).scalar()
+    
+    # Build response
+    prescription_types = [
+        {"value": pres_type, "count": count} 
+        for pres_type, count in results_with_type
+    ]
+    
+    # Add "No Prescription Type" if there are records without prescription
+    if no_type_count and no_type_count > 0:
+        prescription_types.insert(0, {"value": None, "count": no_type_count})
+    
+    return {"prescription_types": prescription_types}
+
+
+@router.get("/app-status-types")
+def get_app_status_types(
+    status: Optional[str] = Query(None, description="Filter by decking status: 'not_decked' or 'decked'"),
+    app_type: Optional[str] = Query(None, description="Filter by application type"),
+    prescription: Optional[str] = Query(None, description="Filter by prescription type"),
+    db: Session = Depends(get_db)
+):
+    """Get unique DB_APP_STATUS values with counts, filtered by status, app_type, and prescription"""
+    query = db.query(
+        MainDB.DB_APP_STATUS,
+        func.count(MainDB.DB_ID).label('count')
+    )
+    
+    # Apply status filter if provided (decked/not_decked)
+    if status == "not_decked":
+        query = query.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+        query = query.filter(
+            or_(
+                ApplicationDelegation.DB_EVALUATOR.is_(None),
+                ApplicationDelegation.DB_EVALUATOR == "",
+                ApplicationDelegation.DB_EVALUATOR == "N/A"
+            )
+        )
+    elif status == "decked":
+        query = query.join(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+        query = query.filter(
+            ApplicationDelegation.DB_EVALUATOR.isnot(None),
+            ApplicationDelegation.DB_EVALUATOR != "",
+            ApplicationDelegation.DB_EVALUATOR != "N/A"
+        )
+    
+    # Apply app_type filter if provided
+    if app_type is not None:
+        if app_type == "__EMPTY__" or app_type == "":
+            query = query.filter(
+                or_(
+                    MainDB.DB_APP_TYPE.is_(None),
+                    MainDB.DB_APP_TYPE == ""
+                )
+            )
+        else:
+            query = query.filter(MainDB.DB_APP_TYPE == app_type)
+    
+    # Apply prescription filter if provided
+    if prescription is not None:
+        if prescription == "__EMPTY__" or prescription == "":
+            query = query.filter(
+                or_(
+                    MainDB.DB_PROD_CLASS_PRESCRIP.is_(None),
+                    MainDB.DB_PROD_CLASS_PRESCRIP == ""
+                )
+            )
+        else:
+            query = query.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
+    
+    # Get records WITH app status (not null and not empty)
+    results_with_status = query.filter(
+        MainDB.DB_APP_STATUS.isnot(None),
+        MainDB.DB_APP_STATUS != ""
+    ).group_by(MainDB.DB_APP_STATUS)\
+        .order_by(MainDB.DB_APP_STATUS)\
+        .all()
+    
+    # Get count of records WITHOUT app status (null or empty)
+    query_no_status = db.query(func.count(MainDB.DB_ID))
+    
+    # Apply same filters for no app status records
+    if status == "not_decked":
+        query_no_status = query_no_status.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+        query_no_status = query_no_status.filter(
+            or_(
+                ApplicationDelegation.DB_EVALUATOR.is_(None),
+                ApplicationDelegation.DB_EVALUATOR == "",
+                ApplicationDelegation.DB_EVALUATOR == "N/A"
+            )
+        )
+    elif status == "decked":
+        query_no_status = query_no_status.join(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+        query_no_status = query_no_status.filter(
+            ApplicationDelegation.DB_EVALUATOR.isnot(None),
+            ApplicationDelegation.DB_EVALUATOR != "",
+            ApplicationDelegation.DB_EVALUATOR != "N/A"
+        )
+    
+    # Apply same app_type filter
+    if app_type is not None:
+        if app_type == "__EMPTY__" or app_type == "":
+            query_no_status = query_no_status.filter(
+                or_(
+                    MainDB.DB_APP_TYPE.is_(None),
+                    MainDB.DB_APP_TYPE == ""
+                )
+            )
+        else:
+            query_no_status = query_no_status.filter(MainDB.DB_APP_TYPE == app_type)
+    
+    # Apply same prescription filter
+    if prescription is not None:
+        if prescription == "__EMPTY__" or prescription == "":
+            query_no_status = query_no_status.filter(
+                or_(
+                    MainDB.DB_PROD_CLASS_PRESCRIP.is_(None),
+                    MainDB.DB_PROD_CLASS_PRESCRIP == ""
+                )
+            )
+        else:
+            query_no_status = query_no_status.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
+    
+    no_status_count = query_no_status.filter(
+        or_(
+            MainDB.DB_APP_STATUS.is_(None),
+            MainDB.DB_APP_STATUS == ""
+        )
+    ).scalar()
+    
+    # Build response
+    app_status_types = [
+        {"value": app_status, "count": count} 
+        for app_status, count in results_with_status
+    ]
+    
+    # Add "No Application Status" if there are records without status
+    if no_status_count and no_status_count > 0:
+        app_status_types.insert(0, {"value": None, "count": no_status_count})
+    
+    return {"app_status_types": app_status_types}
+
+
+@router.get("/establishment-categories")
+def get_establishment_categories(
+    status: Optional[str] = Query(None, description="Filter by decking status: 'not_decked', 'decked', or null for all"),
+    db: Session = Depends(get_db)
+):
+    """Get unique DB_EST_CAT (Establishment Category) values with counts"""
+    query = db.query(
+        MainDB.DB_EST_CAT,
+        func.count(MainDB.DB_ID).label('count')
+    )
+    
+    # Apply status filter if provided
+    if status == "not_decked":
+        query = query.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+        query = query.filter(
+            or_(
+                ApplicationDelegation.DB_EVALUATOR.is_(None),
+                ApplicationDelegation.DB_EVALUATOR == "",
+                ApplicationDelegation.DB_EVALUATOR == "N/A"
+            )
+        )
+    elif status == "decked":
+        query = query.join(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+        query = query.filter(
+            ApplicationDelegation.DB_EVALUATOR.isnot(None),
+            ApplicationDelegation.DB_EVALUATOR != "",
+            ApplicationDelegation.DB_EVALUATOR != "N/A"
+        )
+    # If status is None, no additional filter is applied (get all records)
+    
+    # Get records WITH category (not null and not empty)
+    results_with_category = query.filter(
+        MainDB.DB_EST_CAT.isnot(None),
+        MainDB.DB_EST_CAT != ""
+    ).group_by(MainDB.DB_EST_CAT)\
+        .order_by(MainDB.DB_EST_CAT)\
+        .all()
+    
+    # Get count of records WITHOUT category (null or empty)
+    query_no_category = db.query(func.count(MainDB.DB_ID))
+    
+    # Apply same status filter for no category records
+    if status == "not_decked":
+        query_no_category = query_no_category.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+        query_no_category = query_no_category.filter(
+            or_(
+                ApplicationDelegation.DB_EVALUATOR.is_(None),
+                ApplicationDelegation.DB_EVALUATOR == "",
+                ApplicationDelegation.DB_EVALUATOR == "N/A"
+            )
+        )
+    elif status == "decked":
+        query_no_category = query_no_category.join(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+        query_no_category = query_no_category.filter(
+            ApplicationDelegation.DB_EVALUATOR.isnot(None),
+            ApplicationDelegation.DB_EVALUATOR != "",
+            ApplicationDelegation.DB_EVALUATOR != "N/A"
+        )
+    
+    no_category_count = query_no_category.filter(
+        or_(
+            MainDB.DB_EST_CAT.is_(None),
+            MainDB.DB_EST_CAT == ""
+        )
+    ).scalar()
+    
+    # Build response
+    categories = [
+        {"value": category, "count": count} 
+        for category, count in results_with_category
+    ]
+    
+    # Add "No Category" if there are records without category
+    if no_category_count and no_category_count > 0:
+        categories.insert(0, {"value": None, "count": no_category_count})
+    
+    return {"categories": categories}
 
 @router.get("/logs/{main_id}", response_model=List[ApplicationLogResponse])
 def get_logs(
@@ -444,6 +860,157 @@ async def get_upload_history(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch upload history: {str(e)}")
 
+@router.get("/export-filtered")
+async def export_filtered_records(
+    search: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    prescription: Optional[str] = Query(None),
+    prescription_not: Optional[str] = Query(None),
+    dtn: Optional[int] = Query(None),
+    manufacturer: Optional[str] = Query(None),
+    lto_company: Optional[str] = Query(None),
+    brand_name: Optional[str] = Query(None),
+    generic_name: Optional[str] = Query(None),
+    app_status: Optional[str] = Query(None),
+    app_type: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """Export filtered records to Excel"""
+    try:
+        print(f"📥 Export request received with params: status={status}, app_type={app_type}, search={search}")
+        
+        # Build filters
+        filters = {
+            "status": status,
+            "category": category,
+            "prescription": prescription,
+            "prescription_not": prescription_not,
+            "dtn": dtn,
+            "manufacturer": manufacturer,
+            "lto_company": lto_company,
+            "brand_name": brand_name,
+            "generic_name": generic_name,
+            "app_status": app_status,
+            "app_type": app_type
+        }
+        
+        # Get ALL filtered records (no pagination)
+        records, total = get_main_db_records(
+            db=db,
+            skip=0,
+            limit=100000,
+            search=search,
+            filters=filters,
+            sort_by="DB_DATE_EXCEL_UPLOAD",
+            sort_order="desc"
+        )
+        
+        print(f"📊 Found {total} records to export")
+        
+        if not records:
+            raise HTTPException(status_code=404, detail="No records found to export")
+        
+        # Convert records to DataFrame
+        data_for_export = []
+        for record in records:
+            delegation = record.application_delegation if hasattr(record, 'application_delegation') else None
+            
+            row_data = {
+                "DTN": record.DB_DTN,
+                "Est. Category": record.DB_EST_CAT,
+                "LTO Company": record.DB_EST_LTO_COMP,
+                "LTO Address": record.DB_EST_LTO_ADD,
+                "Email": record.DB_EST_EADD,
+                "TIN": record.DB_EST_TIN,
+                "Contact No.": record.DB_EST_CONTACT_NO,
+                "LTO No.": record.DB_EST_LTO_NO,
+                "Validity": record.DB_EST_VALIDITY,
+                "Brand Name": record.DB_PROD_BR_NAME,
+                "Generic Name": record.DB_PROD_GEN_NAME,
+                "Dosage Strength": record.DB_PROD_DOS_STR,
+                "Dosage Form": record.DB_PROD_DOS_FORM,
+                "Prescription": record.DB_PROD_CLASS_PRESCRIP,
+                "Essential Drug": record.DB_PROD_ESS_DRUG_LIST,
+                "Pharma Category": record.DB_PROD_PHARMA_CAT,
+                "Manufacturer": record.DB_PROD_MANU,
+                "Manufacturer Address": record.DB_PROD_MANU_ADD,
+                "Manufacturer TIN": record.DB_PROD_MANU_TIN,
+                "Manufacturer LTO No.": record.DB_PROD_MANU_LTO_NO,
+                "Manufacturer Country": record.DB_PROD_MANU_COUNTRY,
+                "Registration No.": record.DB_REG_NO,
+                "App Type": record.DB_APP_TYPE,
+                "Mother App Type": record.DB_MOTHER_APP_TYPE,
+                "App Status": record.DB_APP_STATUS,
+                "Fee": record.DB_FEE,
+                "LRF": record.DB_LRF,
+                "SURC": record.DB_SURC,
+                "Total": record.DB_TOTAL,
+                "OR No.": record.DB_OR_NO,
+                "Date Issued": record.DB_DATE_ISSUED,
+                "Date Received FDAC": record.DB_DATE_RECEIVED_FDAC,
+                "Date Received Central": record.DB_DATE_RECEIVED_CENT,
+                "Date Deck": record.DB_DATE_DECK,
+                "Date Released": record.DB_DATE_RELEASED,
+                "User Uploader": record.DB_USER_UPLOADER,
+                "Date Excel Upload": str(record.DB_DATE_EXCEL_UPLOAD) if record.DB_DATE_EXCEL_UPLOAD else None,
+            }
+            
+            if delegation:
+                row_data.update({
+                    "Evaluator": delegation.DB_EVALUATOR,
+                    "Evaluator Decision": delegation.DB_EVAL_DECISION,
+                    "Evaluator Remarks": delegation.DB_EVAL_REMARKS,
+                    "Date Eval End": str(delegation.DB_DATE_EVAL_END) if delegation.DB_DATE_EVAL_END else None,
+                    "Decker": delegation.DB_DECKER,
+                    "Decker Decision": delegation.DB_DECKER_DECISION,
+                    "Decker Remarks": delegation.DB_DECKER_REMARKS,
+                    "Date Decked End": str(delegation.DB_DATE_DECKED_END) if delegation.DB_DATE_DECKED_END else None,
+                    "Checker": delegation.DB_CHECKER,
+                    "Checker Decision": delegation.DB_CHECKER_DECISION,
+                    "Date Checker End": str(delegation.DB_DATE_CHECKER_END) if delegation.DB_DATE_CHECKER_END else None,
+                })
+            
+            data_for_export.append(row_data)
+        
+        print(f"📝 Prepared {len(data_for_export)} rows for export")
+        
+        df = pd.DataFrame(data_for_export)
+        
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Filtered Records')
+        
+        output.seek(0)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filter_description = []
+        if app_type:
+            filter_description.append(f"{app_type}")
+        if status:
+            filter_description.append(f"{status}")
+        
+        filename_parts = ["main_db_export", timestamp]
+        if filter_description:
+            filename_parts.insert(1, "_".join(filter_description))
+        
+        filename = "_".join(filename_parts) + ".xlsx"
+        
+        print(f"✅ Export successful: {filename}")
+        
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Export error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to export records: {str(e)}")
 
 @router.get("/{record_id}", response_model=MainDBResponse)
 def get_record(record_id: int, db: Session = Depends(get_db)):
@@ -519,3 +1086,4 @@ def restore_record(record_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(record)
     return record
+

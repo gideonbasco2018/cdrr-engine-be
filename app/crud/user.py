@@ -236,3 +236,32 @@ def deactivate_user(db: Session, user_id: int) -> Optional[User]:
     db.commit()
     db.refresh(user)
     return user
+
+
+def admin_update_user(db: Session, user_id: int, update_data: dict) -> Optional[User]:
+    """
+    Admin function to update another user's details
+    Can update: username, email, role, first_name, surname, position, group_id
+    """
+    user = get_by_id(db, user_id)
+    if not user:
+        return None
+
+    # Handle group update if provided
+    if "group_id" in update_data:
+        new_group_id = update_data.pop("group_id")
+        
+        # Remove old primary group links
+        db.query(UserGroup).filter(UserGroup.user_id == user.id).delete()
+        
+        # Add new group link
+        db.add(UserGroup(user_id=user.id, group_id=new_group_id))
+
+    # Update remaining fields
+    for field, value in update_data.items():
+        if hasattr(user, field):
+            setattr(user, field, value)
+
+    db.commit()
+    db.refresh(user)
+    return user
