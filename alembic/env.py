@@ -10,7 +10,7 @@ from alembic import context
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.db.base_class import Base
-from app.models import MainDB, User, application_logs
+from app.models import MainDB, User, application_logs, group, user_groups
 
 config = context.config
 

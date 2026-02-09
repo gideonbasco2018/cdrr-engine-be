@@ -1,13 +1,13 @@
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
-from datetime import datetime, date
+from datetime import datetime
 
 class DeckApplicationBase(BaseModel):
     decker: str = Field(..., description="Name of the person decking the application")
     evaluator: str = Field(..., description="Username of the assigned evaluator")
     deckerDecision: str = Field(..., description="Decision made by the decker")
     deckerRemarks: Optional[str] = Field(default="", description="Additional remarks")
-    dateDeckedEnd: Optional[str] = Field(None, description="End date for decking in YYYY-MM-DD format")
+    dateDeckedEnd: Optional[str] = Field(None, description="ISO datetime string")
 
 class DeckApplicationRequest(DeckApplicationBase):
     pass
@@ -25,41 +25,28 @@ class DeckApplicationResponse(BaseModel):
 
 class DeckRecordDetail(BaseModel):
     id: int
-    dtn: Optional[str]
-    evaluator: Optional[str]
-    decker: Optional[str]
-    deckerDecision: Optional[str]
-    deckerRemarks: Optional[str]
-
-    dateDeck: Optional[datetime]
-    dateDeckedEnd: Optional[date]
-
+    dtn: Optional[str] = None
+    evaluator: Optional[str] = None
+    decker: Optional[str] = None
+    deckerDecision: Optional[str] = None
+    deckerRemarks: Optional[str] = None
+    dateDeckedEnd: Optional[datetime] = None  # ✅ Changed to datetime
+    
     # Optional: other end dates
-    dateEvalEnd: Optional[date]
-    dateCheckerEnd: Optional[date]
-    dateSupervisorEnd: Optional[date]
-    dateQaEnd: Optional[date]
-    dateDirectorEnd: Optional[date]
+    dateEvalEnd: Optional[datetime] = None
+    dateCheckerEnd: Optional[datetime] = None
+    dateSupervisorEnd: Optional[datetime] = None
+    dateQaEnd: Optional[datetime] = None
+    dateDirectorEnd: Optional[datetime] = None
+    dateReleasingOfficerEnd: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+        # This will automatically serialize datetime with timezone
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
 
-    @validator(
-        "dateDeckedEnd",
-        "dateEvalEnd",
-        "dateCheckerEnd",
-        "dateSupervisorEnd",
-        "dateQaEnd",
-        "dateDirectorEnd",
-        pre=True,
-        always=True
-    )
-    def convert_datetime_to_date(cls, v):
-        """Convert datetime to date if needed, keeps None safe"""
-        if isinstance(v, datetime):
-            return v.date()
-        return v
-    
 class BulkDeckResponse(BaseModel):
     success: bool
     message: str

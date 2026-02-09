@@ -106,7 +106,6 @@ async def bulk_deck_applications(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred during bulk deck operation: {str(e)}"
         )
-
 # ---------------- Get Decked Applications ----------------
 @router.get(
     "/decked",
@@ -129,13 +128,18 @@ async def get_decked_applications(
         return [
             DeckRecordDetail(
                 id=record.DB_MAIN_ID,
-                dtn=record.DB_DTN,
+                dtn=record.main.DB_DTN if record.main else None,  # ✅ Fixed
                 evaluator=record.DB_EVALUATOR,
                 decker=record.DB_DECKER,
                 deckerDecision=record.DB_DECKER_DECISION,
                 deckerRemarks=record.DB_DECKER_REMARKS,
-                dateDeck=record.DB_DATE_DECKED,
-                dateDeckedEnd=record.DB_DATE_DECKED_END
+                dateDeckedEnd=record.DB_DATE_DECKED_END,  # ✅ Now returns datetime
+                dateEvalEnd=record.DB_DATE_EVAL_END,
+                dateCheckerEnd=record.DB_DATE_CHECKER_END,
+                dateSupervisorEnd=record.DB_DATE_SUPERVISOR_END,
+                dateQaEnd=record.DB_DATE_QA_END,
+                dateDirectorEnd=record.DB_DATE_DIRECTOR_END,
+                dateReleasingOfficerEnd=record.DB_DATE_RELEASING_OFFICER_END
             )
             for record in records
         ]
@@ -164,13 +168,18 @@ async def get_not_decked_applications(
         return [
             DeckRecordDetail(
                 id=record.DB_MAIN_ID,
-                dtn=record.DB_DTN,
+                dtn=record.main.DB_DTN if record.main else None,  # ✅ Fixed
                 evaluator=record.DB_EVALUATOR,
                 decker=record.DB_DECKER,
                 deckerDecision=record.DB_DECKER_DECISION,
                 deckerRemarks=record.DB_DECKER_REMARKS,
-                dateDeck=record.DB_DATE_DECKED,
-                dateDeckedEnd=record.DB_DATE_DECKED_END
+                dateDeckedEnd=record.DB_DATE_DECKED_END,
+                dateEvalEnd=record.DB_DATE_EVAL_END,
+                dateCheckerEnd=record.DB_DATE_CHECKER_END,
+                dateSupervisorEnd=record.DB_DATE_SUPERVISOR_END,
+                dateQaEnd=record.DB_DATE_QA_END,
+                dateDirectorEnd=record.DB_DATE_DIRECTOR_END,
+                dateReleasingOfficerEnd=record.DB_DATE_RELEASING_OFFICER_END
             )
             for record in records
         ]
@@ -202,13 +211,18 @@ async def get_deck_details(
             )
         return DeckRecordDetail(
             id=record.DB_MAIN_ID,
-            dtn=record.DB_DTN,
+            dtn=record.main.DB_DTN if record.main else None,  # ✅ Fixed
             evaluator=record.DB_EVALUATOR,
             decker=record.DB_DECKER,
             deckerDecision=record.DB_DECKER_DECISION,
             deckerRemarks=record.DB_DECKER_REMARKS,
-            dateDeck=record.DB_DATE_DECKED,
-            dateDeckedEnd=record.DB_DATE_DECKED_END
+            dateDeckedEnd=record.DB_DATE_DECKED_END,
+            dateEvalEnd=record.DB_DATE_EVAL_END,
+            dateCheckerEnd=record.DB_DATE_CHECKER_END,
+            dateSupervisorEnd=record.DB_DATE_SUPERVISOR_END,
+            dateQaEnd=record.DB_DATE_QA_END,
+            dateDirectorEnd=record.DB_DATE_DIRECTOR_END,
+            dateReleasingOfficerEnd=record.DB_DATE_RELEASING_OFFICER_END
         )
     except HTTPException:
         raise
