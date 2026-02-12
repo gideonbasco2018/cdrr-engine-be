@@ -13,7 +13,9 @@ from app.api.routes import (
     fda_verification_test_conn,
     fda_verification,
     fda_verification_statistics,
-    menu_permissions
+    menu_permissions,
+    otc_test_conn,
+    otc
 )
 
 # Dynamic docs URL based on environment
@@ -48,6 +50,8 @@ app.include_router(fda_verification_test_conn.router)
 app.include_router(fda_verification.router)
 app.include_router(fda_verification_statistics.router)
 app.include_router(menu_permissions.router)
+app.include_router(otc_test_conn.router)
+app.include_router(otc.router)
 
 @app.get("/")
 def root():
