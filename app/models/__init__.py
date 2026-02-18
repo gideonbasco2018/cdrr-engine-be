@@ -5,7 +5,7 @@ from app.models.user import User
 from app.models.group import Group
 from app.models.user_groups import UserGroup
 from app.models.menu_permissions import MenuItem, menu_group_permissions
-
+from app.models.cdrr_report import CDRRReport, FROOReport, CDRRSecondary
 
 __all__ = [
     "MainDB",
@@ -15,6 +15,9 @@ __all__ = [
     "Group",
     "UserGroup",
     "MenuItem",
-    "menu_group_permissions"
+    "menu_group_permissions",
+    "CDRRReport",
+    "FROOReport",
+    "CDRRSecondary"
 ]
 
