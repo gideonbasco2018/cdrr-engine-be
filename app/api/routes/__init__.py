@@ -16,7 +16,8 @@ from app.api.routes import (
     fda_verification_statistics,
     menu_permissions,
     otc_test_conn,
-    otc
+    otc,
+    cdrr_report,
 )
 api_router = APIRouter()
 
@@ -33,3 +34,7 @@ api_router.include_router(fda_verification_statistics.router)
 api_router.include_router(menu_permissions.router)
 api_router.include_router(otc_test_conn.router)
 api_router.include_router(otc.router)
+api_router.include_router(cdrr_report.router)
+
+
+
