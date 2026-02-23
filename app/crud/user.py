@@ -84,6 +84,7 @@ def create(db: Session, user_in: UserCreate) -> User:
         first_name=user_in.first_name,
         surname=user_in.surname,
         position=getattr(user_in, "position", None),
+        access_request=getattr(user_in, "access_request", None), 
         role=role,
         is_active=False,  # 🔒 inactive by default
     )
