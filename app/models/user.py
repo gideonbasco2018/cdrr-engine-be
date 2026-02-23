@@ -37,6 +37,9 @@ class User(Base):
     # role
     role = Column(Enum(UserRole), default=UserRole.USER, nullable=False)
 
+    # access request
+    access_request = Column(String(255), nullable=True)
+
     # 🔗 ASSOCIATION OBJECT RELATIONSHIP
     user_groups = relationship(
         "UserGroup",

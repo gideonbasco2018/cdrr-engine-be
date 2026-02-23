@@ -35,6 +35,7 @@ class UserCreate(UserBase):
     password: str = Field(..., min_length=8, max_length=100, description="Password must be at least 8 characters")
     role: Optional[UserRoleSchema] = UserRoleSchema.USER
     group_id: Optional[int] = Field(None, description="Assign first group at creation")
+    access_request: Optional[str] = Field(None, max_length=1000)
 
 
 # -----------------------------
@@ -70,7 +71,8 @@ class UserResponse(UserBase):
     is_active: bool
     created_at: datetime
     updated_at: datetime
-    
+     
+    access_request: Optional[str] = None
     # ✅ Array of groups with ID and name
     groups: List[GroupInfo] = []
     
@@ -102,6 +104,7 @@ class UserResponse(UserBase):
             "is_active": user.is_active,
             "created_at": user.created_at,
             "updated_at": user.updated_at,
+            "access_request": getattr(user, "access_request", None),
             "groups": groups,
         }
         
@@ -135,3 +138,4 @@ class AdminUserUpdate(BaseModel):
     surname: Optional[str] = None
     position: Optional[str] = None
     group_id: Optional[int] = None
+    access_request: Optional[str] = None 
