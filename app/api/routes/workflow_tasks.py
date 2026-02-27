@@ -54,6 +54,7 @@ def list_logs_with_main_db(
     brand_name: Optional[str] = Query(None),
     generic_name: Optional[str] = Query(None),
     prescription: Optional[str] = Query(None, description="Use __EMPTY__ for null/empty."),
+    processing_type: Optional[str] = Query(None, description="Processing Type. Use __EMPTY__ for null/empty."),
 
     # ── Search & Sort ─────────────────────────────────────────────
     search: Optional[str] = Query(None, description="Global search across log and MainDB fields"),
@@ -110,6 +111,7 @@ def list_logs_with_main_db(
         brand_name=brand_name,
         generic_name=generic_name,
         prescription=prescription,
+        processing_type=processing_type,
         search=search,
         sort_by=sort_by,
         sort_order=sort_order,
