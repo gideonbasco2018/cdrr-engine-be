@@ -2,9 +2,9 @@
 Application Logs Routes
 Track workflow steps and decisions for applications
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 
 from app.db.session import get_db
 from app.core.deps import get_current_active_user
@@ -15,6 +15,8 @@ from app.schemas.application_logs import (
     ApplicationLogResponse
 )
 from app.models.user import User
+from app.models.main_db import MainDB
+from app.models.application_logs import ApplicationLogs
 
 router = APIRouter(
     prefix="/api/application-logs",
@@ -50,7 +52,10 @@ def create_application_log(
         "application_decision": "For Checking",
         "application_remarks": "All documents verified. Ready for checking.",
         "start_date": "2025-01-19T10:00:00",
-        "accomplished_date": "2025-01-19T14:30:00"
+        "accomplished_date": "2025-01-19T14:30:00",
+        "del_index": null,
+        "del_previous": null,
+        "del_last_index": null
     }
 ```
     """
@@ -64,7 +69,6 @@ def create_application_log(
         )
 
 
-# ✅ NEW: Bulk create application logs
 @router.post("/bulk", response_model=List[ApplicationLogResponse], status_code=status.HTTP_201_CREATED)
 def create_bulk_application_logs(
     logs_in: List[ApplicationLogCreate],
@@ -88,7 +92,10 @@ def create_bulk_application_logs(
             "application_status": "For Evaluation",
             "application_decision": "For Evaluation",
             "application_remarks": "Documents complete",
-            "accomplished_date": "2025-01-19T14:30:00"
+            "accomplished_date": "2025-01-19T14:30:00",
+            "del_index": null,
+            "del_previous": null,
+            "del_last_index": null
         },
         {
             "main_db_id": 124,
@@ -97,7 +104,10 @@ def create_bulk_application_logs(
             "application_status": "For Evaluation",
             "application_decision": "For Evaluation",
             "application_remarks": "All requirements met",
-            "accomplished_date": "2025-01-19T14:30:00"
+            "accomplished_date": "2025-01-19T14:30:00",
+            "del_index": null,
+            "del_previous": null,
+            "del_last_index": null
         }
     ]
 ```
@@ -237,3 +247,75 @@ def delete_log(
         )
     
     return None
+
+
+@router.get("/main-db/{main_db_id}/last-index")
+def get_last_index(
+    main_db_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get the latest del_index for an application.
+    Returns 0 if no logs exist.
+    """
+    try:
+        last_index = crud_logs.get_last_index(db, main_db_id)
+        return {
+            "main_db_id": main_db_id,
+            "last_index": last_index,
+            "next_index": last_index + 1
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch last index: {str(e)}"
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  NEW — Get logs by DTN (query param)
+#  GET /api/application-logs?dtn=20210927134427
+# ══════════════════════════════════════════════════════════════════════
+@router.get("/", response_model=List[ApplicationLogResponse])
+def get_logs_by_dtn(
+    dtn: int = Query(..., description="Document Tracking Number (DB_DTN)"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all application logs for a given DTN.
+
+    1. Resolves DB_DTN → DB_ID from main_db
+    2. Returns all application_logs rows for that main_db_id,
+       ordered by del_index DESC then created_at DESC so the
+       latest step is always shown first.
+
+    Example:
+        GET /api/application-logs?dtn=20210927134427
+    """
+    # Step 1: find the main_db record that owns this DTN
+    main_record = (
+        db.query(MainDB)
+        .filter(MainDB.DB_DTN == dtn)
+        .first()
+    )
+
+    if not main_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No main_db record found for DTN {dtn}"
+        )
+
+    # Step 2: fetch logs — latest first
+    logs = (
+        db.query(ApplicationLogs)
+        .filter(ApplicationLogs.main_db_id == main_record.DB_ID)
+        .order_by(
+            ApplicationLogs.del_index.desc(),
+            ApplicationLogs.created_at.desc()
+        )
+        .all()
+    )
+
+    return logs

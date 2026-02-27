@@ -149,6 +149,7 @@ class MainDB(Base):
     DB_IS_IN_PM = Column(TINYINT, nullable=True, default=0, comment="Is in PM")
 
     DB_TIMELINE_CITIZEN_CHARTER = Column(Integer, nullable=True, comment="Timeline for Citizen Charter")
+    DB_PROCESSING_TYPE = Column(Text, nullable=True, comment="Processing Type")
     
     def __repr__(self):
         return f"<MainDB(id={self.DB_ID}, dtn={self.DB_DTN}, est_cat={self.DB_EST_CAT})>"

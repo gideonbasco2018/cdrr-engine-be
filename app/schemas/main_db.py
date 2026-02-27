@@ -20,6 +20,11 @@ class ApplicationLogResponse(BaseModel):
     accomplished_date: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    # ✅ NEW - Delegation tracking fields
+    del_index: Optional[int] = None
+    del_previous: Optional[int] = None
+    del_last_index: Optional[int] = None
+    del_thread: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -61,7 +66,8 @@ class ApplicationDelegationResponse(BaseModel):
     DB_RELEASING_OFFICER: Optional[str] = None
     DB_RELEASING_OFFICER_DECISION: Optional[str] = None
     DB_RELEASING_OFFICER_REMARKS: Optional[str] = None
-    DB_RELEASING_OFFICER_END: Optional[datetime] = None
+    # ✅ Fixed: aligned with model column name
+    DB_DATE_RELEASING_OFFICER_END: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
     
@@ -72,7 +78,7 @@ class ApplicationDelegationResponse(BaseModel):
         'DB_DATE_SUPERVISOR_END',
         'DB_DATE_QA_END',
         'DB_DATE_DIRECTOR_END',
-        'DB_RELEASING_OFFICER_END'
+        'DB_DATE_RELEASING_OFFICER_END',
     )
     def serialize_datetime(self, value: Optional[datetime]) -> Optional[str]:
         return value.isoformat() if value else None
@@ -195,7 +201,8 @@ class MainDBBase(BaseModel):
     DB_PHARMA_PROD_CAT: Optional[str] = None
     DB_PHARMA_PROD_CAT_LABEL: Optional[str] = None
     DB_IS_IN_PM: Optional[int] = None
-    DB_TIMELINE_CITIZEN_CHARTER: Optional[int] = None  # ✅ NEW
+    DB_TIMELINE_CITIZEN_CHARTER: Optional[int] = None
+    DB_PROCESSING_TYPE: Optional[str] = None
 
 
 class MainDBCreate(MainDBBase):
@@ -237,7 +244,7 @@ class MainDBSummary(BaseModel):
     total_records: int
     decked_count: int = 0
     not_decked_count: int = 0
-    otc_count: int = 0 
+    otc_count: int = 0
     by_status: dict
     by_category: dict
     recent_uploads: int
