@@ -128,8 +128,6 @@ COLUMN_MAPPING = {
     "Processing Type": "DB_PROCESSING_TYPE",
 }
 
-# ✅ Application Log Steps config — used for Excel upload & template
-# Each entry: (application_step, excel_user_col, excel_decision_col, excel_remarks_col, excel_date_col, excel_thread_col, del_index)
 LOG_STEPS = [
     ("Decking",    "Decker",           "Decker Decision",           "Decker Remarks",           "Date Decked End",            "Decker Del Thread",           1),
     ("Evaluation", "Evaluator",        "Evaluator Decision",        "Evaluator Remarks",        "Date Eval End",              "Evaluator Del Thread",        2),
@@ -140,7 +138,6 @@ LOG_STEPS = [
     ("Releasing",  "Releasing Officer","Releasing Officer Decision","Releasing Officer Remarks","Date Releasing Officer End", "Releasing Del Thread",        7),
 ]
 
-# Date and numeric field definitions
 DATE_FIELDS = {
     'DB_EST_VALIDITY', 'DB_EXPIRY_DATE', 'DB_CPR_VALIDITY', 
     'DB_DATE_ISSUED', 'DB_DATE_DECK', 'DB_DATE_RECEIVED_FDAC',
@@ -150,7 +147,6 @@ DATE_FIELDS = {
 
 NUMERIC_STRING_FIELDS = {'DB_FEE', 'DB_LRF', 'DB_SURC', 'DB_TOTAL'}
 
-# ✅ Integer fields that should be stored as integers, not strings
 INTEGER_FIELDS = {'DB_DTN', 'DB_IS_IN_PM', 'DB_TIMELINE_CITIZEN_CHARTER'}
 
 
@@ -161,25 +157,35 @@ def parse_date_value(value):
     """Parse various date formats and return datetime object or None"""
     if pd.isna(value) or value is None or value == '':
         return None
-    
     if isinstance(value, (datetime, pd.Timestamp)):
         return value
-    
     if isinstance(value, (int, float, np.integer, np.floating)):
         return None
-    
     if isinstance(value, str):
         value = value.strip()
         if not value:
             return None
-        
         try:
             parsed_date = parser.parse(value, fuzzy=True)
             return parsed_date
         except:
             return None
-    
     return None
+
+
+# ---------------------
+# Helper: apply processing_type filter to a query
+# ---------------------
+def _apply_processing_type_filter(query, processing_type):
+    """Reusable helper — applies processing_type filter to any SQLAlchemy query."""
+    if processing_type is not None:
+        if processing_type == "__EMPTY__":
+            query = query.filter(
+                or_(MainDB.DB_PROCESSING_TYPE.is_(None), MainDB.DB_PROCESSING_TYPE == "")
+            )
+        else:
+            query = query.filter(MainDB.DB_PROCESSING_TYPE == processing_type)
+    return query
 
 
 # ---------------------
@@ -202,7 +208,6 @@ def get_main_db(
     generic_name: Optional[str] = Query(None, description="Filter by Generic Name"),
     app_status: Optional[str] = Query(None, description="Filter by Application Status"),
     app_type: Optional[str] = Query(None, description="Filter by Application Type"),
-    # ✅ NEW FILTER
     processing_type: Optional[str] = Query(None, description="Filter by Processing Type"),
     sort_by: str = Query("DB_DATE_EXCEL_UPLOAD"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
@@ -223,7 +228,6 @@ def get_main_db(
         "generic_name": generic_name,
         "app_status": app_status,
         "app_type": app_type,
-        # ✅ NEW
         "processing_type": processing_type,
     }
     
@@ -246,7 +250,7 @@ def get_main_db(
     }
 
 
-# ✅ NEW ENDPOINT - Get unique processing types with counts
+# ✅ Get unique processing types with counts (always unfiltered — drives the tabs)
 @router.get("/processing-types")
 def get_processing_types(
     status: Optional[str] = Query(None, description="Filter by decking status: 'not_decked' or 'decked'"),
@@ -258,8 +262,6 @@ def get_processing_types(
         func.count(MainDB.DB_ID).label('count')
     )
 
-    # ✅ Decked   = has Decking log OR Completed status
-    # ✅ Not Decked = no Decking log AND not Completed
     if status == "decked":
         _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
             ApplicationLogs.application_step == "Decking"
@@ -283,10 +285,8 @@ def get_processing_types(
         .order_by(MainDB.DB_PROCESSING_TYPE)\
         .all()
 
-    # Count records without processing type
     query_no_type = db.query(func.count(MainDB.DB_ID))
-    # ✅ Decked   = has Decking log OR Completed status
-    # ✅ Not Decked = no Decking log AND not Completed
+
     if status == "decked":
         _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
             ApplicationLogs.application_step == "Decking"
@@ -321,19 +321,19 @@ def get_processing_types(
     return {"processing_types": processing_types}
 
 
+# ✅ UPDATED: added processing_type filter param so sidebar counts update when a processing tab is active
 @router.get("/app-types")
 def get_app_types(
     status: Optional[str] = Query(None, description="Filter by decking status: 'not_decked' or 'decked'"),
+    processing_type: Optional[str] = Query(None, description="Filter by processing type"),  # ✅ NEW
     db: Session = Depends(get_db)
 ):
-    """Get unique DB_APP_TYPE values with counts, optionally filtered by decking status"""
+    """Get unique DB_APP_TYPE values with counts"""
     query = db.query(
         MainDB.DB_APP_TYPE,
         func.count(MainDB.DB_ID).label('count')
     )
-    
-    # ✅ Decked   = has Decking log OR Completed status
-    # ✅ Not Decked = no Decking log AND not Completed
+
     if status == "decked":
         _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
             ApplicationLogs.application_step == "Decking"
@@ -349,18 +349,19 @@ def get_app_types(
             MainDB.DB_ID.notin_(_decked_ids),
             or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
         )
-    
+
+    # ✅ NEW: apply processing_type filter
+    query = _apply_processing_type_filter(query, processing_type)
+
     results_with_type = query.filter(
         MainDB.DB_APP_TYPE.isnot(None),
         MainDB.DB_APP_TYPE != ""
     ).group_by(MainDB.DB_APP_TYPE)\
         .order_by(MainDB.DB_APP_TYPE)\
         .all()
-    
+
     query_no_type = db.query(func.count(MainDB.DB_ID))
-    
-    # ✅ Decked   = has Decking log OR Completed status
-    # ✅ Not Decked = no Decking log AND not Completed
+
     if status == "decked":
         _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
             ApplicationLogs.application_step == "Decking"
@@ -376,39 +377,42 @@ def get_app_types(
             MainDB.DB_ID.notin_(_decked_ids),
             or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
         )
-    
+
+    # ✅ NEW: apply processing_type filter to no-type count too
+    query_no_type = _apply_processing_type_filter(query_no_type, processing_type)
+
     no_type_count = query_no_type.filter(
         or_(
             MainDB.DB_APP_TYPE.is_(None),
             MainDB.DB_APP_TYPE == ""
         )
     ).scalar()
-    
+
     app_types = [
-        {"value": app_type, "count": count} 
+        {"value": app_type, "count": count}
         for app_type, count in results_with_type
     ]
-    
+
     if no_type_count and no_type_count > 0:
         app_types.insert(0, {"value": None, "count": no_type_count})
-    
+
     return {"app_types": app_types}
 
 
+# ✅ UPDATED: added processing_type filter param so sidebar counts update when a processing tab is active
 @router.get("/prescription-types")
 def get_prescription_types(
     status: Optional[str] = Query(None, description="Filter by decking status: 'not_decked' or 'decked'"),
     app_type: Optional[str] = Query(None, description="Filter by application type"),
+    processing_type: Optional[str] = Query(None, description="Filter by processing type"),  # ✅ NEW
     db: Session = Depends(get_db)
 ):
-    """Get unique DB_PROD_CLASS_PRESCRIP values with counts, filtered by status and app_type"""
+    """Get unique DB_PROD_CLASS_PRESCRIP values with counts"""
     query = db.query(
         MainDB.DB_PROD_CLASS_PRESCRIP,
         func.count(MainDB.DB_ID).label('count')
     )
-    
-    # ✅ Decked   = has Decking log OR Completed status
-    # ✅ Not Decked = no Decking log AND not Completed
+
     if status == "decked":
         _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
             ApplicationLogs.application_step == "Decking"
@@ -424,7 +428,7 @@ def get_prescription_types(
             MainDB.DB_ID.notin_(_decked_ids),
             or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
         )
-    
+
     if app_type is not None:
         if app_type == "__EMPTY__" or app_type == "":
             query = query.filter(
@@ -432,18 +436,19 @@ def get_prescription_types(
             )
         else:
             query = query.filter(MainDB.DB_APP_TYPE == app_type)
-    
+
+    # ✅ NEW: apply processing_type filter
+    query = _apply_processing_type_filter(query, processing_type)
+
     results_with_type = query.filter(
         MainDB.DB_PROD_CLASS_PRESCRIP.isnot(None),
         MainDB.DB_PROD_CLASS_PRESCRIP != ""
     ).group_by(MainDB.DB_PROD_CLASS_PRESCRIP)\
         .order_by(MainDB.DB_PROD_CLASS_PRESCRIP)\
         .all()
-    
+
     query_no_type = db.query(func.count(MainDB.DB_ID))
-    
-    # ✅ Decked   = has Decking log OR Completed status
-    # ✅ Not Decked = no Decking log AND not Completed
+
     if status == "decked":
         _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
             ApplicationLogs.application_step == "Decking"
@@ -459,7 +464,7 @@ def get_prescription_types(
             MainDB.DB_ID.notin_(_decked_ids),
             or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
         )
-    
+
     if app_type is not None:
         if app_type == "__EMPTY__" or app_type == "":
             query_no_type = query_no_type.filter(
@@ -467,30 +472,35 @@ def get_prescription_types(
             )
         else:
             query_no_type = query_no_type.filter(MainDB.DB_APP_TYPE == app_type)
-    
+
+    # ✅ NEW: apply processing_type filter to no-type count too
+    query_no_type = _apply_processing_type_filter(query_no_type, processing_type)
+
     no_type_count = query_no_type.filter(
         or_(
             MainDB.DB_PROD_CLASS_PRESCRIP.is_(None),
             MainDB.DB_PROD_CLASS_PRESCRIP == ""
         )
     ).scalar()
-    
+
     prescription_types = [
-        {"value": pres_type, "count": count} 
+        {"value": pres_type, "count": count}
         for pres_type, count in results_with_type
     ]
-    
+
     if no_type_count and no_type_count > 0:
         prescription_types.insert(0, {"value": None, "count": no_type_count})
-    
+
     return {"prescription_types": prescription_types}
 
 
+# ✅ UPDATED: added processing_type filter param so sidebar counts update when a processing tab is active
 @router.get("/app-status-types")
 def get_app_status_types(
     status: Optional[str] = Query(None, description="Filter by decking status: 'not_decked' or 'decked'"),
     app_type: Optional[str] = Query(None, description="Filter by application type"),
     prescription: Optional[str] = Query(None, description="Filter by prescription type"),
+    processing_type: Optional[str] = Query(None, description="Filter by processing type"),  # ✅ NEW
     db: Session = Depends(get_db)
 ):
     """Get unique DB_APP_STATUS values with counts"""
@@ -498,9 +508,7 @@ def get_app_status_types(
         MainDB.DB_APP_STATUS,
         func.count(MainDB.DB_ID).label('count')
     )
-    
-    # ✅ Decked   = has Decking log OR Completed status
-    # ✅ Not Decked = no Decking log AND not Completed
+
     if status == "decked":
         _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
             ApplicationLogs.application_step == "Decking"
@@ -516,7 +524,7 @@ def get_app_status_types(
             MainDB.DB_ID.notin_(_decked_ids),
             or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
         )
-    
+
     if app_type is not None:
         if app_type == "__EMPTY__" or app_type == "":
             query = query.filter(
@@ -524,7 +532,7 @@ def get_app_status_types(
             )
         else:
             query = query.filter(MainDB.DB_APP_TYPE == app_type)
-    
+
     if prescription is not None:
         if prescription == "__EMPTY__" or prescription == "":
             query = query.filter(
@@ -532,18 +540,19 @@ def get_app_status_types(
             )
         else:
             query = query.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
-    
+
+    # ✅ NEW: apply processing_type filter
+    query = _apply_processing_type_filter(query, processing_type)
+
     results_with_status = query.filter(
         MainDB.DB_APP_STATUS.isnot(None),
         MainDB.DB_APP_STATUS != ""
     ).group_by(MainDB.DB_APP_STATUS)\
         .order_by(MainDB.DB_APP_STATUS)\
         .all()
-    
+
     query_no_status = db.query(func.count(MainDB.DB_ID))
-    
-    # ✅ Decked   = has Decking log OR Completed status
-    # ✅ Not Decked = no Decking log AND not Completed
+
     if status == "decked":
         _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
             ApplicationLogs.application_step == "Decking"
@@ -559,7 +568,7 @@ def get_app_status_types(
             MainDB.DB_ID.notin_(_decked_ids),
             or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
         )
-    
+
     if app_type is not None:
         if app_type == "__EMPTY__" or app_type == "":
             query_no_status = query_no_status.filter(
@@ -567,7 +576,7 @@ def get_app_status_types(
             )
         else:
             query_no_status = query_no_status.filter(MainDB.DB_APP_TYPE == app_type)
-    
+
     if prescription is not None:
         if prescription == "__EMPTY__" or prescription == "":
             query_no_status = query_no_status.filter(
@@ -575,22 +584,25 @@ def get_app_status_types(
             )
         else:
             query_no_status = query_no_status.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
-    
+
+    # ✅ NEW: apply processing_type filter to no-status count too
+    query_no_status = _apply_processing_type_filter(query_no_status, processing_type)
+
     no_status_count = query_no_status.filter(
         or_(
             MainDB.DB_APP_STATUS.is_(None),
             MainDB.DB_APP_STATUS == ""
         )
     ).scalar()
-    
+
     app_status_types = [
-        {"value": app_status, "count": count} 
+        {"value": app_status, "count": count}
         for app_status, count in results_with_status
     ]
-    
+
     if no_status_count and no_status_count > 0:
         app_status_types.insert(0, {"value": None, "count": no_status_count})
-    
+
     return {"app_status_types": app_status_types}
 
 
@@ -604,9 +616,7 @@ def get_establishment_categories(
         MainDB.DB_EST_CAT,
         func.count(MainDB.DB_ID).label('count')
     )
-    
-    # ✅ Decked   = has Decking log OR Completed status
-    # ✅ Not Decked = no Decking log AND not Completed
+
     if status == "decked":
         _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
             ApplicationLogs.application_step == "Decking"
@@ -622,18 +632,16 @@ def get_establishment_categories(
             MainDB.DB_ID.notin_(_decked_ids),
             or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
         )
-    
+
     results_with_category = query.filter(
         MainDB.DB_EST_CAT.isnot(None),
         MainDB.DB_EST_CAT != ""
     ).group_by(MainDB.DB_EST_CAT)\
         .order_by(MainDB.DB_EST_CAT)\
         .all()
-    
+
     query_no_category = db.query(func.count(MainDB.DB_ID))
-    
-    # ✅ Decked   = has Decking log OR Completed status
-    # ✅ Not Decked = no Decking log AND not Completed
+
     if status == "decked":
         _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
             ApplicationLogs.application_step == "Decking"
@@ -649,23 +657,24 @@ def get_establishment_categories(
             MainDB.DB_ID.notin_(_decked_ids),
             or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
         )
-    
+
     no_category_count = query_no_category.filter(
         or_(
             MainDB.DB_EST_CAT.is_(None),
             MainDB.DB_EST_CAT == ""
         )
     ).scalar()
-    
+
     categories = [
-        {"value": category, "count": count} 
+        {"value": category, "count": count}
         for category, count in results_with_category
     ]
-    
+
     if no_category_count and no_category_count > 0:
         categories.insert(0, {"value": None, "count": no_category_count})
-    
+
     return {"categories": categories}
+
 
 @router.get("/logs/{main_id}", response_model=List[ApplicationLogResponse])
 def get_logs(
@@ -692,15 +701,16 @@ def get_filter_options(field: str, db: Session = Depends(get_db)):
     values = crud.get_unique_values(db, field)
     return {"field": field, "values": values}
 
+
 @router.post("/upload-excel")
 async def upload_excel(
-    file: UploadFile = File(...), 
-    username: str = Query("system"), 
+    file: UploadFile = File(...),
+    username: str = Query("system"),
     db: Session = Depends(get_db)
 ):
     """Upload an Excel file and insert records into MainDB and ApplicationLogs"""
     print("🚀 Starting Excel upload process...")
-    
+
     if not file.filename.endswith((".xls", ".xlsx")):
         raise HTTPException(status_code=400, detail="Invalid file type. Must be .xls or .xlsx")
 
@@ -713,7 +723,6 @@ async def upload_excel(
     if df.empty:
         raise HTTPException(status_code=400, detail="Excel file is empty")
 
-    # Normalize datetime columns
     for col in df.columns:
         if pd.api.types.is_datetime64_any_dtype(df[col]):
             df[col] = df[col].apply(lambda x: x.strftime("%Y-%m-%d") if pd.notna(x) else None)
@@ -726,7 +735,6 @@ async def upload_excel(
 
     for index, row in df.iterrows():
         try:
-            # ── Step 1: Build main_db record ──────────────────────────────
             record_data = {}
             for excel_col, db_col in COLUMN_MAPPING.items():
                 raw_value = row.get(excel_col)
@@ -748,29 +756,19 @@ async def upload_excel(
             db_record = crud.create_main_db_record(db, MainDBCreate(**record_data))
             print(f"  ✅ Inserted main_db ID {db_record.DB_ID} (DTN: {db_record.DB_DTN})")
 
-            # ── Step 2: Insert application_logs per step ──────────────────
-            # LOG_STEPS: (step_label, user_col, decision_col, remarks_col, date_col, thread_col, del_index)
             logs_inserted = 0
             for (step_label, user_col, decision_col, remarks_col, date_col, thread_col, del_idx) in LOG_STEPS:
                 user_val = row.get(user_col)
-
-                # Skip this step if user column is empty
                 if pd.isna(user_val) or user_val is None or str(user_val).strip() == "":
                     continue
 
-                # Parse accomplished_date
                 accomplished = parse_date_value(row.get(date_col))
-
-                # Get thread value — default to "Open" if empty/null
                 thread_val = row.get(thread_col)
                 if not pd.isna(thread_val) and thread_val is not None and str(thread_val).strip() != "":
                     thread_str = str(thread_val).strip()
                 else:
                     thread_str = "Open"
 
-                # Close → del_last_index=0, status=COMPLETED
-                # Open  → del_last_index=1, status=IN PROGRESS
-                # Case-insensitive comparison
                 if thread_str.upper() == "CLOSE":
                     thread_str = "Close"
                     del_last_index = 0
@@ -780,7 +778,6 @@ async def upload_excel(
                     del_last_index = 1
                     log_status = "IN PROGRESS"
 
-                # Get decision and remarks
                 decision_val = row.get(decision_col)
                 decision_str = str(decision_val).strip() if not pd.isna(decision_val) and decision_val is not None else ""
 
@@ -794,7 +791,7 @@ async def upload_excel(
                     application_status=log_status,
                     application_decision=decision_str,
                     application_remarks=remarks_str,
-                    start_date=accomplished,        # no separate start date in Excel
+                    start_date=accomplished,
                     accomplished_date=accomplished,
                     del_index=del_idx,
                     del_previous=None,
@@ -821,7 +818,6 @@ async def upload_excel(
             })
 
     print(f"✅ Upload complete: {success} success, {len(errors)} errors")
-
     return {
         "success": True,
         "message": f"Upload complete: {success} records inserted successfully",
@@ -834,13 +830,10 @@ async def upload_excel(
 async def download_template():
     """Download Excel template with proper column headers"""
     try:
-        # ✅ Build log step columns from LOG_STEPS config
-        # Order: user, decision, remarks, date, del_thread — per step
         log_step_columns = []
         for (step_label, user_col, decision_col, remarks_col, date_col, thread_col, _) in LOG_STEPS:
             log_step_columns += [user_col, decision_col, remarks_col, date_col, thread_col]
 
-        # Combine: main_db columns + log step columns
         all_columns = list(COLUMN_MAPPING.keys()) + log_step_columns
         template_data = {col: [""] for col in all_columns}
         df = pd.DataFrame(template_data)
@@ -886,7 +879,7 @@ async def download_template():
 
 @router.get("/upload-history")
 async def get_upload_history(
-    limit: int = Query(50, ge=1, le=100), 
+    limit: int = Query(50, ge=1, le=100),
     db: Session = Depends(get_db)
 ):
     """Get upload history grouped by user and date"""
@@ -895,6 +888,7 @@ async def get_upload_history(
         return {"success": True, "data": history}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch upload history: {str(e)}")
+
 
 @router.get("/export-filtered")
 async def export_filtered_records(
@@ -910,14 +904,13 @@ async def export_filtered_records(
     generic_name: Optional[str] = Query(None),
     app_status: Optional[str] = Query(None),
     app_type: Optional[str] = Query(None),
-    # ✅ NEW
-    processing_type: Optional[str] = Query(None),
+    processing_type: Optional[str] = Query(None),  # ✅ NEW
     db: Session = Depends(get_db)
 ):
     """Export filtered records to Excel"""
     try:
         print(f"📥 Export request received with params: status={status}, app_type={app_type}, search={search}")
-        
+
         filters = {
             "status": status,
             "category": category,
@@ -930,10 +923,9 @@ async def export_filtered_records(
             "generic_name": generic_name,
             "app_status": app_status,
             "app_type": app_type,
-            # ✅ NEW
-            "processing_type": processing_type,
+            "processing_type": processing_type,  # ✅ NEW
         }
-        
+
         records, total = get_main_db_records(
             db=db,
             skip=0,
@@ -943,16 +935,16 @@ async def export_filtered_records(
             sort_by="DB_DATE_EXCEL_UPLOAD",
             sort_order="desc"
         )
-        
+
         print(f"📊 Found {total} records to export")
-        
+
         if not records:
             raise HTTPException(status_code=404, detail="No records found to export")
-        
+
         data_for_export = []
         for record in records:
             delegation = record.application_delegation if hasattr(record, 'application_delegation') else None
-            
+
             row_data = {
                 "DTN": record.DB_DTN,
                 "Est. Category": record.DB_EST_CAT,
@@ -989,12 +981,11 @@ async def export_filtered_records(
                 "Date Received Central": record.DB_DATE_RECEIVED_CENT,
                 "Date Deck": record.DB_DATE_DECK,
                 "Date Released": record.DB_DATE_RELEASED,
-                # ✅ NEW FIELD in export
-                "Processing Type": record.DB_PROCESSING_TYPE,
+                "Processing Type": record.DB_PROCESSING_TYPE,  # ✅ NEW
                 "User Uploader": record.DB_USER_UPLOADER,
                 "Date Excel Upload": str(record.DB_DATE_EXCEL_UPLOAD) if record.DB_DATE_EXCEL_UPLOAD else None,
             }
-            
+
             if delegation:
                 row_data.update({
                     "Evaluator": delegation.DB_EVALUATOR,
@@ -1009,36 +1000,36 @@ async def export_filtered_records(
                     "Checker Decision": delegation.DB_CHECKER_DECISION,
                     "Date Checker End": str(delegation.DB_DATE_CHECKER_END) if delegation.DB_DATE_CHECKER_END else None,
                 })
-            
+
             data_for_export.append(row_data)
-        
+
         df = pd.DataFrame(data_for_export)
-        
+
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Filtered Records')
-        
+
         output.seek(0)
-        
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filter_description = []
         if app_type:
             filter_description.append(f"{app_type}")
         if status:
             filter_description.append(f"{status}")
-        
+
         filename_parts = ["main_db_export", timestamp]
         if filter_description:
             filename_parts.insert(1, "_".join(filter_description))
-        
+
         filename = "_".join(filename_parts) + ".xlsx"
-        
+
         return StreamingResponse(
             output,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1047,13 +1038,14 @@ async def export_filtered_records(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to export records: {str(e)}")
 
+
 @router.get("/{record_id}", response_model=MainDBResponse)
 def get_record(record_id: int, db: Session = Depends(get_db)):
     """Get a single record by ID"""
     record = crud.get_main_db_record(db, record_id)
     if not record:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
+            status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Record with ID {record_id} not found"
         )
     return record
@@ -1073,15 +1065,15 @@ def create_bulk_records(records: List[MainDBCreate], db: Session = Depends(get_d
 
 @router.put("/{record_id}", response_model=MainDBResponse)
 def update_record(
-    record_id: int, 
-    record_update: MainDBUpdate, 
+    record_id: int,
+    record_update: MainDBUpdate,
     db: Session = Depends(get_db)
 ):
     """Update an existing record"""
     updated_record = crud.update_main_db_record(db, record_id, record_update)
     if not updated_record:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
+            status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Record with ID {record_id} not found"
         )
     return updated_record
@@ -1089,8 +1081,8 @@ def update_record(
 
 @router.delete("/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_record(
-    record_id: int, 
-    hard_delete: bool = Query(False, description="Permanently delete (default: soft delete)"), 
+    record_id: int,
+    hard_delete: bool = Query(False, description="Permanently delete (default: soft delete)"),
     db: Session = Depends(get_db)
 ):
     """Delete a record (soft delete by default)"""
@@ -1098,10 +1090,10 @@ def delete_record(
         success = crud.hard_delete_main_db_record(db, record_id)
     else:
         success = crud.delete_main_db_record(db, record_id)
-    
+
     if not success:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
+            status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Record with ID {record_id} not found"
         )
     return None
@@ -1113,7 +1105,7 @@ def restore_record(record_id: int, db: Session = Depends(get_db)):
     record = crud.get_main_db_record(db, record_id)
     if not record:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
+            status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Record with ID {record_id} not found"
         )
     record.DB_TRASH = None

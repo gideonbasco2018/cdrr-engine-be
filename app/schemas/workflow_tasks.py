@@ -149,6 +149,9 @@ class MainDBBrief(BaseModel):
 
     DB_TIMELINE_CITIZEN_CHARTER: Optional[int] = None
 
+    # Processing Type
+    DB_PROCESSING_TYPE: Optional[str] = None
+
     class Config:
         from_attributes = True
 

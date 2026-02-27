@@ -39,6 +39,7 @@ def get_logs_joined_with_main_db(
     brand_name: Optional[str] = None,
     generic_name: Optional[str] = None,
     prescription: Optional[str] = None,
+    processing_type: Optional[str] = None,
     # ─── Search ──────────────────────────────────────────────────
     search: Optional[str] = None,
     # ─── Sort ────────────────────────────────────────────────────
@@ -147,6 +148,14 @@ def get_logs_joined_with_main_db(
             )
         else:
             query = query.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
+
+    if processing_type:
+        if processing_type == "__EMPTY__":
+            query = query.filter(
+                or_(MainDB.DB_PROCESSING_TYPE.is_(None), MainDB.DB_PROCESSING_TYPE == "")
+            )
+        else:
+            query = query.filter(MainDB.DB_PROCESSING_TYPE == processing_type)
 
     # ─── Global search ────────────────────────────────────────────
     if search:
