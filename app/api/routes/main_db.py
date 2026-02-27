@@ -254,30 +254,64 @@ def get_main_db(
 @router.get("/processing-types")
 def get_processing_types(
     status: Optional[str] = Query(None, description="Filter by decking status: 'not_decked' or 'decked'"),
+    app_type: Optional[str] = Query(None, description="Filter by application type"),       # ← NEW
+    prescription: Optional[str] = Query(None, description="Filter by prescription type"), # ← NEW
+    app_status: Optional[str] = Query(None, description="Filter by app status"),           # ← NEW
     db: Session = Depends(get_db)
 ):
-    """Get unique DB_PROCESSING_TYPE values with counts"""
-    query = db.query(
-        MainDB.DB_PROCESSING_TYPE,
-        func.count(MainDB.DB_ID).label('count')
+    """Get unique DB_PROCESSING_TYPE values with counts, filtered by active sidebar selections"""
+
+    def _build_base_query(base_query):
+        # Decked/not-decked filter
+        if status == "decked":
+            _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+                ApplicationLogs.application_step == "Decking"
+            ).subquery()
+            base_query = base_query.filter(
+                or_(MainDB.DB_ID.in_(_decked_ids), MainDB.DB_APP_STATUS == "Completed")
+            )
+        elif status == "not_decked":
+            _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+                ApplicationLogs.application_step == "Decking"
+            ).subquery()
+            base_query = base_query.filter(
+                MainDB.DB_ID.notin_(_decked_ids),
+                or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
+            )
+
+        # App type filter
+        if app_type is not None:
+            if app_type == "__EMPTY__":
+                base_query = base_query.filter(
+                    or_(MainDB.DB_APP_TYPE.is_(None), MainDB.DB_APP_TYPE == "")
+                )
+            else:
+                base_query = base_query.filter(MainDB.DB_APP_TYPE == app_type)
+
+        # Prescription filter
+        if prescription is not None:
+            if prescription == "__EMPTY__":
+                base_query = base_query.filter(
+                    or_(MainDB.DB_PROD_CLASS_PRESCRIP.is_(None), MainDB.DB_PROD_CLASS_PRESCRIP == "")
+                )
+            else:
+                base_query = base_query.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
+
+        # App status filter
+        if app_status is not None:
+            if app_status == "__EMPTY__":
+                base_query = base_query.filter(
+                    or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "")
+                )
+            else:
+                base_query = base_query.filter(MainDB.DB_APP_STATUS == app_status)
+
+        return base_query
+
+    # Named processing types with counts
+    query = _build_base_query(
+        db.query(MainDB.DB_PROCESSING_TYPE, func.count(MainDB.DB_ID).label('count'))
     )
-
-    if status == "decked":
-        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
-            ApplicationLogs.application_step == "Decking"
-        ).subquery()
-        query = query.filter(
-            or_(MainDB.DB_ID.in_(_decked_ids), MainDB.DB_APP_STATUS == "Completed")
-        )
-    elif status == "not_decked":
-        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
-            ApplicationLogs.application_step == "Decking"
-        ).subquery()
-        query = query.filter(
-            MainDB.DB_ID.notin_(_decked_ids),
-            or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
-        )
-
     results = query.filter(
         MainDB.DB_PROCESSING_TYPE.isnot(None),
         MainDB.DB_PROCESSING_TYPE != ""
@@ -285,35 +319,13 @@ def get_processing_types(
         .order_by(MainDB.DB_PROCESSING_TYPE)\
         .all()
 
-    query_no_type = db.query(func.count(MainDB.DB_ID))
-
-    if status == "decked":
-        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
-            ApplicationLogs.application_step == "Decking"
-        ).subquery()
-        query_no_type = query_no_type.filter(
-            or_(MainDB.DB_ID.in_(_decked_ids), MainDB.DB_APP_STATUS == "Completed")
-        )
-    elif status == "not_decked":
-        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
-            ApplicationLogs.application_step == "Decking"
-        ).subquery()
-        query_no_type = query_no_type.filter(
-            MainDB.DB_ID.notin_(_decked_ids),
-            or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
-        )
-
+    # Null/empty processing type count
+    query_no_type = _build_base_query(db.query(func.count(MainDB.DB_ID)))
     no_type_count = query_no_type.filter(
-        or_(
-            MainDB.DB_PROCESSING_TYPE.is_(None),
-            MainDB.DB_PROCESSING_TYPE == ""
-        )
+        or_(MainDB.DB_PROCESSING_TYPE.is_(None), MainDB.DB_PROCESSING_TYPE == "")
     ).scalar()
 
-    processing_types = [
-        {"value": pt, "count": count}
-        for pt, count in results
-    ]
+    processing_types = [{"value": pt, "count": count} for pt, count in results]
 
     if no_type_count and no_type_count > 0:
         processing_types.insert(0, {"value": None, "count": no_type_count})
