@@ -4,7 +4,7 @@ CRUD Operations for Main DB
 Database operations for pharmaceutical reports
 """
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, desc, or_, cast, String, nullslast, nullsfirst
+from sqlalchemy import func, desc, or_, cast, String, nullslast, exists
 from typing import Optional, List, Tuple, Dict
 from datetime import datetime, timedelta
 
@@ -12,6 +12,15 @@ from app.models.main_db import MainDB
 from app.models.application_logs import ApplicationLogs
 from app.models.application_delegation import ApplicationDelegation
 from app.schemas.main_db import MainDBCreate, MainDBUpdate
+
+
+# ✅ Subquery helpers — "decked" = has a Decking log
+def _decked_subquery(db: Session):
+    """Returns a subquery: DB_IDs that have a Decking application log"""
+    return db.query(ApplicationLogs.main_db_id).filter(
+        ApplicationLogs.application_step == "Decking"
+    ).subquery()
+
 
 # -----------------------------
 # Single Record
@@ -37,131 +46,117 @@ def get_main_db_records(
 ) -> Tuple[List[MainDB], int]:
     """Fetch MainDB records with ApplicationDelegation (1-to-1) and flexible filtering"""
     print(f"🔍 CRUD: filters={filters}, sort_by={sort_by}, sort_order={sort_order}")
-    
-    # Start with base query
-    query = db.query(MainDB)
-    
-    # Track if we've already joined ApplicationDelegation
-    delegation_joined = False
 
-    # Extract filters (for backward compatibility)
+    query = db.query(MainDB)
+
     if filters is None:
         filters = {}
-    
-    status = filters.get("status")
-    category = filters.get("category")
-    prescription = filters.get("prescription")
-    prescription_not = filters.get("prescription_not")
-    dtn = filters.get("dtn")
-    manufacturer = filters.get("manufacturer")
-    lto_company = filters.get("lto_company")
-    brand_name = filters.get("brand_name")
-    generic_name = filters.get("generic_name")
-    app_status = filters.get("app_status")
-    app_type = filters.get("app_type")  # ✅ NEW
 
-    # ✅ Filter by evaluator status (decked/not-decked)
-    if status == "not_decked":
-        query = query.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
-        delegation_joined = True
+    status           = filters.get("status")
+    category         = filters.get("category")
+    prescription     = filters.get("prescription")
+    prescription_not = filters.get("prescription_not")
+    dtn              = filters.get("dtn")
+    manufacturer     = filters.get("manufacturer")
+    lto_company      = filters.get("lto_company")
+    brand_name       = filters.get("brand_name")
+    generic_name     = filters.get("generic_name")
+    app_status       = filters.get("app_status")
+    app_type         = filters.get("app_type")
+    processing_type  = filters.get("processing_type")
+
+    # ✅ Decked   = has a Decking log OR DB_APP_STATUS = "Completed"
+    # ✅ Not Decked = no Decking log AND DB_APP_STATUS != "Completed" (or null)
+    if status == "decked":
+        decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
         query = query.filter(
             or_(
-                ApplicationDelegation.DB_EVALUATOR.is_(None),
-                ApplicationDelegation.DB_EVALUATOR == "",
-                ApplicationDelegation.DB_EVALUATOR == "N/A"
+                MainDB.DB_ID.in_(decked_ids),
+                MainDB.DB_APP_STATUS == "Completed"
             )
         )
-        print("✅ Applied not_decked filter")
-    elif status == "decked":
-        query = query.join(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
-        delegation_joined = True
-        query = query.filter(
-            ApplicationDelegation.DB_EVALUATOR.isnot(None),
-            ApplicationDelegation.DB_EVALUATOR != "",
-            ApplicationDelegation.DB_EVALUATOR != "N/A"
-        )
-        print("✅ Applied decked filter")
+        print("✅ Applied decked filter (Decking log OR Completed status)")
 
-    # ✅ Filter by category (Establishment Category)
+    elif status == "not_decked":
+        decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
+        query = query.filter(
+            MainDB.DB_ID.notin_(decked_ids),
+            or_(
+                MainDB.DB_APP_STATUS.is_(None),
+                MainDB.DB_APP_STATUS == "",
+                MainDB.DB_APP_STATUS != "Completed"
+            )
+        )
+        print("✅ Applied not_decked filter (no Decking log AND not Completed)")
+
     if category:
         query = query.filter(MainDB.DB_EST_CAT == category)
         print(f"✅ Applied category filter: {category}")
 
-    # ✅ Filter by Prescription Classification
     if prescription:
-        # ✅ UPDATED - Handle __EMPTY__ for no prescription type
-        if prescription == "__EMPTY__" or prescription == "":
+        if prescription == "__EMPTY__":
             query = query.filter(
-                or_(
-                    MainDB.DB_PROD_CLASS_PRESCRIP.is_(None),
-                    MainDB.DB_PROD_CLASS_PRESCRIP == ""
-                )
+                or_(MainDB.DB_PROD_CLASS_PRESCRIP.is_(None), MainDB.DB_PROD_CLASS_PRESCRIP == "")
             )
-            print(f"✅ Applied prescription filter: NULL/Empty (received: {prescription})")
         else:
             query = query.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
-            print(f"✅ Applied prescription filter: {prescription}")
+        print(f"✅ Applied prescription filter: {prescription}")
 
-    # ✅ Filter by NOT Prescription (for Manual - exclude OTC)
     if prescription_not:
         query = query.filter(MainDB.DB_PROD_CLASS_PRESCRIP != prescription_not)
         print(f"✅ Applied prescription_not filter (exclude): {prescription_not}")
 
-    # ✅ Filter by DTN (exact match for integer)
     if dtn:
         query = query.filter(MainDB.DB_DTN == dtn)
         print(f"✅ Applied DTN filter: {dtn}")
 
-    # ✅ Filter by Manufacturer (partial match)
     if manufacturer:
         query = query.filter(MainDB.DB_PROD_MANU.like(f"%{manufacturer}%"))
         print(f"✅ Applied manufacturer filter: {manufacturer}")
 
-    # ✅ Filter by LTO Company (partial match)
     if lto_company:
         query = query.filter(MainDB.DB_EST_LTO_COMP.like(f"%{lto_company}%"))
         print(f"✅ Applied LTO company filter: {lto_company}")
 
-    # ✅ Filter by Brand Name (partial match)
     if brand_name:
         query = query.filter(MainDB.DB_PROD_BR_NAME.like(f"%{brand_name}%"))
         print(f"✅ Applied brand name filter: {brand_name}")
 
-    # ✅ Filter by Generic Name (partial match)
     if generic_name:
         query = query.filter(MainDB.DB_PROD_GEN_NAME.like(f"%{generic_name}%"))
         print(f"✅ Applied generic name filter: {generic_name}")
 
-    # ✅ Filter by Application Status
     if app_status:
-        # ✅ UPDATED - Handle __EMPTY__ for no application status
-        if app_status == "__EMPTY__" or app_status == "":
+        if app_status == "__EMPTY__":
             query = query.filter(
-                or_(
-                    MainDB.DB_APP_STATUS.is_(None),
-                    MainDB.DB_APP_STATUS == ""
-                )
+                or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "")
             )
-            print(f"✅ Applied app_status filter: NULL/Empty (received: {app_status})")
         else:
             query = query.filter(MainDB.DB_APP_STATUS == app_status)
-            print(f"✅ Applied application status filter: {app_status}")
+        print(f"✅ Applied application status filter: {app_status}")
 
-    # ✅ NEW - Filter by Application Type
-    if app_type is not None:  # Check for None explicitly
-        if app_type == "__EMPTY__" or app_type == "":  # ✅ Handle both __EMPTY__ and empty string
+    if app_type is not None:
+        if app_type == "__EMPTY__":
             query = query.filter(
-                or_(
-                    MainDB.DB_APP_TYPE.is_(None),
-                    MainDB.DB_APP_TYPE == ""
-                )
+                or_(MainDB.DB_APP_TYPE.is_(None), MainDB.DB_APP_TYPE == "")
             )
-            print(f"✅ Applied app_type filter: NULL/Empty (received: {app_type})")
         else:
             query = query.filter(MainDB.DB_APP_TYPE == app_type)
-            print(f"✅ Applied app_type filter: {app_type}")
+        print(f"✅ Applied app_type filter: {app_type}")
 
-    # ✅ Search with proper type handling (global search across multiple fields)
+    if processing_type is not None:
+        if processing_type == "__EMPTY__":
+            query = query.filter(
+                or_(MainDB.DB_PROCESSING_TYPE.is_(None), MainDB.DB_PROCESSING_TYPE == "")
+            )
+        else:
+            query = query.filter(MainDB.DB_PROCESSING_TYPE == processing_type)
+        print(f"✅ Applied processing_type filter: {processing_type}")
+
     if search:
         search_pattern = f"%{search}%"
         search_conditions = [
@@ -171,69 +166,51 @@ def get_main_db_records(
             MainDB.DB_REG_NO.like(search_pattern),
             MainDB.DB_EST_CAT.like(search_pattern),
             MainDB.DB_PROD_MANU.like(search_pattern),
-            MainDB.DB_PROD_CLASS_PRESCRIP.like(search_pattern)
+            MainDB.DB_PROD_CLASS_PRESCRIP.like(search_pattern),
+            MainDB.DB_PROCESSING_TYPE.like(search_pattern),
         ]
-        
-        # Handle DTN search (integer field)
         if search.isdigit():
             search_conditions.append(MainDB.DB_DTN == int(search))
         else:
             search_conditions.append(cast(MainDB.DB_DTN, String).like(search_pattern))
-        
         query = query.filter(or_(*search_conditions))
         print(f"✅ Applied global search: {search}")
 
-    # Get total BEFORE applying sorting and pagination
     total = query.count()
     print(f"📊 Total records found: {total}")
 
-    # ✅ Handle sorting by delegation fields
-    delegation_sort_fields = ['DB_DATE_DECKED_END', 'DB_DATE_EVAL_END', 
-                             'DB_DATE_CHECKER_END', 'DB_DATE_SUPERVISOR_END',
-                             'DB_DATE_QA_END', 'DB_DATE_DIRECTOR_END',
-                             'DB_RELEASING_OFFICER_END']
-    
+    # ── Sorting ──────────────────────────────────────────────────────────
+    # Delegation sort fields still supported for backward compat
+    delegation_sort_fields = [
+        'DB_DATE_DECKED_END', 'DB_DATE_EVAL_END', 'DB_DATE_CHECKER_END',
+        'DB_DATE_SUPERVISOR_END', 'DB_DATE_QA_END', 'DB_DATE_DIRECTOR_END',
+        'DB_DATE_RELEASING_OFFICER_END',
+    ]
+
     if sort_by in delegation_sort_fields:
-        # Join delegation if not already joined
-        if not delegation_joined:
-            query = query.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
-            delegation_joined = True
-        
+        query = query.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
         sort_column = getattr(ApplicationDelegation, sort_by)
-        print(f"📅 Sorting by delegation field: {sort_by}")
-        
-        # ✅ CRITICAL FIX: Use nullslast/nullsfirst functions properly
         if sort_order.lower() == "desc":
-            # Most recent dates first, NULL dates last
             query = query.order_by(nullslast(desc(sort_column)))
         else:
-            # Oldest dates first, NULL dates last
             query = query.order_by(nullslast(sort_column))
     elif hasattr(MainDB, sort_by):
-        # Sort by MainDB field
         sort_column = getattr(MainDB, sort_by)
-        print(f"📅 Sorting by MainDB field: {sort_by}")
         if sort_order.lower() == "desc":
             query = query.order_by(desc(sort_column))
         else:
             query = query.order_by(sort_column)
     else:
-        # Fallback to default sort
         print(f"⚠️ Unknown sort field: {sort_by}, using default")
         query = query.order_by(desc(MainDB.DB_DATE_EXCEL_UPLOAD))
 
-    # Apply pagination
     records = query.offset(skip).limit(limit).all()
     print(f"✅ Returning {len(records)} records (skip={skip}, limit={limit})")
-    
-    # ✅ Now eager load delegation data for the returned records
-    # This ensures we have the delegation info even if we didn't join for filtering
-    if not delegation_joined and records:
-        # Load delegation relationships
-        for record in records:
-            # Force load the relationship
-            _ = record.application_delegation
-    
+
+    # Eager-load delegation for response serialization
+    for record in records:
+        _ = record.application_delegation
+
     return records, total
 
 
@@ -249,7 +226,7 @@ def get_application_logs(
     """Fetch paginated logs for a specific MainDB record"""
     query = db.query(ApplicationLogs).filter(ApplicationLogs.main_db_id == main_id)
     total = query.count()
-    logs = query.order_by(ApplicationLogs.created_at.desc()).offset(skip).limit(limit).all()
+    logs = query.order_by(ApplicationLogs.del_index.asc()).offset(skip).limit(limit).all()
     return logs, total
 
 
@@ -259,7 +236,6 @@ def get_application_logs(
 def create_main_db_record(db: Session, record: MainDBCreate) -> MainDB:
     """Create a new record with proper type handling"""
     data = record.model_dump(exclude_unset=True)
-    # Handle datetime fields - convert string to datetime if needed
     if 'DB_DATE_EXCEL_UPLOAD' not in data or data['DB_DATE_EXCEL_UPLOAD'] is None:
         data['DB_DATE_EXCEL_UPLOAD'] = datetime.now()
     elif isinstance(data.get('DB_DATE_EXCEL_UPLOAD'), str):
@@ -267,14 +243,13 @@ def create_main_db_record(db: Session, record: MainDBCreate) -> MainDB:
             data['DB_DATE_EXCEL_UPLOAD'] = datetime.strptime(data['DB_DATE_EXCEL_UPLOAD'], "%Y-%m-%d %H:%M:%S")
         except ValueError:
             data['DB_DATE_EXCEL_UPLOAD'] = datetime.now()
-    
-    # Handle trash date if present
+
     if data.get('DB_TRASH_DATE_ENCODED') and isinstance(data['DB_TRASH_DATE_ENCODED'], str):
         try:
             data['DB_TRASH_DATE_ENCODED'] = datetime.strptime(data['DB_TRASH_DATE_ENCODED'], "%Y-%m-%d %H:%M:%S")
         except ValueError:
             data['DB_TRASH_DATE_ENCODED'] = None
-    
+
     db_record = MainDB(**data)
     db.add(db_record)
     db.commit()
@@ -293,20 +268,19 @@ def update_main_db_record(
         return None
 
     update_data = record_update.model_dump(exclude_unset=True)
-    
-    # Handle datetime conversions if needed
+
     if update_data.get('DB_DATE_EXCEL_UPLOAD') and isinstance(update_data['DB_DATE_EXCEL_UPLOAD'], str):
         try:
             update_data['DB_DATE_EXCEL_UPLOAD'] = datetime.strptime(update_data['DB_DATE_EXCEL_UPLOAD'], "%Y-%m-%d %H:%M:%S")
         except ValueError:
             pass
-    
+
     if update_data.get('DB_TRASH_DATE_ENCODED') and isinstance(update_data['DB_TRASH_DATE_ENCODED'], str):
         try:
             update_data['DB_TRASH_DATE_ENCODED'] = datetime.strptime(update_data['DB_TRASH_DATE_ENCODED'], "%Y-%m-%d %H:%M:%S")
         except ValueError:
             pass
-    
+
     for field, value in update_data.items():
         setattr(db_record, field, value)
 
@@ -358,16 +332,7 @@ def bulk_create_main_db_records(db: Session, records: List[MainDBCreate]) -> Lis
 
 
 def bulk_delete_main_db_records(db: Session, record_ids: List[int]) -> int:
-    """
-    Soft delete multiple records from main_db table
-
-    Args:
-        db: Database session
-        record_ids: List of record IDs to delete
-
-    Returns:
-        int: Number of records deleted
-    """
+    """Soft delete multiple records"""
     if not record_ids:
         return 0
     try:
@@ -387,36 +352,45 @@ def bulk_delete_main_db_records(db: Session, record_ids: List[int]) -> int:
 # Summary / Statistics
 # -----------------------------
 def get_main_db_summary(db: Session) -> dict:
-    """Summary statistics with evaluator counts and OTC count"""
+    """Summary statistics — decked/not decked based on application_logs"""
     total_records = db.query(MainDB).count()
-    
-    # Count records with evaluator (decked)
-    decked_count = db.query(MainDB).join(
-        ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID
-    ).filter(
-        ApplicationDelegation.DB_EVALUATOR.isnot(None),
-        ApplicationDelegation.DB_EVALUATOR != "",
-        ApplicationDelegation.DB_EVALUATOR != "N/A"
-    ).count()
-    
-    # Count records without evaluator (not decked)
-    not_decked_count = db.query(MainDB).outerjoin(
-        ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID
-    ).filter(
+
+    # ✅ Decked   = has a Decking log OR DB_APP_STATUS = "Completed"
+    # ✅ Not Decked = no Decking log AND not Completed
+    decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+        ApplicationLogs.application_step == "Decking"
+    ).subquery()
+
+    decked_count = db.query(MainDB).filter(
         or_(
-            ApplicationDelegation.DB_EVALUATOR.is_(None),
-            ApplicationDelegation.DB_EVALUATOR == "",
-            ApplicationDelegation.DB_EVALUATOR == "N/A"
+            MainDB.DB_ID.in_(decked_ids),
+            MainDB.DB_APP_STATUS == "Completed"
         )
     ).count()
-    
-    # ✅ Count OTC records
+
+    not_decked_count = db.query(MainDB).filter(
+        MainDB.DB_ID.notin_(decked_ids),
+        or_(
+            MainDB.DB_APP_STATUS.is_(None),
+            MainDB.DB_APP_STATUS == "",
+            MainDB.DB_APP_STATUS != "Completed"
+        )
+    ).count()
+
     otc_count = db.query(MainDB).filter(MainDB.DB_PROD_CLASS_PRESCRIP == "OTC").count()
-    
-    status_counts = db.query(MainDB.DB_APP_STATUS, func.count(MainDB.DB_ID)).group_by(MainDB.DB_APP_STATUS).all()
-    category_counts = db.query(MainDB.DB_EST_CAT, func.count(MainDB.DB_ID)).group_by(MainDB.DB_EST_CAT).all()
+
+    status_counts = db.query(
+        MainDB.DB_APP_STATUS, func.count(MainDB.DB_ID)
+    ).group_by(MainDB.DB_APP_STATUS).all()
+
+    category_counts = db.query(
+        MainDB.DB_EST_CAT, func.count(MainDB.DB_ID)
+    ).group_by(MainDB.DB_EST_CAT).all()
+
     seven_days_ago = datetime.now() - timedelta(days=7)
-    recent_uploads = db.query(MainDB).filter(MainDB.DB_DATE_EXCEL_UPLOAD >= seven_days_ago).count()
+    recent_uploads = db.query(MainDB).filter(
+        MainDB.DB_DATE_EXCEL_UPLOAD >= seven_days_ago
+    ).count()
 
     result = {
         "total_records": total_records,
@@ -425,11 +399,10 @@ def get_main_db_summary(db: Session) -> dict:
         "otc_count": otc_count,
         "by_status": {status or "Unknown": count for status, count in status_counts},
         "by_category": {category or "Unknown": count for category, count in category_counts},
-        "recent_uploads": recent_uploads
+        "recent_uploads": recent_uploads,
     }
-    
-    print(f"📊 Summary Stats: Total={total_records}, Decked={decked_count}, Not Decked={not_decked_count}, OTC={otc_count}")
-    
+
+    print(f"📊 Summary: Total={total_records}, Decked={decked_count}, Not Decked={not_decked_count}, OTC={otc_count}")
     return result
 
 
@@ -437,9 +410,15 @@ def get_upload_statistics(db: Session) -> dict:
     """Detailed upload statistics"""
     try:
         total = db.query(MainDB).count()
-        status_counts = db.query(MainDB.DB_APP_STATUS, func.count(MainDB.DB_ID)).group_by(MainDB.DB_APP_STATUS).all()
-        category_counts = db.query(MainDB.DB_EST_CAT, func.count(MainDB.DB_ID)).group_by(MainDB.DB_EST_CAT)\
+        status_counts = db.query(
+            MainDB.DB_APP_STATUS, func.count(MainDB.DB_ID)
+        ).group_by(MainDB.DB_APP_STATUS).all()
+
+        category_counts = db.query(
+            MainDB.DB_EST_CAT, func.count(MainDB.DB_ID)
+        ).group_by(MainDB.DB_EST_CAT)\
             .order_by(desc(func.count(MainDB.DB_ID))).limit(10).all()
+
         seven_days_ago = datetime.now() - timedelta(days=7)
         recent_uploads_query = db.query(
             func.date(MainDB.DB_DATE_EXCEL_UPLOAD).label('date'),
@@ -448,13 +427,16 @@ def get_upload_statistics(db: Session) -> dict:
             .group_by(func.date(MainDB.DB_DATE_EXCEL_UPLOAD))\
             .order_by(desc(func.date(MainDB.DB_DATE_EXCEL_UPLOAD))).all()
 
-        recent_uploads = [{"date": str(row[0]) if row[0] else None, "count": row[1]} for row in recent_uploads_query]
+        recent_uploads = [
+            {"date": str(row[0]) if row[0] else None, "count": row[1]}
+            for row in recent_uploads_query
+        ]
 
         return {
             "total": total,
             "by_status": {status or "Unknown": count for status, count in status_counts},
             "by_category": {category or "Unknown": count for category, count in category_counts},
-            "recent_uploads": recent_uploads
+            "recent_uploads": recent_uploads,
         }
     except Exception as e:
         print(f"Error getting upload statistics: {e}")
@@ -474,16 +456,7 @@ def get_unique_values(db: Session, field: str) -> List[str]:
 
 
 def get_upload_history(db: Session, limit: int = 50) -> List[dict]:
-    """
-    Get upload history grouped by user and date
-
-    Args:
-        db: Database session
-        limit: Maximum number of records to return
-
-    Returns:
-        List of upload history records
-    """
+    """Get upload history grouped by user and date"""
     try:
         results = db.query(
             MainDB.DB_USER_UPLOADER,
@@ -500,9 +473,9 @@ def get_upload_history(db: Session, limit: int = 50) -> List[dict]:
 
         return [
             {
-                "uploader": row[0] or "Unknown", 
-                "upload_date": str(row[1]) if row[1] else None, 
-                "record_count": row[2]
+                "uploader": row[0] or "Unknown",
+                "upload_date": str(row[1]) if row[1] else None,
+                "record_count": row[2],
             }
             for row in results
         ]

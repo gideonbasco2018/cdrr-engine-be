@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_  # ✅ FIXED - Added or_ import
+from sqlalchemy import func, or_
 from typing import Optional, List
 import pandas as pd
 import io
@@ -21,8 +21,9 @@ from app.schemas.main_db import (
 )
 from app.crud import main_db as crud
 from app.crud.main_db import get_main_db_records, get_application_logs
-from app.models.main_db import MainDB  # ✅ FIXED - Added MainDB import
+from app.models.main_db import MainDB
 from app.models.application_delegation import ApplicationDelegation
+from app.models.application_logs import ApplicationLogs
 from app.core.deps import get_current_active_user  
 
 router = APIRouter(
@@ -122,40 +123,22 @@ COLUMN_MAPPING = {
     "Pharma Prod Cat": "DB_PHARMA_PROD_CAT",
     "Pharma Prod Cat Label": "DB_PHARMA_PROD_CAT_LABEL",
     "Is in PM": "DB_IS_IN_PM",
-    "Timeline Citizen Charter": "DB_TIMELINE_CITIZEN_CHARTER"
+    "Timeline Citizen Charter": "DB_TIMELINE_CITIZEN_CHARTER",
+    # ✅ NEW FIELD
+    "Processing Type": "DB_PROCESSING_TYPE",
 }
 
-# Application Delegation Column Mapping
-DELEGATION_COLUMN_MAPPING = {
-    "Decker": "DB_DECKER",
-    "Decker Decision": "DB_DECKER_DECISION",
-    "Decker Remarks": "DB_DECKER_REMARKS",
-    "Date Decked End": "DB_DATE_DECKED_END",
-    "Evaluator": "DB_EVALUATOR",
-    "Evaluator Decision": "DB_EVAL_DECISION",
-    "Evaluator Remarks": "DB_EVAL_REMARKS",
-    "Date Eval End": "DB_DATE_EVAL_END",
-    "Checker": "DB_CHECKER",
-    "Checker Decision": "DB_CHECKER_DECISION",
-    "Checker Remarks": "DB_CHECKER_REMARKS",
-    "Date Checker End": "DB_DATE_CHECKER_END",
-    "Supervisor": "DB_SUPERVISOR",
-    "Supervisor Decision": "DB_SUPERVISOR_DECISION",
-    "Supervisor Remarks": "DB_SUPERVISOR_REMARKS",
-    "Date Supervisor End": "DB_DATE_SUPERVISOR_END",
-    "QA": "DB_QA",
-    "QA Decision": "DB_QA_DECISION",
-    "QA Remarks": "DB_QA_REMARKS",
-    "Date QA End": "DB_DATE_QA_END",
-    "Director": "DB_DIRECTOR",
-    "Director Decision": "DB_DIRECTOR_DECISION",
-    "Director Remarks": "DB_DIRECTOR_REMARKS",
-    "Date Director End": "DB_DATE_DIRECTOR_END",
-    "Releasing Officer": "DB_RELEASING_OFFICER",
-    "Releasing Officer Decision": "DB_RELEASING_OFFICER_DECISION",
-    "Releasing Officer Remarks": "DB_RELEASING_OFFICER_REMARKS",
-    "Date Releasing Officer End": "DB_RELEASING_OFFICER_END"
-}
+# ✅ Application Log Steps config — used for Excel upload & template
+# Each entry: (application_step, excel_user_col, excel_decision_col, excel_remarks_col, excel_date_col, excel_thread_col, del_index)
+LOG_STEPS = [
+    ("Decking",    "Decker",           "Decker Decision",           "Decker Remarks",           "Date Decked End",            "Decker Del Thread",           1),
+    ("Evaluation", "Evaluator",        "Evaluator Decision",        "Evaluator Remarks",        "Date Eval End",              "Evaluator Del Thread",        2),
+    ("Checking",   "Checker",          "Checker Decision",          "Checker Remarks",          "Date Checker End",           "Checker Del Thread",          3),
+    ("Supervision","Supervisor",       "Supervisor Decision",       "Supervisor Remarks",       "Date Supervisor End",        "Supervisor Del Thread",       4),
+    ("QA",         "QA",               "QA Decision",               "QA Remarks",               "Date QA End",                "QA Del Thread",               5),
+    ("Director",   "Director",         "Director Decision",         "Director Remarks",         "Date Director End",          "Director Del Thread",         6),
+    ("Releasing",  "Releasing Officer","Releasing Officer Decision","Releasing Officer Remarks","Date Releasing Officer End", "Releasing Del Thread",        7),
+]
 
 # Date and numeric field definitions
 DATE_FIELDS = {
@@ -163,12 +146,6 @@ DATE_FIELDS = {
     'DB_DATE_ISSUED', 'DB_DATE_DECK', 'DB_DATE_RECEIVED_FDAC',
     'DB_DATE_RECEIVED_CENT', 'DB_SECPA_EXP_DATE', 'DB_SECPA_ISSUED_ON',
     'DB_DATE_REMARKS', 'DB_DATE_RELEASED'
-}
-
-DELEGATION_DATE_FIELDS = {
-    'DB_DATE_DECKED_END', 'DB_DATE_EVAL_END', 'DB_DATE_CHECKER_END',
-    'DB_DATE_SUPERVISOR_END', 'DB_DATE_QA_END', 'DB_DATE_DIRECTOR_END',
-    'DB_RELEASING_OFFICER_END'
 }
 
 NUMERIC_STRING_FIELDS = {'DB_FEE', 'DB_LRF', 'DB_SURC', 'DB_TOTAL'}
@@ -185,22 +162,18 @@ def parse_date_value(value):
     if pd.isna(value) or value is None or value == '':
         return None
     
-    # If already a datetime/Timestamp, return it
     if isinstance(value, (datetime, pd.Timestamp)):
         return value
     
-    # If numeric (Excel serial date or invalid), return None
     if isinstance(value, (int, float, np.integer, np.floating)):
         return None
     
-    # Try to parse string dates
     if isinstance(value, str):
         value = value.strip()
         if not value:
             return None
         
         try:
-            # Use dateutil parser which handles many formats
             parsed_date = parser.parse(value, fuzzy=True)
             return parsed_date
         except:
@@ -220,17 +193,17 @@ def get_main_db(
     search: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
-    # ✅ NEW FILTERS - All optional and reusable
     prescription: Optional[str] = Query(None, description="Filter by Prescription (e.g., 'OTC', 'Rx')"),
-    prescription_not: Optional[str] = Query(None, description="Exclude by Prescription (e.g., NOT 'Over-the-Counter (OTC) Drug')"),
-    dtn: Optional[int] = Query(None, description="Filter by DTN (Document Tracking Number)"),
+    prescription_not: Optional[str] = Query(None, description="Exclude by Prescription"),
+    dtn: Optional[int] = Query(None, description="Filter by DTN"),
     manufacturer: Optional[str] = Query(None, description="Filter by Manufacturer"),
     lto_company: Optional[str] = Query(None, description="Filter by LTO Company"),
     brand_name: Optional[str] = Query(None, description="Filter by Brand Name"),
     generic_name: Optional[str] = Query(None, description="Filter by Generic Name"),
     app_status: Optional[str] = Query(None, description="Filter by Application Status"),
-    app_type: Optional[str] = Query(None, description="Filter by Application Type (DB_APP_TYPE). Use empty string for records without app type."),
-    # END NEW FILTERS
+    app_type: Optional[str] = Query(None, description="Filter by Application Type"),
+    # ✅ NEW FILTER
+    processing_type: Optional[str] = Query(None, description="Filter by Processing Type"),
     sort_by: str = Query("DB_DATE_EXCEL_UPLOAD"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     db: Session = Depends(get_db)
@@ -238,7 +211,6 @@ def get_main_db(
     """Get paginated list of main database records with flexible filtering"""
     skip = (page - 1) * page_size
     
-    # Build filters dictionary
     filters = {
         "status": status,
         "category": category,
@@ -250,7 +222,9 @@ def get_main_db(
         "brand_name": brand_name,
         "generic_name": generic_name,
         "app_status": app_status,
-        "app_type": app_type
+        "app_type": app_type,
+        # ✅ NEW
+        "processing_type": processing_type,
     }
     
     records, total = get_main_db_records(
@@ -272,7 +246,81 @@ def get_main_db(
     }
 
 
-# ✅ NEW ENDPOINT - Get unique app types with counts
+# ✅ NEW ENDPOINT - Get unique processing types with counts
+@router.get("/processing-types")
+def get_processing_types(
+    status: Optional[str] = Query(None, description="Filter by decking status: 'not_decked' or 'decked'"),
+    db: Session = Depends(get_db)
+):
+    """Get unique DB_PROCESSING_TYPE values with counts"""
+    query = db.query(
+        MainDB.DB_PROCESSING_TYPE,
+        func.count(MainDB.DB_ID).label('count')
+    )
+
+    # ✅ Decked   = has Decking log OR Completed status
+    # ✅ Not Decked = no Decking log AND not Completed
+    if status == "decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
+        query = query.filter(
+            or_(MainDB.DB_ID.in_(_decked_ids), MainDB.DB_APP_STATUS == "Completed")
+        )
+    elif status == "not_decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
+        query = query.filter(
+            MainDB.DB_ID.notin_(_decked_ids),
+            or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
+        )
+
+    results = query.filter(
+        MainDB.DB_PROCESSING_TYPE.isnot(None),
+        MainDB.DB_PROCESSING_TYPE != ""
+    ).group_by(MainDB.DB_PROCESSING_TYPE)\
+        .order_by(MainDB.DB_PROCESSING_TYPE)\
+        .all()
+
+    # Count records without processing type
+    query_no_type = db.query(func.count(MainDB.DB_ID))
+    # ✅ Decked   = has Decking log OR Completed status
+    # ✅ Not Decked = no Decking log AND not Completed
+    if status == "decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
+        query_no_type = query_no_type.filter(
+            or_(MainDB.DB_ID.in_(_decked_ids), MainDB.DB_APP_STATUS == "Completed")
+        )
+    elif status == "not_decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
+        query_no_type = query_no_type.filter(
+            MainDB.DB_ID.notin_(_decked_ids),
+            or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
+        )
+
+    no_type_count = query_no_type.filter(
+        or_(
+            MainDB.DB_PROCESSING_TYPE.is_(None),
+            MainDB.DB_PROCESSING_TYPE == ""
+        )
+    ).scalar()
+
+    processing_types = [
+        {"value": pt, "count": count}
+        for pt, count in results
+    ]
+
+    if no_type_count and no_type_count > 0:
+        processing_types.insert(0, {"value": None, "count": no_type_count})
+
+    return {"processing_types": processing_types}
+
+
 @router.get("/app-types")
 def get_app_types(
     status: Optional[str] = Query(None, description="Filter by decking status: 'not_decked' or 'decked'"),
@@ -284,25 +332,24 @@ def get_app_types(
         func.count(MainDB.DB_ID).label('count')
     )
     
-    # Apply status filter if provided
-    if status == "not_decked":
-        query = query.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+    # ✅ Decked   = has Decking log OR Completed status
+    # ✅ Not Decked = no Decking log AND not Completed
+    if status == "decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
         query = query.filter(
-            or_(
-                ApplicationDelegation.DB_EVALUATOR.is_(None),
-                ApplicationDelegation.DB_EVALUATOR == "",
-                ApplicationDelegation.DB_EVALUATOR == "N/A"
-            )
+            or_(MainDB.DB_ID.in_(_decked_ids), MainDB.DB_APP_STATUS == "Completed")
         )
-    elif status == "decked":
-        query = query.join(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+    elif status == "not_decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
         query = query.filter(
-            ApplicationDelegation.DB_EVALUATOR.isnot(None),
-            ApplicationDelegation.DB_EVALUATOR != "",
-            ApplicationDelegation.DB_EVALUATOR != "N/A"
+            MainDB.DB_ID.notin_(_decked_ids),
+            or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
         )
     
-    # Get records WITH app_type (not null and not empty)
     results_with_type = query.filter(
         MainDB.DB_APP_TYPE.isnot(None),
         MainDB.DB_APP_TYPE != ""
@@ -310,25 +357,24 @@ def get_app_types(
         .order_by(MainDB.DB_APP_TYPE)\
         .all()
     
-    # Get count of records WITHOUT app_type (null or empty)
     query_no_type = db.query(func.count(MainDB.DB_ID))
     
-    # Apply same status filter for no app_type records
-    if status == "not_decked":
-        query_no_type = query_no_type.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+    # ✅ Decked   = has Decking log OR Completed status
+    # ✅ Not Decked = no Decking log AND not Completed
+    if status == "decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
         query_no_type = query_no_type.filter(
-            or_(
-                ApplicationDelegation.DB_EVALUATOR.is_(None),
-                ApplicationDelegation.DB_EVALUATOR == "",
-                ApplicationDelegation.DB_EVALUATOR == "N/A"
-            )
+            or_(MainDB.DB_ID.in_(_decked_ids), MainDB.DB_APP_STATUS == "Completed")
         )
-    elif status == "decked":
-        query_no_type = query_no_type.join(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+    elif status == "not_decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
         query_no_type = query_no_type.filter(
-            ApplicationDelegation.DB_EVALUATOR.isnot(None),
-            ApplicationDelegation.DB_EVALUATOR != "",
-            ApplicationDelegation.DB_EVALUATOR != "N/A"
+            MainDB.DB_ID.notin_(_decked_ids),
+            or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
         )
     
     no_type_count = query_no_type.filter(
@@ -338,13 +384,11 @@ def get_app_types(
         )
     ).scalar()
     
-    # Build response
     app_types = [
         {"value": app_type, "count": count} 
         for app_type, count in results_with_type
     ]
     
-    # Add "No Application Type" if there are records without app_type
     if no_type_count and no_type_count > 0:
         app_types.insert(0, {"value": None, "count": no_type_count})
     
@@ -363,37 +407,32 @@ def get_prescription_types(
         func.count(MainDB.DB_ID).label('count')
     )
     
-    # Apply status filter if provided
-    if status == "not_decked":
-        query = query.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+    # ✅ Decked   = has Decking log OR Completed status
+    # ✅ Not Decked = no Decking log AND not Completed
+    if status == "decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
         query = query.filter(
-            or_(
-                ApplicationDelegation.DB_EVALUATOR.is_(None),
-                ApplicationDelegation.DB_EVALUATOR == "",
-                ApplicationDelegation.DB_EVALUATOR == "N/A"
-            )
+            or_(MainDB.DB_ID.in_(_decked_ids), MainDB.DB_APP_STATUS == "Completed")
         )
-    elif status == "decked":
-        query = query.join(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+    elif status == "not_decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
         query = query.filter(
-            ApplicationDelegation.DB_EVALUATOR.isnot(None),
-            ApplicationDelegation.DB_EVALUATOR != "",
-            ApplicationDelegation.DB_EVALUATOR != "N/A"
+            MainDB.DB_ID.notin_(_decked_ids),
+            or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
         )
     
-    # Apply app_type filter if provided
     if app_type is not None:
         if app_type == "__EMPTY__" or app_type == "":
             query = query.filter(
-                or_(
-                    MainDB.DB_APP_TYPE.is_(None),
-                    MainDB.DB_APP_TYPE == ""
-                )
+                or_(MainDB.DB_APP_TYPE.is_(None), MainDB.DB_APP_TYPE == "")
             )
         else:
             query = query.filter(MainDB.DB_APP_TYPE == app_type)
     
-    # Get records WITH prescription type (not null and not empty)
     results_with_type = query.filter(
         MainDB.DB_PROD_CLASS_PRESCRIP.isnot(None),
         MainDB.DB_PROD_CLASS_PRESCRIP != ""
@@ -401,35 +440,30 @@ def get_prescription_types(
         .order_by(MainDB.DB_PROD_CLASS_PRESCRIP)\
         .all()
     
-    # Get count of records WITHOUT prescription type (null or empty)
     query_no_type = db.query(func.count(MainDB.DB_ID))
     
-    # Apply same status filter for no prescription type records
-    if status == "not_decked":
-        query_no_type = query_no_type.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+    # ✅ Decked   = has Decking log OR Completed status
+    # ✅ Not Decked = no Decking log AND not Completed
+    if status == "decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
         query_no_type = query_no_type.filter(
-            or_(
-                ApplicationDelegation.DB_EVALUATOR.is_(None),
-                ApplicationDelegation.DB_EVALUATOR == "",
-                ApplicationDelegation.DB_EVALUATOR == "N/A"
-            )
+            or_(MainDB.DB_ID.in_(_decked_ids), MainDB.DB_APP_STATUS == "Completed")
         )
-    elif status == "decked":
-        query_no_type = query_no_type.join(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+    elif status == "not_decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
         query_no_type = query_no_type.filter(
-            ApplicationDelegation.DB_EVALUATOR.isnot(None),
-            ApplicationDelegation.DB_EVALUATOR != "",
-            ApplicationDelegation.DB_EVALUATOR != "N/A"
+            MainDB.DB_ID.notin_(_decked_ids),
+            or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
         )
     
-    # Apply same app_type filter for no prescription type records
     if app_type is not None:
         if app_type == "__EMPTY__" or app_type == "":
             query_no_type = query_no_type.filter(
-                or_(
-                    MainDB.DB_APP_TYPE.is_(None),
-                    MainDB.DB_APP_TYPE == ""
-                )
+                or_(MainDB.DB_APP_TYPE.is_(None), MainDB.DB_APP_TYPE == "")
             )
         else:
             query_no_type = query_no_type.filter(MainDB.DB_APP_TYPE == app_type)
@@ -441,13 +475,11 @@ def get_prescription_types(
         )
     ).scalar()
     
-    # Build response
     prescription_types = [
         {"value": pres_type, "count": count} 
         for pres_type, count in results_with_type
     ]
     
-    # Add "No Prescription Type" if there are records without prescription
     if no_type_count and no_type_count > 0:
         prescription_types.insert(0, {"value": None, "count": no_type_count})
     
@@ -461,55 +493,46 @@ def get_app_status_types(
     prescription: Optional[str] = Query(None, description="Filter by prescription type"),
     db: Session = Depends(get_db)
 ):
-    """Get unique DB_APP_STATUS values with counts, filtered by status, app_type, and prescription"""
+    """Get unique DB_APP_STATUS values with counts"""
     query = db.query(
         MainDB.DB_APP_STATUS,
         func.count(MainDB.DB_ID).label('count')
     )
     
-    # Apply status filter if provided (decked/not_decked)
-    if status == "not_decked":
-        query = query.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+    # ✅ Decked   = has Decking log OR Completed status
+    # ✅ Not Decked = no Decking log AND not Completed
+    if status == "decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
         query = query.filter(
-            or_(
-                ApplicationDelegation.DB_EVALUATOR.is_(None),
-                ApplicationDelegation.DB_EVALUATOR == "",
-                ApplicationDelegation.DB_EVALUATOR == "N/A"
-            )
+            or_(MainDB.DB_ID.in_(_decked_ids), MainDB.DB_APP_STATUS == "Completed")
         )
-    elif status == "decked":
-        query = query.join(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+    elif status == "not_decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
         query = query.filter(
-            ApplicationDelegation.DB_EVALUATOR.isnot(None),
-            ApplicationDelegation.DB_EVALUATOR != "",
-            ApplicationDelegation.DB_EVALUATOR != "N/A"
+            MainDB.DB_ID.notin_(_decked_ids),
+            or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
         )
     
-    # Apply app_type filter if provided
     if app_type is not None:
         if app_type == "__EMPTY__" or app_type == "":
             query = query.filter(
-                or_(
-                    MainDB.DB_APP_TYPE.is_(None),
-                    MainDB.DB_APP_TYPE == ""
-                )
+                or_(MainDB.DB_APP_TYPE.is_(None), MainDB.DB_APP_TYPE == "")
             )
         else:
             query = query.filter(MainDB.DB_APP_TYPE == app_type)
     
-    # Apply prescription filter if provided
     if prescription is not None:
         if prescription == "__EMPTY__" or prescription == "":
             query = query.filter(
-                or_(
-                    MainDB.DB_PROD_CLASS_PRESCRIP.is_(None),
-                    MainDB.DB_PROD_CLASS_PRESCRIP == ""
-                )
+                or_(MainDB.DB_PROD_CLASS_PRESCRIP.is_(None), MainDB.DB_PROD_CLASS_PRESCRIP == "")
             )
         else:
             query = query.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
     
-    # Get records WITH app status (not null and not empty)
     results_with_status = query.filter(
         MainDB.DB_APP_STATUS.isnot(None),
         MainDB.DB_APP_STATUS != ""
@@ -517,47 +540,38 @@ def get_app_status_types(
         .order_by(MainDB.DB_APP_STATUS)\
         .all()
     
-    # Get count of records WITHOUT app status (null or empty)
     query_no_status = db.query(func.count(MainDB.DB_ID))
     
-    # Apply same filters for no app status records
-    if status == "not_decked":
-        query_no_status = query_no_status.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+    # ✅ Decked   = has Decking log OR Completed status
+    # ✅ Not Decked = no Decking log AND not Completed
+    if status == "decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
         query_no_status = query_no_status.filter(
-            or_(
-                ApplicationDelegation.DB_EVALUATOR.is_(None),
-                ApplicationDelegation.DB_EVALUATOR == "",
-                ApplicationDelegation.DB_EVALUATOR == "N/A"
-            )
+            or_(MainDB.DB_ID.in_(_decked_ids), MainDB.DB_APP_STATUS == "Completed")
         )
-    elif status == "decked":
-        query_no_status = query_no_status.join(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+    elif status == "not_decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
         query_no_status = query_no_status.filter(
-            ApplicationDelegation.DB_EVALUATOR.isnot(None),
-            ApplicationDelegation.DB_EVALUATOR != "",
-            ApplicationDelegation.DB_EVALUATOR != "N/A"
+            MainDB.DB_ID.notin_(_decked_ids),
+            or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
         )
     
-    # Apply same app_type filter
     if app_type is not None:
         if app_type == "__EMPTY__" or app_type == "":
             query_no_status = query_no_status.filter(
-                or_(
-                    MainDB.DB_APP_TYPE.is_(None),
-                    MainDB.DB_APP_TYPE == ""
-                )
+                or_(MainDB.DB_APP_TYPE.is_(None), MainDB.DB_APP_TYPE == "")
             )
         else:
             query_no_status = query_no_status.filter(MainDB.DB_APP_TYPE == app_type)
     
-    # Apply same prescription filter
     if prescription is not None:
         if prescription == "__EMPTY__" or prescription == "":
             query_no_status = query_no_status.filter(
-                or_(
-                    MainDB.DB_PROD_CLASS_PRESCRIP.is_(None),
-                    MainDB.DB_PROD_CLASS_PRESCRIP == ""
-                )
+                or_(MainDB.DB_PROD_CLASS_PRESCRIP.is_(None), MainDB.DB_PROD_CLASS_PRESCRIP == "")
             )
         else:
             query_no_status = query_no_status.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
@@ -569,13 +583,11 @@ def get_app_status_types(
         )
     ).scalar()
     
-    # Build response
     app_status_types = [
         {"value": app_status, "count": count} 
         for app_status, count in results_with_status
     ]
     
-    # Add "No Application Status" if there are records without status
     if no_status_count and no_status_count > 0:
         app_status_types.insert(0, {"value": None, "count": no_status_count})
     
@@ -593,26 +605,24 @@ def get_establishment_categories(
         func.count(MainDB.DB_ID).label('count')
     )
     
-    # Apply status filter if provided
-    if status == "not_decked":
-        query = query.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+    # ✅ Decked   = has Decking log OR Completed status
+    # ✅ Not Decked = no Decking log AND not Completed
+    if status == "decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
         query = query.filter(
-            or_(
-                ApplicationDelegation.DB_EVALUATOR.is_(None),
-                ApplicationDelegation.DB_EVALUATOR == "",
-                ApplicationDelegation.DB_EVALUATOR == "N/A"
-            )
+            or_(MainDB.DB_ID.in_(_decked_ids), MainDB.DB_APP_STATUS == "Completed")
         )
-    elif status == "decked":
-        query = query.join(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+    elif status == "not_decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
         query = query.filter(
-            ApplicationDelegation.DB_EVALUATOR.isnot(None),
-            ApplicationDelegation.DB_EVALUATOR != "",
-            ApplicationDelegation.DB_EVALUATOR != "N/A"
+            MainDB.DB_ID.notin_(_decked_ids),
+            or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
         )
-    # If status is None, no additional filter is applied (get all records)
     
-    # Get records WITH category (not null and not empty)
     results_with_category = query.filter(
         MainDB.DB_EST_CAT.isnot(None),
         MainDB.DB_EST_CAT != ""
@@ -620,25 +630,24 @@ def get_establishment_categories(
         .order_by(MainDB.DB_EST_CAT)\
         .all()
     
-    # Get count of records WITHOUT category (null or empty)
     query_no_category = db.query(func.count(MainDB.DB_ID))
     
-    # Apply same status filter for no category records
-    if status == "not_decked":
-        query_no_category = query_no_category.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+    # ✅ Decked   = has Decking log OR Completed status
+    # ✅ Not Decked = no Decking log AND not Completed
+    if status == "decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
         query_no_category = query_no_category.filter(
-            or_(
-                ApplicationDelegation.DB_EVALUATOR.is_(None),
-                ApplicationDelegation.DB_EVALUATOR == "",
-                ApplicationDelegation.DB_EVALUATOR == "N/A"
-            )
+            or_(MainDB.DB_ID.in_(_decked_ids), MainDB.DB_APP_STATUS == "Completed")
         )
-    elif status == "decked":
-        query_no_category = query_no_category.join(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+    elif status == "not_decked":
+        _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking"
+        ).subquery()
         query_no_category = query_no_category.filter(
-            ApplicationDelegation.DB_EVALUATOR.isnot(None),
-            ApplicationDelegation.DB_EVALUATOR != "",
-            ApplicationDelegation.DB_EVALUATOR != "N/A"
+            MainDB.DB_ID.notin_(_decked_ids),
+            or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
         )
     
     no_category_count = query_no_category.filter(
@@ -648,13 +657,11 @@ def get_establishment_categories(
         )
     ).scalar()
     
-    # Build response
     categories = [
         {"value": category, "count": count} 
         for category, count in results_with_category
     ]
     
-    # Add "No Category" if there are records without category
     if no_category_count and no_category_count > 0:
         categories.insert(0, {"value": None, "count": no_category_count})
     
@@ -691,7 +698,7 @@ async def upload_excel(
     username: str = Query("system"), 
     db: Session = Depends(get_db)
 ):
-    """Upload an Excel file and insert records into MainDB and ApplicationDelegation"""
+    """Upload an Excel file and insert records into MainDB and ApplicationLogs"""
     print("🚀 Starting Excel upload process...")
     
     if not file.filename.endswith((".xls", ".xlsx")):
@@ -706,83 +713,104 @@ async def upload_excel(
     if df.empty:
         raise HTTPException(status_code=400, detail="Excel file is empty")
 
-    # Convert datetime columns to strings for MainDB fields
+    # Normalize datetime columns
     for col in df.columns:
         if pd.api.types.is_datetime64_any_dtype(df[col]):
             df[col] = df[col].apply(lambda x: x.strftime("%Y-%m-%d") if pd.notna(x) else None)
         elif df[col].dtype == 'object':
             if df[col].apply(lambda x: isinstance(x, pd.Timestamp)).any():
                 df[col] = df[col].apply(lambda x: x.strftime("%Y-%m-%d") if isinstance(x, pd.Timestamp) else x)
-    
+
     print(f"📊 Total rows in Excel: {len(df)}")
     success, errors = 0, []
 
     for index, row in df.iterrows():
         try:
+            # ── Step 1: Build main_db record ──────────────────────────────
             record_data = {}
-            delegation_data = {}
-
-            # Map Excel to MainDB columns with proper type handling
             for excel_col, db_col in COLUMN_MAPPING.items():
                 raw_value = row.get(excel_col)
-                
                 if pd.isna(raw_value) or raw_value is None:
                     record_data[db_col] = None
                 elif isinstance(raw_value, (int, float, np.integer, np.floating)):
-                    # ✅ Handle different numeric field types
                     if db_col in NUMERIC_STRING_FIELDS:
-                        # Fee, LRF, SURC, Total - store as string
                         record_data[db_col] = str(int(raw_value))
                     elif db_col in INTEGER_FIELDS:
-                        # DTN, Is in PM, Timeline - store as integer
                         record_data[db_col] = int(raw_value)
                     else:
-                        # Everything else becomes string
                         record_data[db_col] = str(raw_value)
                 else:
                     record_data[db_col] = str(raw_value).strip() if isinstance(raw_value, str) else str(raw_value)
 
-            # Map Excel to ApplicationDelegation columns with proper date handling
-            for excel_col, db_col in DELEGATION_COLUMN_MAPPING.items():
-                raw_value = row.get(excel_col)
-                
-                # Handle date fields specially
-                if db_col in DELEGATION_DATE_FIELDS:
-                    parsed_date = parse_date_value(raw_value)
-                    delegation_data[db_col] = parsed_date
-                else:
-                    # Handle text fields
-                    if pd.isna(raw_value) or raw_value is None:
-                        delegation_data[db_col] = None
-                    elif isinstance(raw_value, str):
-                        delegation_data[db_col] = raw_value.strip()
-                    elif isinstance(raw_value, (int, float, np.integer, np.floating)):
-                        delegation_data[db_col] = None  # Skip numeric values for text fields
-                    else:
-                        delegation_data[db_col] = str(raw_value)
-
-            # Add metadata
             record_data["DB_USER_UPLOADER"] = username
             record_data["DB_DATE_EXCEL_UPLOAD"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # Create MainDB record
             db_record = crud.create_main_db_record(db, MainDBCreate(**record_data))
+            print(f"  ✅ Inserted main_db ID {db_record.DB_ID} (DTN: {db_record.DB_DTN})")
 
-            # Always create ApplicationDelegation record (1:1)
-            delegation_data["DB_MAIN_ID"] = db_record.DB_ID
-            
-            # Ensure all delegation fields exist with None defaults
-            for col in DELEGATION_COLUMN_MAPPING.values():
-                delegation_data.setdefault(col, None)
+            # ── Step 2: Insert application_logs per step ──────────────────
+            # LOG_STEPS: (step_label, user_col, decision_col, remarks_col, date_col, thread_col, del_index)
+            logs_inserted = 0
+            for (step_label, user_col, decision_col, remarks_col, date_col, thread_col, del_idx) in LOG_STEPS:
+                user_val = row.get(user_col)
 
-            delegation_record = ApplicationDelegation(**delegation_data)
-            db.add(delegation_record)
+                # Skip this step if user column is empty
+                if pd.isna(user_val) or user_val is None or str(user_val).strip() == "":
+                    continue
+
+                # Parse accomplished_date
+                accomplished = parse_date_value(row.get(date_col))
+
+                # Get thread value — default to "Open" if empty/null
+                thread_val = row.get(thread_col)
+                if not pd.isna(thread_val) and thread_val is not None and str(thread_val).strip() != "":
+                    thread_str = str(thread_val).strip()
+                else:
+                    thread_str = "Open"
+
+                # Close → del_last_index=0, status=COMPLETED
+                # Open  → del_last_index=1, status=IN PROGRESS
+                # Case-insensitive comparison
+                if thread_str.upper() == "CLOSE":
+                    thread_str = "Close"
+                    del_last_index = 0
+                    log_status = "COMPLETED"
+                else:
+                    thread_str = "Open"
+                    del_last_index = 1
+                    log_status = "IN PROGRESS"
+
+                # Get decision and remarks
+                decision_val = row.get(decision_col)
+                decision_str = str(decision_val).strip() if not pd.isna(decision_val) and decision_val is not None else ""
+
+                remarks_val = row.get(remarks_col)
+                remarks_str = str(remarks_val).strip() if not pd.isna(remarks_val) and remarks_val is not None else ""
+
+                log = ApplicationLogs(
+                    main_db_id=db_record.DB_ID,
+                    application_step=step_label,
+                    user_name=str(user_val).strip(),
+                    application_status=log_status,
+                    application_decision=decision_str,
+                    application_remarks=remarks_str,
+                    start_date=accomplished,        # no separate start date in Excel
+                    accomplished_date=accomplished,
+                    del_index=del_idx,
+                    del_previous=None,
+                    del_last_index=del_last_index,
+                    del_thread=thread_str,
+                )
+                db.add(log)
+                logs_inserted += 1
+                print(f"    📝 Log: {step_label} → {str(user_val).strip()} (del_index={del_idx})")
+
             db.commit()
-            print(f"  ✅ Created delegation record for MainDB ID {db_record.DB_ID}")
-
+            print(f"  ✅ Committed {logs_inserted} log(s) for main_db ID {db_record.DB_ID}")
             success += 1
 
         except Exception as e:
+            db.rollback()
             print(f"❌ Error on row {index + 2}: {str(e)}")
             import traceback
             traceback.print_exc()
@@ -793,54 +821,62 @@ async def upload_excel(
             })
 
     print(f"✅ Upload complete: {success} success, {len(errors)} errors")
-    
+
     return {
         "success": True,
         "message": f"Upload complete: {success} records inserted successfully",
         "stats": {"total": len(df), "success": success, "errors": len(errors)},
-        "errors": errors[:10]  # return first 10 errors
+        "errors": errors[:10]
     }
 
 
 @router.get("/download-template")
 async def download_template():
-    """Download Excel template with proper column headers including delegation columns"""
+    """Download Excel template with proper column headers"""
     try:
-        # Combine both MainDB and Delegation columns
-        all_columns = {**COLUMN_MAPPING, **DELEGATION_COLUMN_MAPPING}
-        template_data = {col: [""] for col in all_columns.keys()}
+        # ✅ Build log step columns from LOG_STEPS config
+        # Order: user, decision, remarks, date, del_thread — per step
+        log_step_columns = []
+        for (step_label, user_col, decision_col, remarks_col, date_col, thread_col, _) in LOG_STEPS:
+            log_step_columns += [user_col, decision_col, remarks_col, date_col, thread_col]
+
+        # Combine: main_db columns + log step columns
+        all_columns = list(COLUMN_MAPPING.keys()) + log_step_columns
+        template_data = {col: [""] for col in all_columns}
         df = pd.DataFrame(template_data)
-        
+
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df.to_excel(writer, index=False, sheet_name="Template")
-            
-            # Optional: Add a second sheet with instructions
+
             instructions = pd.DataFrame({
                 "Column Group": [
                     "Main Database Columns",
-                    "Application Delegation Columns",
+                    "Application Log Columns",
+                    "Del Thread Values",
                     "Date Format Instructions",
-                    "Numeric Field Instructions"
+                    "Numeric Field Instructions",
                 ],
                 "Description": [
-                    "Columns from DTN to 'Timeline Citizen Charter' are for main database records",
-                    "Columns from Decker to 'Date Releasing Officer End' are for application delegation tracking",
-                    "For date fields, use formats like: 2026-01-02, Jan 2 2026, 01/02/2026, etc.",
-                    "Timeline Citizen Charter should be a whole number (e.g., 30, 45, 60)"
+                    "Columns from 'DTN' to 'Processing Type' are for main database records",
+                    "Columns for Decker, Evaluator, Checker, Supervisor, QA, Director, Releasing Officer — each has: Name, Decision, Remarks, Date, Del Thread",
+                    "Del Thread column per step (e.g. 'Decker Del Thread') — values: 'Open' or 'Close'",
+                    "For date fields, use formats like: 2026-01-02, Jan 2 2026, 01/02/2026",
+                    "Timeline Citizen Charter should be a whole number (e.g., 30, 45, 60)",
                 ],
                 "Note": [
                     "All main database columns are optional",
-                    "Delegation columns are optional. Fill only if you have delegation data.",
+                    "A log row is only inserted if the Name column (e.g., 'Decker') has a value",
+                    "Leave blank if not applicable",
                     "Date fields will be automatically parsed. Leave empty if no date.",
-                    "Enter numbers without decimals for timeline fields."
+                    "Enter numbers without decimals for timeline fields.",
                 ]
             })
             instructions.to_excel(writer, index=False, sheet_name="Instructions")
-        
+
         output.seek(0)
         return StreamingResponse(
-            output, 
+            output,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": "attachment; filename=main_db_template.xlsx"}
         )
@@ -874,13 +910,14 @@ async def export_filtered_records(
     generic_name: Optional[str] = Query(None),
     app_status: Optional[str] = Query(None),
     app_type: Optional[str] = Query(None),
+    # ✅ NEW
+    processing_type: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
     """Export filtered records to Excel"""
     try:
         print(f"📥 Export request received with params: status={status}, app_type={app_type}, search={search}")
         
-        # Build filters
         filters = {
             "status": status,
             "category": category,
@@ -892,10 +929,11 @@ async def export_filtered_records(
             "brand_name": brand_name,
             "generic_name": generic_name,
             "app_status": app_status,
-            "app_type": app_type
+            "app_type": app_type,
+            # ✅ NEW
+            "processing_type": processing_type,
         }
         
-        # Get ALL filtered records (no pagination)
         records, total = get_main_db_records(
             db=db,
             skip=0,
@@ -911,7 +949,6 @@ async def export_filtered_records(
         if not records:
             raise HTTPException(status_code=404, detail="No records found to export")
         
-        # Convert records to DataFrame
         data_for_export = []
         for record in records:
             delegation = record.application_delegation if hasattr(record, 'application_delegation') else None
@@ -952,6 +989,8 @@ async def export_filtered_records(
                 "Date Received Central": record.DB_DATE_RECEIVED_CENT,
                 "Date Deck": record.DB_DATE_DECK,
                 "Date Released": record.DB_DATE_RELEASED,
+                # ✅ NEW FIELD in export
+                "Processing Type": record.DB_PROCESSING_TYPE,
                 "User Uploader": record.DB_USER_UPLOADER,
                 "Date Excel Upload": str(record.DB_DATE_EXCEL_UPLOAD) if record.DB_DATE_EXCEL_UPLOAD else None,
             }
@@ -973,8 +1012,6 @@ async def export_filtered_records(
             
             data_for_export.append(row_data)
         
-        print(f"📝 Prepared {len(data_for_export)} rows for export")
-        
         df = pd.DataFrame(data_for_export)
         
         output = io.BytesIO()
@@ -995,8 +1032,6 @@ async def export_filtered_records(
             filename_parts.insert(1, "_".join(filter_description))
         
         filename = "_".join(filename_parts) + ".xlsx"
-        
-        print(f"✅ Export successful: {filename}")
         
         return StreamingResponse(
             output,
@@ -1086,4 +1121,3 @@ def restore_record(record_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(record)
     return record
-

@@ -5,8 +5,6 @@ from app.api.routes import (
     auth, 
     main_db, 
     groups, 
-    deck,
-    evaluation, 
     application_logs,
     doctrack,
     analytics,
@@ -17,6 +15,7 @@ from app.api.routes import (
     otc_test_conn,
     otc,
     cdrr_report,
+    workflow_tasks,
 )
 
 # Dynamic docs URL based on environment
@@ -42,8 +41,6 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(main_db.router)
 app.include_router(groups.router)
-app.include_router(deck.router)
-app.include_router(evaluation.router)
 app.include_router(application_logs.router)
 app.include_router(doctrack.router)
 app.include_router(analytics.router)
@@ -54,6 +51,8 @@ app.include_router(menu_permissions.router)
 app.include_router(otc_test_conn.router)
 app.include_router(otc.router)
 app.include_router(cdrr_report.router)
+app.include_router(workflow_tasks.router)
+
 
 @app.get("/")
 def root():

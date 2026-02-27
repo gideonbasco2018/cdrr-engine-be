@@ -35,6 +35,10 @@ class ApplicationLogs(Base):
     # Timestamps
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    del_index = Column(Integer, nullable=True)
+    del_previous = Column(Integer, nullable=True)
+    del_last_index = Column(Integer, nullable=True)
+    del_thread = Column(String(60), nullable=True, index=True)
 
     def __repr__(self):
         return (

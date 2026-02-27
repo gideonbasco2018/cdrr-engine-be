@@ -2,6 +2,7 @@
 CRUD Operations for Application Logs
 """
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import Optional, List
 from datetime import datetime
 
@@ -21,7 +22,11 @@ def create(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
         application_decision=log_in.application_decision,
         application_remarks=log_in.application_remarks,
         start_date=log_in.start_date,
-        accomplished_date=log_in.accomplished_date
+        accomplished_date=log_in.accomplished_date,
+        del_index=log_in.del_index,
+        del_previous=log_in.del_previous,
+        del_last_index=log_in.del_last_index,
+        del_thread=log_in.del_thread
     )
     
     db.add(db_log)
@@ -59,7 +64,10 @@ def create_bulk(db: Session, logs_in: List[ApplicationLogCreate]) -> List[Applic
                 application_decision=log_in.application_decision,
                 application_remarks=log_in.application_remarks,
                 start_date=log_in.start_date,
-                accomplished_date=log_in.accomplished_date
+                accomplished_date=log_in.accomplished_date,
+                del_index=log_in.del_index,
+                del_previous=log_in.del_previous,
+                del_last_index=log_in.del_last_index
             )
             db.add(db_log)
             db_logs.append(db_log)
@@ -110,14 +118,6 @@ def get_all_by_step(db: Session, step: str, limit: int = 100) -> List[Applicatio
     """
     Get all logs for a specific step across all applications
     Useful for reporting/analytics
-    
-    Args:
-        db: Database session
-        step: Application step (e.g., 'Decking', 'Evaluation')
-        limit: Maximum number of records to return (default: 100)
-    
-    Returns:
-        List of ApplicationLogs ordered by created_at (newest first)
     """
     return db.query(ApplicationLogs).filter(
         ApplicationLogs.application_step == step
@@ -130,14 +130,6 @@ def get_by_user(db: Session, user_name: str, limit: int = 100) -> List[Applicati
     """
     Get all logs for a specific user
     Useful for tracking user activity
-    
-    Args:
-        db: Database session
-        user_name: Username to filter by
-        limit: Maximum number of records to return (default: 100)
-    
-    Returns:
-        List of ApplicationLogs ordered by created_at (newest first)
     """
     return db.query(ApplicationLogs).filter(
         ApplicationLogs.user_name == user_name
@@ -155,15 +147,6 @@ def get_by_date_range(
     """
     Get logs within a date range
     Useful for reporting and analytics
-    
-    Args:
-        db: Database session
-        start_date: Start of date range
-        end_date: End of date range
-        step: Optional - filter by specific step
-    
-    Returns:
-        List of ApplicationLogs within the date range
     """
     query = db.query(ApplicationLogs).filter(
         ApplicationLogs.created_at >= start_date,
@@ -208,7 +191,7 @@ def delete(db: Session, log_id: int) -> bool:
 def delete_bulk(db: Session, log_ids: List[int]) -> int:
     """
     Delete multiple application logs
-    
+
     Args:
         db: Database session
         log_ids: List of log IDs to delete
@@ -228,3 +211,16 @@ def delete_bulk(db: Session, log_ids: List[int]) -> int:
     except Exception as e:
         db.rollback()
         raise e
+    
+def get_last_index(db: Session, main_db_id: int) -> int:
+    """
+    Get the highest del_index for a specific application.
+    Returns 0 if no logs exist yet.
+    """
+    last_index = db.query(
+        func.max(ApplicationLogs.del_index)
+    ).filter(
+        ApplicationLogs.main_db_id == main_db_id
+    ).scalar()
+
+    return last_index or 0

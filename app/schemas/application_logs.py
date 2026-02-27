@@ -15,6 +15,10 @@ class ApplicationLogBase(BaseModel):
     application_remarks: Optional[str] = Field(None, description="Remarks or notes")
     start_date: Optional[datetime] = Field(None, description="When this step started")
     accomplished_date: Optional[datetime] = Field(None, description="When this step was completed")
+    del_index: Optional[int] = Field(None, description="Deletion index marker")
+    del_previous: Optional[int] = Field(None, description="Previous deletion reference")
+    del_last_index: Optional[int] = Field(None, description="Last deletion index reference")
+    del_thread: Optional[str] = Field(None, max_length=60, description="Thread identifier for grouping related log entries")
 
 
 class ApplicationLogCreate(ApplicationLogBase):
