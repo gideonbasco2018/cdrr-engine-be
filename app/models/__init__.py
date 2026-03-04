@@ -6,6 +6,10 @@ from app.models.group import Group
 from app.models.user_groups import UserGroup
 from app.models.menu_permissions import MenuItem, menu_group_permissions
 from app.models.cdrr_report import CDRRReport, FROOReport, CDRRSecondary
+from app.models.field_audit_log import ApplicationFieldAuditLog
+from app.models.notification import Notification
+
+
 
 __all__ = [
     "MainDB",
@@ -18,6 +22,8 @@ __all__ = [
     "menu_group_permissions",
     "CDRRReport",
     "FROOReport",
-    "CDRRSecondary"
+    "CDRRSecondary",
+    "ApplicationFieldAuditLog",
+    "Notification"
 ]
 

@@ -3,7 +3,7 @@ Schemas for Application Logs
 """
 from pydantic import BaseModel, Field
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, date
 
 
 class ApplicationLogBase(BaseModel):
@@ -19,6 +19,8 @@ class ApplicationLogBase(BaseModel):
     del_previous: Optional[int] = Field(None, description="Previous deletion reference")
     del_last_index: Optional[int] = Field(None, description="Last deletion index reference")
     del_thread: Optional[str] = Field(None, max_length=60, description="Thread identifier for grouping related log entries")
+    deadline_date: Optional[date] = Field(None)
+    working_days:  Optional[int]  = Field(None)
 
 
 class ApplicationLogCreate(ApplicationLogBase):

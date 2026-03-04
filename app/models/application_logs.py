@@ -1,4 +1,6 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime
+# app/models/application_logs.py
+
+from sqlalchemy import Column, Integer, SmallInteger, String, Text, Date, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.base_class import Base
@@ -28,6 +30,12 @@ class ApplicationLogs(Base):
     # Dates
     start_date = Column(DateTime, nullable=True)
     accomplished_date = Column(DateTime, nullable=True)
+
+    # ── Compliance Deadline (NEW) ──────────────────────────────────────
+    # Only populated when application_decision = 'For Compliance'
+    deadline_date          = Column(Date, nullable=True, index=True)   # target deadline
+    working_days           = Column(SmallInteger, nullable=True)        # e.g. 20
+
 
     # Relationship to MainDB (many-to-one)
     main_db = relationship("MainDB", back_populates="application_logs")

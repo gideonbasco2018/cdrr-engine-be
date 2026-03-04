@@ -4,7 +4,7 @@ Designed for table display — filter by del_thread and/or del_last_index
 """
 from pydantic import BaseModel, Field
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, date
 
 
 # ---------------------
@@ -180,6 +180,10 @@ class LogWithMainDBResponse(BaseModel):
     del_thread: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+    # ✅ Compliance deadline fields (only populated for Compliance step)
+    deadline_date: Optional[date] = None
+    working_days: Optional[int] = None
 
     # Joined MainDB info (nullable — edge case if MainDB deleted)
     main_db: Optional[MainDBBrief] = None

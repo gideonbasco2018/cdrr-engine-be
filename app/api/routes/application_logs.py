@@ -18,50 +18,56 @@ from app.models.user import User
 from app.models.main_db import MainDB
 from app.models.application_logs import ApplicationLogs
 
+import app.crud.notification as crud_notif
+from app.schemas.notification import NotificationCreate
+
 router = APIRouter(
     prefix="/api/application-logs",
     tags=["Application Logs"]
 )
 
 
+# ── I-REPLACE ang buong create_application_log() function ────────────
 @router.post("/", response_model=ApplicationLogResponse, status_code=status.HTTP_201_CREATED)
 def create_application_log(
     log_in: ApplicationLogCreate,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Create a new application log entry
-    
-    This endpoint is called whenever an action is performed on an application:
-    - Decking
-    - Evaluation
-    - Checking
-    - Supervisor review
-    - QA review
-    - Director approval
-    - Releasing
-    
-    Example request body:
-```json
-    {
-        "main_db_id": 123,
-        "application_step": "Evaluation",
-        "user_name": "eval001",
-        "application_status": "For Checking",
-        "application_decision": "For Checking",
-        "application_remarks": "All documents verified. Ready for checking.",
-        "start_date": "2025-01-19T10:00:00",
-        "accomplished_date": "2025-01-19T14:30:00",
-        "del_index": null,
-        "del_previous": null,
-        "del_last_index": null
-    }
-```
-    """
     try:
+        # 1. Create the log (existing logic)
         log = crud_logs.create(db, log_in=log_in)
+
+        # 2. If may deadline_date → agad mag-create ng notification (REAL-TIME)
+        if log_in.deadline_date and log_in.user_name:
+            try:
+                # Kunin ang DTN mula sa main_db
+                dtn = str(log.main_db.DB_DTN) if log.main_db else f"LOG#{log.id}"
+
+                # Huwag mag-duplicate kung may existing na notification ngayon
+                if not crud_notif.already_notified_today(
+                    db,
+                    user_name  = log_in.user_name,
+                    link_dtn   = dtn,
+                    title_like = "Compliance Task Assigned",
+                ):
+                    crud_notif.create_notification(db, NotificationCreate(
+                        user_name  = log_in.user_name,
+                        title      = "📋 Compliance Task Assigned",
+                        message    = (
+                            f"You have been assigned a Compliance task for DTN {dtn}. "
+                            f"Deadline: {log_in.deadline_date.strftime('%b %d, %Y')} "
+                            f"({log_in.working_days} working days)."
+                        ),
+                        link_dtn   = dtn,
+                        app_log_id = log.id,
+                    ))
+            except Exception as notif_err:
+                # Huwag i-fail ang whole request kahit mag-error ang notification
+                print(f"[Notification] Failed to create instant notification: {notif_err}")
+
         return log
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -17,6 +17,8 @@ from app.api.routes import (
     otc,
     cdrr_report,
     workflow_tasks,
+    field_audit_log,
+    notifications,
 )
 api_router = APIRouter()
 
@@ -33,6 +35,8 @@ api_router.include_router(otc_test_conn.router)
 api_router.include_router(otc.router)
 api_router.include_router(cdrr_report.router)
 api_router.include_router(workflow_tasks.router)
+api_router.include_router(field_audit_log.router)
+api_router.include_router(notifications.router)
 
 
 
