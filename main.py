@@ -1,6 +1,10 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from apscheduler.schedulers.background import BackgroundScheduler
+
 from app.core.config import settings
+from app.core.deadline_checker import run_deadline_notifications  # ← BAGO
 from app.api.routes import (
     auth, 
     main_db, 
@@ -16,19 +20,43 @@ from app.api.routes import (
     otc,
     cdrr_report,
     workflow_tasks,
+    field_audit_log,
+    notifications,  # ← BAGO
 )
 
-# Dynamic docs URL based on environment
+# ── Scheduler setup ───────────────────────────────────────────────────
+scheduler = BackgroundScheduler(timezone="Asia/Manila")
+
+scheduler.add_job(
+    run_deadline_notifications,
+    trigger="cron",
+    hour=8,
+    minute=0,
+    id="deadline_checker",
+    replace_existing=True,
+)
+
+# ── Lifespan (start/stop scheduler with the app) ─────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler.start()
+    print("[Scheduler] Started — deadline checker runs daily at 8:00 AM (Asia/Manila)")
+    yield
+    scheduler.shutdown()
+    print("[Scheduler] Stopped.")
+
+# ── FastAPI app ───────────────────────────────────────────────────────
 app = FastAPI(
     title="CDRR ENGINE API",
     description="API Description",
     version="1.0.0",
     docs_url=settings.DOCS_URL,
     redoc_url=settings.REDOC_URL,
-    openapi_url=settings.OPENAPI_URL
+    openapi_url=settings.OPENAPI_URL,
+    lifespan=lifespan,  # ← BAGO (replaces on_event)
 )
 
-# Dynamic CORS based on environment
+# ── CORS ──────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -38,6 +66,7 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
+# ── Routers ───────────────────────────────────────────────────────────
 app.include_router(auth.router)
 app.include_router(main_db.router)
 app.include_router(groups.router)
@@ -52,6 +81,8 @@ app.include_router(otc_test_conn.router)
 app.include_router(otc.router)
 app.include_router(cdrr_report.router)
 app.include_router(workflow_tasks.router)
+app.include_router(field_audit_log.router)
+app.include_router(notifications.router)  # ← BAGO
 
 
 @app.get("/")
@@ -59,9 +90,8 @@ def root():
     return {
         "message": "CDRR Engine API",
         "environment": settings.ENVIRONMENT,
-        "docs_enabled": settings.DOCS_URL is not None
+        "docs_enabled": settings.DOCS_URL is not None,
     }
-
 # from fastapi import FastAPI
 # from fastapi.middleware.cors import CORSMiddleware
 # from app.api.routes import (

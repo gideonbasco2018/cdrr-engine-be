@@ -1,3 +1,5 @@
+# app/models/main_db.py
+
 from sqlalchemy import Column, Integer, BigInteger, String, Text, Date, DateTime
 from sqlalchemy.dialects.mysql import TINYINT
 from sqlalchemy.sql import func

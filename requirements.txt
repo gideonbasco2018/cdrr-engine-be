@@ -23,6 +23,8 @@ passlib[bcrypt]==1.7.4
 bcrypt==3.2.2
 python-jose[cryptography]
 
+# instead of cron i used apscheduler to run api in the background - by gids
+apscheduler==3.10.4
 # # HTTP client (ProcessMaker integration)
 # requests
 # beautifulsoup4

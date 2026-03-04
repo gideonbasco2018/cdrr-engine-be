@@ -26,7 +26,9 @@ def create(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
         del_index=log_in.del_index,
         del_previous=log_in.del_previous,
         del_last_index=log_in.del_last_index,
-        del_thread=log_in.del_thread
+        del_thread=log_in.del_thread,
+        deadline_date = log_in.deadline_date,
+        working_days  = log_in.working_days
     )
     
     db.add(db_log)
