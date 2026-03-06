@@ -19,6 +19,7 @@ from app.api.routes import (
     workflow_tasks,
     field_audit_log,
     notifications,
+    bulk_upload_history,
 )
 api_router = APIRouter()
 
@@ -37,7 +38,7 @@ api_router.include_router(cdrr_report.router)
 api_router.include_router(workflow_tasks.router)
 api_router.include_router(field_audit_log.router)
 api_router.include_router(notifications.router)
-
+api_router.include_router(bulk_upload_history.router)
 
 
 
