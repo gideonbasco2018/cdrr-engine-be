@@ -8,6 +8,9 @@ from app.models.menu_permissions import MenuItem, menu_group_permissions
 from app.models.cdrr_report import CDRRReport, FROOReport, CDRRSecondary
 from app.models.field_audit_log import ApplicationFieldAuditLog
 from app.models.notification import Notification
+from app.models.bulk_upload_history_records import BulkUploadHistoryRecord
+from app.models.bulk_upload_history import BulkUploadHistory
+
 
 
 
@@ -24,6 +27,9 @@ __all__ = [
     "FROOReport",
     "CDRRSecondary",
     "ApplicationFieldAuditLog",
-    "Notification"
+    "Notification",
+    "BulkUploadHistoryRecord",
+    "BulkUploadHistory"
+
 ]
 
