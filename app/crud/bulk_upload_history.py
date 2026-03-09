@@ -4,38 +4,33 @@
 
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any, Optional
+from datetime import datetime, timezone, timedelta
 
 from app.models.bulk_upload_history import BulkUploadHistory
 from app.models.bulk_upload_history_records import BulkUploadHistoryRecord
+PH_TZ = timezone(timedelta(hours=8)) 
 
 
 def create_upload_history(
     db: Session,
     file_name:        str,
-    uploaded_by:      str,                   # ✅ String — username
+    uploaded_by:      str,
     inserted_count:   int,
     failed_count:     int,
-    inserted_records: List[Dict[str, Any]],  # [{ rowNum, rsn, remarks }] — saved to child table
-    failed_records:   List[Dict[str, Any]],  # [{ rsn, remarks, reason }] — saved as JSON
+    inserted_records: List[Dict[str, Any]],
+    failed_records:   List[Dict[str, Any]],
 ) -> BulkUploadHistory:
-    """
-    Save a bulk upload result to history.
-      - Parent row:  BulkUploadHistory (metadata + failed JSON)
-      - Child rows:  BulkUploadHistoryRecord (one row per inserted record)
-
-    Called by: POST /api/doctrack/upload-excel (automatically after insert)
-    or:        POST /api/bulk-upload-history/  (manually from frontend)
-    """
     # 1. Create parent history row
     history = BulkUploadHistory(
         fileName=file_name,
         uploadedBy=uploaded_by,
+        uploadedAt=datetime.now(PH_TZ),  # ← IDAGDAG ITO
         insertedCount=inserted_count,
         failedCount=failed_count,
         failedRecords=failed_records or [],
     )
     db.add(history)
-    db.flush()  # get historyID before inserting children
+    db.flush()
 
     # 2. Bulk insert child records
     if inserted_records:
