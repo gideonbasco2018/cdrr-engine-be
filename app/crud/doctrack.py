@@ -44,7 +44,7 @@ def insert_document_log(
     """
     insert_query = text("""
         INSERT INTO document_tracker.docreceivinglogtbl (docrecID, logdate, remarks, userID)
-        VALUES (:docrecID, NOW(), :remarks, :userID)
+        VALUES (:docrecID, CONVERT_TZ(NOW(), '+00:00', '+08:00'), :remarks, :userID)
     """)
     result = db.execute(insert_query, {"docrecID": docrecID, "remarks": remarks, "userID": userID})
 
@@ -80,7 +80,7 @@ def insert_document_log_no_user(
     """
     insert_query = text("""
         INSERT INTO document_tracker.docreceivinglogtbl (docrecID, logdate, remarks)
-        VALUES (:docrecID, NOW(), :remarks)
+        VALUES (:docrecID, CONVERT_TZ(NOW(), '+00:00', '+08:00'), :remarks)
     """)
     result = db.execute(insert_query, {"docrecID": docrecID, "remarks": remarks})
 
