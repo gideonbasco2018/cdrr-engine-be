@@ -26,7 +26,7 @@ class UserBase(BaseModel):
     first_name: str = Field(..., min_length=1, max_length=100)
     surname: str = Field(..., min_length=1, max_length=100)
     position: Optional[str] = Field(None, max_length=100)
-    alias: str = Field(..., max_length=100) 
+    alias: Optional[str] = Field(None, max_length=100)
 
 
 # -----------------------------
