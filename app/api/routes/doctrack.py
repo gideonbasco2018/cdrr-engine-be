@@ -252,11 +252,8 @@ async def download_template():
 async def upload_doctrack_excel(
     file:     UploadFile = File(...),
     username: str        = Query(..., description="Logged-in user's username"),
-    db:       DBSessionDep = DBSessionDep,   # ← NOTE: replace DBSessionDep with correct pattern
-                                              # if yours is Annotated[Session, Depends(...)]:
-                                              #   just use:  db: DBSessionDep
-                                              # if you have a separate getter function:
-                                              #   use:  db: Session = Depends(get_external_db)
+    alias:    str        = Query(default="", description="Uploader's alias"),  # ← IDAGDAG
+    db:       DBSessionDep = DBSessionDep,
 ):
     """
     Upload an Excel file (.xlsx / .xls) with two columns:
@@ -318,10 +315,11 @@ async def upload_doctrack_excel(
                 "reason":  "; ".join(issues),
             })
         else:
+            final_remarks = f"{raw_remarks} Remarks by: {alias}" if alias else raw_remarks  # ← IDAGDAG
             valid_entries.append({
                 "rowNum":  row_num,
                 "rsn":     raw_doctrack,
-                "remarks": raw_remarks,
+                "remarks": final_remarks,  
             })
 
     # Early return — no valid rows at all
