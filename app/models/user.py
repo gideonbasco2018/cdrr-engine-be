@@ -33,6 +33,7 @@ class User(Base):
     first_name = Column(String(100), nullable=False)
     surname = Column(String(100), nullable=False)
     position = Column(String(100), nullable=True)
+    alias = Column(String(100), nullable=True) 
 
     # role
     role = Column(Enum(UserRole), default=UserRole.USER, nullable=False)

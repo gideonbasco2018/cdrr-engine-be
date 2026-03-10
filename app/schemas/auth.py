@@ -26,6 +26,7 @@ class UserBase(BaseModel):
     first_name: str = Field(..., min_length=1, max_length=100)
     surname: str = Field(..., min_length=1, max_length=100)
     position: Optional[str] = Field(None, max_length=100)
+    alias: str = Field(..., max_length=100) 
 
 
 # -----------------------------
@@ -46,6 +47,7 @@ class UserUpdate(BaseModel):
     first_name: Optional[str] = Field(None, min_length=1, max_length=100)
     surname: Optional[str] = Field(None, min_length=1, max_length=100)
     position: Optional[str] = Field(None, max_length=100)
+    alias: Optional[str] = Field(None, max_length=100)
     is_active: Optional[bool] = None
     password: Optional[str] = None
     group_id: Optional[int] = None
@@ -97,6 +99,7 @@ class UserResponse(UserBase):
             "id": user.id,
             "email": user.email,
             "username": user.username,
+            "alias": getattr(user, "alias", None),
             "first_name": user.first_name,
             "surname": user.surname,
             "position": user.position,
@@ -137,5 +140,6 @@ class AdminUserUpdate(BaseModel):
     first_name: Optional[str] = None
     surname: Optional[str] = None
     position: Optional[str] = None
+    alias: Optional[str] = None
     group_id: Optional[int] = None
     access_request: Optional[str] = None 
