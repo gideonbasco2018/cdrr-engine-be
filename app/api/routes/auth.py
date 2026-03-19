@@ -172,25 +172,13 @@ def get_group_users(
 @router.get("/users/group/{group_id}", response_model=List[UserResponse])
 def get_users_by_specific_group(
     group_id: int,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),  # login lang kailangan
     db: Session = Depends(get_db),
 ):
     """
-    Get ACTIVE users from a specific group with permission checks
+    Get ACTIVE users from a specific group.
+    Any authenticated user can query — needed for workflow assignment.
     """
-    user_group_ids = {g.id for g in current_user.groups}
-
-    allowed_access = (
-        group_id in user_group_ids
-        or current_user.role in [UserRole.ADMIN, UserRole.SUPERADMIN]
-    )
-
-    if not allowed_access:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to view users from this group",
-        )
-
     users = crud_user.get_users_by_group(db, group_id=group_id)
 
     if not users:
