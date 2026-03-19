@@ -1,16 +1,12 @@
 """
 CRUD: ApplicationLogs RIGHT JOIN MainDB
-Optimized for table display filtered by del_thread / del_last_index
-
-Key behavior:
-- RIGHT JOIN from ApplicationLogs → MainDB (all logs returned, MainDB info attached)
-- Filter by del_thread   → show only logs belonging to a specific thread
-- Filter by del_last_index → show only the "latest" log per thread (current state)
-- Both filters can be combined
 """
 from sqlalchemy.orm import Session, contains_eager
 from sqlalchemy import func, desc, or_, and_
 from typing import Optional, List, Tuple
+from datetime import datetime, timezone, timedelta
+
+PHT = timezone(timedelta(hours=8))
 
 from app.models.application_logs import ApplicationLogs
 from app.models.main_db import MainDB
@@ -20,17 +16,14 @@ def get_logs_joined_with_main_db(
     db: Session,
     skip: int = 0,
     limit: int = 10,
-    # ─── del_thread / del_last_index filters (primary use case) ───
-    del_thread: Optional[str] = None,           # filter by specific thread
-    del_last_index: Optional[int] = None,        # filter by specific last index value
-    only_latest_per_thread: bool = False,        # True = show only latest log per thread
-    # ─── Log-level filters ───────────────────────────────────────
+    del_thread: Optional[str] = None,
+    del_last_index: Optional[int] = None,
+    only_latest_per_thread: bool = False,
     application_step: Optional[str] = None,
     application_status: Optional[str] = None,
     application_decision: Optional[str] = None,
     user_name: Optional[str] = None,
     main_db_id: Optional[int] = None,
-    # ─── MainDB-level filters ────────────────────────────────────
     dtn: Optional[int] = None,
     est_cat: Optional[str] = None,
     app_type: Optional[str] = None,
@@ -40,35 +33,17 @@ def get_logs_joined_with_main_db(
     generic_name: Optional[str] = None,
     prescription: Optional[str] = None,
     processing_type: Optional[str] = None,
-    # ─── Search ──────────────────────────────────────────────────
     search: Optional[str] = None,
-    # ─── Sort ────────────────────────────────────────────────────
     sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> Tuple[List[ApplicationLogs], int]:
-    """
-    Fetch ApplicationLogs with MainDB info (RIGHT JOIN semantics via outerjoin).
 
-    Filter Options:
-    - del_thread          : Get all logs belonging to a specific thread UUID/string
-    - del_last_index      : Get logs where del_last_index matches a value
-    - only_latest_per_thread : Subquery to return only the row with max del_index per thread
-
-    Returns:
-        (list of ApplicationLogs with .main_db loaded, total count)
-    """
-
-    # ─── Base query: outerjoin from ApplicationLogs → MainDB ─────
-    # This is RIGHT JOIN semantics: all logs returned even if MainDB is missing
     query = (
         db.query(ApplicationLogs)
         .outerjoin(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
         .options(contains_eager(ApplicationLogs.main_db))
     )
 
-    # ─── only_latest_per_thread ───────────────────────────────────
-    # Subquery: for each (main_db_id, del_thread), get the max del_index
-    # Then join back to get only those rows
     if only_latest_per_thread:
         latest_subq = (
             db.query(
@@ -89,15 +64,12 @@ def get_logs_joined_with_main_db(
             ),
         )
 
-    # ─── del_thread filter ────────────────────────────────────────
     if del_thread is not None:
         query = query.filter(ApplicationLogs.del_thread == del_thread)
 
-    # ─── del_last_index filter ────────────────────────────────────
     if del_last_index is not None:
         query = query.filter(ApplicationLogs.del_last_index == del_last_index)
 
-    # ─── Log-level filters ────────────────────────────────────────
     if main_db_id is not None:
         query = query.filter(ApplicationLogs.main_db_id == main_db_id)
 
@@ -113,7 +85,6 @@ def get_logs_joined_with_main_db(
     if user_name:
         query = query.filter(ApplicationLogs.user_name == user_name)
 
-    # ─── MainDB-level filters ─────────────────────────────────────
     if dtn is not None:
         query = query.filter(MainDB.DB_DTN == dtn)
 
@@ -157,7 +128,6 @@ def get_logs_joined_with_main_db(
         else:
             query = query.filter(MainDB.DB_PROCESSING_TYPE == processing_type)
 
-    # ─── Global search ────────────────────────────────────────────
     if search:
         pattern = f"%{search}%"
         query = query.filter(
@@ -173,10 +143,8 @@ def get_logs_joined_with_main_db(
             )
         )
 
-    # ─── Total count (before pagination) ─────────────────────────
     total = query.count()
 
-    # ─── Sorting ──────────────────────────────────────────────────
     LOG_SORT_FIELDS = {
         "created_at", "updated_at", "accomplished_date", "start_date",
         "del_index", "del_last_index", "application_step",
@@ -196,9 +164,7 @@ def get_logs_joined_with_main_db(
     else:
         query = query.order_by(desc(ApplicationLogs.created_at))
 
-    # ─── Pagination ───────────────────────────────────────────────
     logs = query.offset(skip).limit(limit).all()
-
     return logs, total
 
 
@@ -208,10 +174,6 @@ def get_logs_by_thread(
     skip: int = 0,
     limit: int = 100,
 ) -> Tuple[List[ApplicationLogs], int]:
-    """
-    Get ALL logs belonging to a specific del_thread, ordered by del_index asc.
-    Useful for showing the full history of a thread (audit trail view).
-    """
     query = (
         db.query(ApplicationLogs)
         .outerjoin(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
@@ -223,3 +185,65 @@ def get_logs_by_thread(
     total = query.count()
     logs = query.offset(skip).limit(limit).all()
     return logs, total
+
+
+def mark_log_as_read(
+    db: Session,
+    log_id: int,
+) -> Optional[ApplicationLogs]:
+    """
+    Mark a single ApplicationLog as read.
+    Sets is_read = 1 and read_at = now() only if not already read.
+    """
+    log = db.query(ApplicationLogs).filter(ApplicationLogs.id == log_id).first()
+
+    if not log:
+        return None
+
+    if not log.is_read:
+        log.is_read = 1
+        log.read_at = datetime.now(PHT).replace(tzinfo=None)
+        db.commit()
+        db.refresh(log)
+
+    return log
+
+
+def mark_logs_as_received(
+    db: Session,
+    log_ids: List[int],
+    received_by: str,
+) -> Tuple[List[ApplicationLogs], int, int]:
+    """
+    Bulk mark ApplicationLogs as received.
+
+    - Only updates rows where is_received = 0 (idempotent — safe to call multiple times).
+    - Sets is_received = 1, received_at = now(PHT), received_by = username.
+    - Returns (updated_logs, updated_count, skipped_count).
+    """
+    logs = (
+        db.query(ApplicationLogs)
+        .filter(ApplicationLogs.id.in_(log_ids))
+        .all()
+    )
+
+    now_pht = datetime.now(PHT).replace(tzinfo=None)
+    updated: List[ApplicationLogs] = []
+    skipped: int = 0
+
+    for log in logs:
+        if log.is_received:
+            # Already received — skip, no unnecessary DB write
+            skipped += 1
+        else:
+            log.is_received = 1
+            log.received_at = now_pht
+            log.received_by = received_by
+            updated.append(log)
+
+    if updated:
+        db.commit()
+        for log in updated:
+            db.refresh(log)
+
+    return updated, len(updated), skipped

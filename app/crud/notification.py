@@ -21,7 +21,7 @@ def get_notifications_by_user(
     unread_only: bool = False,
 ) -> List[Notification]:
     """Get notifications for a user, newest first."""
-    query = db.query(Notification).filter(Notification.user_name == user_name)
+    query = db.query(Notification).filter(Notification.user_name == user_name, Notification.is_deleted == False,)
     if unread_only:
         query = query.filter(Notification.is_read == False)
     return (
@@ -36,13 +36,13 @@ def get_notifications_by_user(
 def get_unread_count(db: Session, user_name: str) -> int:
     return (
         db.query(func.count(Notification.id))
-        .filter(Notification.user_name == user_name, Notification.is_read == False)
+        .filter(Notification.user_name == user_name, Notification.is_read == False, Notification.is_deleted == False,)
         .scalar()
     )
 
 
 def get_notification_by_id(db: Session, notification_id: int) -> Optional[Notification]:
-    return db.query(Notification).filter(Notification.id == notification_id).first()
+    return db.query(Notification).filter(Notification.id == notification_id, Notification.is_deleted == False,).first()
 
 
 def already_notified_today(
@@ -61,6 +61,7 @@ def already_notified_today(
         .filter(
             Notification.user_name == user_name,
             Notification.link_dtn  == link_dtn,
+            Notification.is_deleted == False, 
             cast(Notification.created_at, Date) == today,
         )
     )
@@ -123,8 +124,8 @@ def delete_read_notifications(db: Session, user_name: str) -> int:
     """Clear already-read notifications for a user."""
     deleted = (
         db.query(Notification)
-        .filter(Notification.user_name == user_name, Notification.is_read == True)
-        .delete()
+        .filter(Notification.user_name == user_name, Notification.is_read == True, Notification.is_deleted == False,)
+        .update({"is_deleted": True}) 
     )
     db.commit()
     return deleted
@@ -139,7 +140,7 @@ def delete_old_notifications(db: Session, days_old: int = 30) -> int:
     cutoff = datetime.utcnow() - timedelta(days=days_old)
     deleted = (
         db.query(Notification)
-        .filter(Notification.created_at < cutoff, Notification.is_read == True)
+        .filter(Notification.created_at < cutoff, Notification.is_read == True, Notification.is_deleted == False,)
         .delete()
     )
     db.commit()
