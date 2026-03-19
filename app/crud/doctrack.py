@@ -41,14 +41,15 @@ def insert_document_log(
     """
     Insert a single document log into docreceivinglogtbl and return the inserted row.
     Used by: POST /log and POST /log/bulk
+    session.py already sets time_zone='+08:00' on every connection,
+    so NOW() returns PHT directly — no CONVERT_TZ needed.
     """
     insert_query = text("""
         INSERT INTO document_tracker.docreceivinglogtbl (docrecID, logdate, remarks, userID)
-        VALUES (:docrecID, CONVERT_TZ(NOW(), '+00:00', '+08:00'), :remarks, :userID)
+        VALUES (:docrecID, NOW(), :remarks, :userID)
     """)
     result = db.execute(insert_query, {"docrecID": docrecID, "remarks": remarks, "userID": userID})
 
-    # ✅ Get lastrowid BEFORE commit
     logID = result.lastrowid
     db.commit()
 
@@ -64,7 +65,6 @@ def insert_document_log(
 
 # ------------------------
 # Insert document log WITHOUT userID (used by upload-excel)
-# Confirmed: no userID needed for Excel bulk upload
 # ------------------------
 def insert_document_log_no_user(
     db: Session,
@@ -74,17 +74,15 @@ def insert_document_log_no_user(
     """
     Insert a single document log — no userID column.
     Used by: POST /upload-excel
-
-    Fix: use result.lastrowid BEFORE commit — avoids LAST_INSERT_ID()
-    returning 0 after connection flush/reset post-commit.
+    session.py already sets time_zone='+08:00' on every connection,
+    so NOW() returns PHT directly — no CONVERT_TZ needed.
     """
     insert_query = text("""
         INSERT INTO document_tracker.docreceivinglogtbl (docrecID, logdate, remarks)
-        VALUES (:docrecID, CONVERT_TZ(NOW(), '+00:00', '+08:00'), :remarks)
+        VALUES (:docrecID, NOW(), :remarks)
     """)
     result = db.execute(insert_query, {"docrecID": docrecID, "remarks": remarks})
 
-    # ✅ lastrowid BEFORE commit
     logID = result.lastrowid
     db.commit()
 
@@ -161,7 +159,6 @@ def get_docrecIDs_by_rsns(
 
 # ------------------------
 # Bulk insert by RSN + Remarks (used by upload-excel)
-# NO userID — confirmed not needed for this operation
 # ------------------------
 def insert_bulk_logs_by_rsns(
     db: Session,
@@ -171,7 +168,7 @@ def insert_bulk_logs_by_rsns(
     Given a list of { rsn, remarks } pairs from an Excel upload:
       1. Resolve all RSNs → docrecIDs in ONE bulk query (docreceivingtbl)
       2. Insert ONE new log row per Excel entry into docreceivinglogtbl
-         columns: docrecID, logdate (NOW()), remarks   — no userID
+         columns: docrecID, logdate (NOW() in PHT), remarks — no userID
       3. Return inserted logs + failed entries with reasons
     """
     if not entries:
