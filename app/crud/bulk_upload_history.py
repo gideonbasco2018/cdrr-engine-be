@@ -24,7 +24,7 @@ def create_upload_history(
     history = BulkUploadHistory(
         fileName=file_name,
         uploadedBy=uploaded_by,
-        uploadedAt=datetime.now(PH_TZ),  # ← IDAGDAG ITO
+        uploadedAt=datetime.now(PH_TZ),
         insertedCount=inserted_count,
         failedCount=failed_count,
         failedRecords=failed_records or [],
@@ -54,7 +54,7 @@ def get_upload_history_list(
     db: Session,
     limit:       int           = 50,
     offset:      int           = 0,
-    uploaded_by: Optional[str] = None,       # ✅ String — filter by username
+    uploaded_by: Optional[str] = None,      
 ) -> tuple[List[BulkUploadHistory], int]:
     """
     Fetch paginated upload history, newest first.

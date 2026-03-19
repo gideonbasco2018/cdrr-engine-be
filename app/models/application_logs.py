@@ -36,6 +36,14 @@ class ApplicationLogs(Base):
     deadline_date          = Column(Date, nullable=True, index=True)   # target deadline
     working_days           = Column(SmallInteger, nullable=True)        # e.g. 20
 
+    # ── Read tracking ──────────────────────────────────────────────────
+    is_read = Column(SmallInteger, nullable=False, default=0)   # 0 = unread, 1 = read
+    read_at = Column(DateTime, nullable=True)                   # timestamp when opened
+
+    # ── Received tracking ─────────────────────────────────────────────
+    is_received  = Column(SmallInteger, nullable=False, default=0)  # 0 = not yet, 1 = received
+    received_at  = Column(DateTime, nullable=True)                   # timestamp when marked received
+    received_by  = Column(String(255), nullable=True)                # username who marked it
 
     # Relationship to MainDB (many-to-one)
     main_db = relationship("MainDB", back_populates="application_logs")

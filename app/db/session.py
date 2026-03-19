@@ -7,11 +7,11 @@ import os
 
 DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://cdrr_user:cdrr_password@mysql:3306/cdrr_engine")
 
-# Create engine with UTC timezone enforcement
+# Create engine with PHT timezone (UTC+8)
 engine = create_engine(
     DATABASE_URL,
     connect_args={
-        "init_command": "SET time_zone='+00:00'"  # Force UTC
+        "init_command": "SET time_zone='+08:00'"  # Philippine Time (PHT)
     },
     pool_pre_ping=True  # Check connection health
 )
@@ -22,9 +22,9 @@ Base = declarative_base()
 # Double check - event listener as backup
 @event.listens_for(Engine, "connect")
 def receive_connect(dbapi_conn, connection_record):
-    """Ensure UTC timezone on every connection"""
+    """Ensure PHT timezone on every connection"""
     with dbapi_conn.cursor() as cursor:
-        cursor.execute("SET time_zone = '+00:00'")
+        cursor.execute("SET time_zone = '+08:00'")
 
 # Dependency
 def get_db():
