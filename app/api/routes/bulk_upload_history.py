@@ -89,7 +89,7 @@ class UploadHistoryListItem(BaseModel):
 
 class PaginatedHistoryResponse(BaseModel):
     total:  int
-    limit:  int
+    limit:  Optional[int]
     offset: int
     data:   List[UploadHistoryListItem]
 
