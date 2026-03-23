@@ -53,7 +53,7 @@ def create_upload_history(
 # crud/bulk_upload_history.py
 def get_upload_history_list(
     db: Session,
-    limit:       Optional[int] = None,  # None = walang limit
+    limit:       Optional[int] = None,
     offset:      int           = 0,
     uploaded_by: Optional[str] = None,
 ) -> tuple[List[BulkUploadHistory], int]:
@@ -63,14 +63,14 @@ def get_upload_history_list(
         query = query.filter(BulkUploadHistory.uploadedBy == uploaded_by)
 
     total = query.count()
-    records = (
-        query.order_by(BulkUploadHistory.uploadedAt.desc())
-        .offset(offset)
-        .apply(lambda q: q.limit(limit) if limit is not None else q)  # limit only if provided
-        .all()
-    )
+    
+    query = query.order_by(BulkUploadHistory.uploadedAt.desc()).offset(offset)
+    
+    if limit is not None:
+        query = query.limit(limit)   # ← limit only if provided
+    
+    records = query.all()
     return records, total
-
 
 def get_upload_history_by_id(
     db: Session,
