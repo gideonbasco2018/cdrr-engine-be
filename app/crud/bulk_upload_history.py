@@ -50,26 +50,23 @@ def create_upload_history(
     return history
 
 
+# crud/bulk_upload_history.py
 def get_upload_history_list(
     db: Session,
-    limit:       int           = 50,
+    limit:       Optional[int] = None,  # None = walang limit
     offset:      int           = 0,
-    uploaded_by: Optional[str] = None,      
+    uploaded_by: Optional[str] = None,
 ) -> tuple[List[BulkUploadHistory], int]:
-    """
-    Fetch paginated upload history, newest first.
-    Child records are NOT loaded (list view shows counts only).
-    """
     query = db.query(BulkUploadHistory)
 
     if uploaded_by is not None:
         query = query.filter(BulkUploadHistory.uploadedBy == uploaded_by)
 
-    total   = query.count()
+    total = query.count()
     records = (
         query.order_by(BulkUploadHistory.uploadedAt.desc())
         .offset(offset)
-        .limit(limit)
+        .apply(lambda q: q.limit(limit) if limit is not None else q)  # limit only if provided
         .all()
     )
     return records, total

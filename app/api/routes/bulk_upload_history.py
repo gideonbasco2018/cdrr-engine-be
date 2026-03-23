@@ -151,9 +151,9 @@ def save_upload_history(
 
 @router.get("/", response_model=PaginatedHistoryResponse)
 def list_upload_history(
-    limit:       int           = Query(default=50, ge=1, le=200),
+    limit:       Optional[int] = Query(default=None),
     offset:      int           = Query(default=0,  ge=0),
-    uploaded_by: Optional[str] = Query(default=None, description="Filter by username"),  # ✅ String
+    uploaded_by: Optional[str] = Query(default=None, description="Filter by username"), 
     db: Session = Depends(get_db),
 ):
     """
