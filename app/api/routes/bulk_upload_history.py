@@ -35,6 +35,7 @@ class InsertedRecordEntry(BaseModel):
 
 
 class FailedRecordEntry(BaseModel):
+    rowNum:  int = 0 
     rsn:     str
     remarks: str = ""
     reason:  str
