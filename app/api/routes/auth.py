@@ -172,7 +172,7 @@ def get_group_users(
 @router.get("/users/group/{group_id}", response_model=List[UserResponse])
 def get_users_by_specific_group(
     group_id: int,
-    current_user: User = Depends(get_current_active_user),  # login lang kailangan
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
     """
@@ -210,16 +210,22 @@ def get_my_group_users(
 
 @router.get("/admin/users/pending", response_model=List[UserResponse])
 def get_pending_users(
+    skip: int = 0,
+    limit: Optional[int] = None,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """
+    Get all pending (inactive) users.
+    Supports optional pagination via skip and limit query params.
+    """
     if current_user.role not in [UserRole.ADMIN, UserRole.SUPERADMIN]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only administrators can view pending users",
         )
 
-    return crud_user.get_pending_users(db)
+    return crud_user.get_pending_users(db, skip=skip, limit=limit)
 
 
 @router.post("/admin/users/{user_id}/activate", response_model=UserResponse)
@@ -273,8 +279,10 @@ def deactivate_user(
 
     return user
 
+
 class PasswordResetRequest(BaseModel):
     new_password: str
+
 
 @router.post("/admin/users/{user_id}/reset-password")
 def reset_user_password(
@@ -294,8 +302,8 @@ def reset_user_password(
         )
 
     user = crud_user.reset_user_password(
-        db, 
-        user_id=user_id, 
+        db,
+        user_id=user_id,
         new_password=password_data.new_password
     )
 
@@ -304,7 +312,7 @@ def reset_user_password(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
-    
+
     return {
         "success": True,
         "message": f"Password for {user.username} has been reset successfully.",
@@ -314,10 +322,14 @@ def reset_user_password(
 @router.get("/admin/users", response_model=List[UserResponse])
 def get_all_users(
     skip: int = 0,
-    limit: int = 100,
+    limit: Optional[int] = None,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """
+    Get all users.
+    Supports optional pagination via skip and limit query params.
+    """
     if current_user.role not in [UserRole.ADMIN, UserRole.SUPERADMIN]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -325,6 +337,7 @@ def get_all_users(
         )
 
     return crud_user.get_all_users(db, skip=skip, limit=limit)
+
 
 @router.patch("/admin/users/{user_id}", response_model=UserResponse)
 def admin_update_user(
@@ -337,21 +350,18 @@ def admin_update_user(
     Update another user's details (Admin/SuperAdmin only)
     Can update: username, email, role, first_name, surname, position, group_id
     """
-    # Permission check
     if current_user.role not in [UserRole.ADMIN, UserRole.SUPERADMIN]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only administrators can update user details",
         )
 
-    # Prevent updating yourself (use /me endpoint instead)
     if user_id == current_user.id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Use /api/auth/me to update your own profile",
         )
 
-    # Check if user exists
     target_user = crud_user.get_by_id(db, user_id=user_id)
     if not target_user:
         raise HTTPException(
@@ -359,7 +369,6 @@ def admin_update_user(
             detail="User not found",
         )
 
-    # Validation: Check if new username is already taken
     if user_update.username and user_update.username != target_user.username:
         existing = crud_user.get_by_username(db, username=user_update.username)
         if existing:
@@ -368,7 +377,6 @@ def admin_update_user(
                 detail="Username already taken",
             )
 
-    # Validation: Check if new email is already taken
     if user_update.email and user_update.email != target_user.email:
         existing = crud_user.get_by_email(db, email=user_update.email)
         if existing:
@@ -377,7 +385,6 @@ def admin_update_user(
                 detail="Email already registered",
             )
 
-    # Convert role string to enum if provided
     update_dict = user_update.dict(exclude_unset=True)
     if "role" in update_dict:
         try:
@@ -385,10 +392,9 @@ def admin_update_user(
         except KeyError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid role. Must be one of: User, Admin, SuperAdmin",
+                detail="Invalid role. Must be one of: User, Admin, SuperAdmin",
             )
 
-    # Perform update
     updated_user = crud_user.admin_update_user(db, user_id=user_id, update_data=update_dict)
 
     if not updated_user:

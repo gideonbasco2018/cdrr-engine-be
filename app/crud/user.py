@@ -84,8 +84,8 @@ def create(db: Session, user_in: UserCreate) -> User:
         first_name=user_in.first_name,
         surname=user_in.surname,
         position=getattr(user_in, "position", None),
-        alias=getattr(user_in, "alias", None), 
-        access_request=getattr(user_in, "access_request", None), 
+        alias=getattr(user_in, "alias", None),
+        access_request=getattr(user_in, "access_request", None),
         role=role,
         is_active=False,  # 🔒 inactive by default
     )
@@ -161,7 +161,6 @@ def reset_user_password(db: Session, user_id: int, new_password: str) -> Optiona
     if not user:
         return None
 
-    # Update user's password
     user.hashed_password = get_password_hash(new_password)
     db.commit()
     db.refresh(user)
@@ -196,17 +195,19 @@ def is_active(user: User) -> bool:
 # ADMIN FUNCTIONS
 # ======================================================
 
-def get_all_users(db: Session, skip: int = 0, limit: int = 100) -> List[User]:
-    return db.query(User).offset(skip).limit(limit).all()
+def get_all_users(db: Session, skip: int = 0, limit: Optional[int] = None) -> List[User]:
+    q = db.query(User).offset(skip)
+    return q.limit(limit).all() if limit else q.all()
 
 
-def get_pending_users(db: Session) -> List[User]:
-    return (
+def get_pending_users(db: Session, skip: int = 0, limit: Optional[int] = None) -> List[User]:
+    q = (
         db.query(User)
         .filter(User.is_active == False)
         .order_by(User.created_at.desc())
-        .all()
+        .offset(skip)
     )
+    return q.limit(limit).all() if limit else q.all()
 
 
 def get_active_users(db: Session) -> List[User]:
@@ -252,10 +253,10 @@ def admin_update_user(db: Session, user_id: int, update_data: dict) -> Optional[
     # Handle group update if provided
     if "group_id" in update_data:
         new_group_id = update_data.pop("group_id")
-        
+
         # Remove old primary group links
         db.query(UserGroup).filter(UserGroup.user_id == user.id).delete()
-        
+
         # Add new group link
         db.add(UserGroup(user_id=user.id, group_id=new_group_id))
 
