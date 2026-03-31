@@ -23,6 +23,7 @@ from app.api.routes import (
     field_audit_log,
     notifications,  # ← BAGO
     bulk_upload_history,
+    dashboard,
 )
 
 # ── Scheduler setup ───────────────────────────────────────────────────
@@ -83,9 +84,9 @@ app.include_router(otc.router)
 app.include_router(cdrr_report.router)
 app.include_router(workflow_tasks.router)
 app.include_router(field_audit_log.router)
-app.include_router(notifications.router)  # ← BAGO
+app.include_router(notifications.router)  
 app.include_router(bulk_upload_history.router) 
-
+app.include_router(dashboard.router) 
 
 @app.get("/")
 def root():
