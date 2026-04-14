@@ -133,12 +133,17 @@ def bulk_create_drugs(drugs_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         engine.dispose()
 
 
-# ==================== READ ====================
 def get_all_drugs(
     page: int = 1,
     page_size: int = 10,
     search: Optional[str] = None,
-    include_canceled: bool = False
+    include_canceled: bool = False,
+    expired_only: bool = False,
+    duplicates_only: bool = False,
+    uploaded_today: bool = False,
+    uploaded_yesterday: bool = False,
+    uploaded_this_month: bool = False,
+    uploaded_by: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Get all drug registrations with pagination and search
@@ -147,13 +152,49 @@ def get_all_drugs(
     
     try:
         with engine.connect() as connection:
-            # Build WHERE clause
             where_conditions = []
             params = {}
-            
-            if not include_canceled:
-                where_conditions.append("(is_canceled IS NULL OR is_canceled = 'N')")
-            
+
+            if duplicates_only:
+                # ✅ duplicates_only handles its own filtering
+                where_conditions.append("""
+                    (is_canceled IS NULL OR is_canceled = 'N')
+                    AND registration_number IS NOT NULL
+                    AND registration_number != ''
+                    AND registration_number IN (
+                        SELECT registration_number
+                        FROM cdrr_manual.fda_drug_registrations
+                        WHERE (is_canceled IS NULL OR is_canceled = 'N')
+                          AND registration_number IS NOT NULL
+                          AND registration_number != ''
+                        GROUP BY registration_number
+                        HAVING COUNT(*) >= 2
+                    )
+                """)
+            else:
+                if not include_canceled:
+                    where_conditions.append("(is_canceled IS NULL OR is_canceled = 'N')")
+
+                if expired_only:
+                    where_conditions.append("expiry_date < CURDATE()")
+
+                if uploaded_today:
+                    where_conditions.append("DATE(date_uploaded) = CURDATE()")
+
+                if uploaded_yesterday:
+                    where_conditions.append("DATE(date_uploaded) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)")
+
+                if uploaded_this_month:
+                    where_conditions.append("""
+                        MONTH(date_uploaded) = MONTH(CURDATE())
+                        AND YEAR(date_uploaded) = YEAR(CURDATE())
+                    """)
+
+            # ✅ These apply to ALL tabs including duplicates
+            if uploaded_by:
+                where_conditions.append("uploaded_by = :uploaded_by")
+                params['uploaded_by'] = uploaded_by
+
             if search:
                 where_conditions.append("""
                     (registration_number LIKE :search 
@@ -162,25 +203,25 @@ def get_all_drugs(
                     OR brand_name LIKE :search)
                 """)
                 params['search'] = f"%{search}%"
-            
+
             where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
-            
+
             # Get total count
             count_query = text(f"""
                 SELECT COUNT(*) as total
-                FROM fda_drug_registrations
+                FROM cdrr_manual.fda_drug_registrations
                 WHERE {where_clause}
             """)
             total_result = connection.execute(count_query, params)
             total = total_result.fetchone()[0]
-            
+
             # Calculate offset
             offset = (page - 1) * page_size
-            
+
             # Get paginated data
             params['limit'] = page_size
             params['offset'] = offset
-            
+
             data_query = text(f"""
                 SELECT 
                     id, reference_number, registration_number, generic_name, brand_name, dosage_strength,
@@ -188,14 +229,14 @@ def get_all_drugs(
                     manufacturer, country_of_origin, trader, importer, distributor,
                     app_type, issuance_date, expiry_date, uploaded_by, date_uploaded,
                     is_canceled, canceled_by, date_canceled, date_modified
-                FROM fda_drug_registrations
+                FROM cdrr_manual.fda_drug_registrations
                 WHERE {where_clause}
                 ORDER BY date_modified DESC, id DESC
                 LIMIT :limit OFFSET :offset
             """)
-            
+
             result = connection.execute(data_query, params)
-            
+
             drugs = []
             for row in result:
                 drugs.append({
@@ -224,9 +265,9 @@ def get_all_drugs(
                     'date_canceled': row[22].isoformat() if row[22] else None,
                     'date_modified': row[23].isoformat() if row[23] else None,
                 })
-            
+
             total_pages = (total + page_size - 1) // page_size
-            
+
             return {
                 "drugs": drugs,
                 "total": total,
@@ -236,7 +277,7 @@ def get_all_drugs(
                 "has_next": page < total_pages,
                 "has_prev": page > 1
             }
-        
+
     finally:
         engine.dispose()
 

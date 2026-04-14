@@ -219,7 +219,13 @@ async def get_all_drugs(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(10, ge=1, le=100, description="Items per page"),
     search: Optional[str] = Query(None, description="Search by registration number, generic name, or brand name"),
-    include_canceled: bool = Query(False, description="Include canceled records")
+    include_canceled: bool = Query(False, description="Include canceled records"),
+    expired_only: bool = Query(False, description="Show only expired records"),
+    duplicates_only: bool = Query(False, description="Show only duplicate registration numbers"),
+    uploaded_today: bool = Query(False, description="Show only records uploaded today"),
+    uploaded_yesterday: bool = Query(False, description="Show only records uploaded yesterday"),
+    uploaded_this_month: bool = Query(False, description="Show only records uploaded this month"),
+    uploaded_by: Optional[str] = Query(None, description="Filter by uploader username"),
 ):
     """
     Get all FDA drug registrations with pagination and search
@@ -229,7 +235,13 @@ async def get_all_drugs(
             page=page,
             page_size=page_size,
             search=search,
-            include_canceled=include_canceled
+            include_canceled=include_canceled,
+            expired_only=expired_only,
+            duplicates_only=duplicates_only,
+            uploaded_today=uploaded_today,
+            uploaded_yesterday=uploaded_yesterday,
+            uploaded_this_month=uploaded_this_month,
+            uploaded_by=uploaded_by,
         )
         
         return {
@@ -250,7 +262,6 @@ async def get_all_drugs(
             status_code=500,
             detail=f"Failed to retrieve drugs: {str(e)}"
         )
-
 
 # ==================== EXPORT DRUGS TO EXCEL ====================
 # ⚠️ IMPORTANT: This route MUST come BEFORE /drugs/{drug_id}
