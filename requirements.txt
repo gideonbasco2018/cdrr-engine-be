@@ -29,3 +29,7 @@ apscheduler==3.10.4
 # requests
 # beautifulsoup4
 # lxml
+
+# OAuth / HTTP client (Google / YouTube OAuth)
+authlib==1.3.0
+httpx==0.27.0
