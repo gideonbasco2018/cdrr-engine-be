@@ -1,15 +1,18 @@
 # app/api/routes/dashboard.py
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, Literal
 from datetime import date
-
+ 
 from app.db.session import get_db
 from app.core.deps import get_current_active_user
 from app.crud import dashboard as crud_dashboard
+from app.crud import dashboard_chart as crud_chart
 from app.schemas.dashboard import StatResponse, CombinedStatsResponse
-
+from app.schemas.dashboard_chart import ChartResponse
+from app.crud import dashboard_recent as crud_recent
+from app.schemas.recent_applications import RecentApplicationsResponse
 
 router = APIRouter(
     prefix="/api/dashboard/stats",
@@ -146,3 +149,100 @@ def get_summary(
         date_to=params["date_to"],
         **stats,
     )
+
+
+# ═════════════════════════════════════════════════════════
+# CHART  (/api/dashboard/chart)
+# ═════════════════════════════════════════════════════════
+ 
+# ─────────────────────────────────────────────────────────
+# GET /api/dashboard/chart
+# ─────────────────────────────────────────────────────────
+@router.get(
+    "/chart",
+    response_model=ChartResponse,
+    summary="Time-series data for the Insights chart and data table",
+    description="""
+Returns aggregated **received / completed / on_process** counts
+grouped by the requested breakdown:
+ 
+| breakdown | label examples      | typical usage                        |
+|-----------|---------------------|--------------------------------------|
+| `day`     | `'1'` … `'31'`     | single month  e.g. Mar 2026          |
+| `month`   | `'Jan'` … `'Dec'`  | single year   e.g. 2026              |
+| `year`    | `'2022'` … `'2026'`| all-time — omit date params          |
+ 
+The response includes pre-computed **totals** and **overall_completed_rate**.
+    """,
+)
+def get_chart(
+    breakdown: Literal["day", "month", "year"] = Query(
+        "day",
+        description="Aggregation granularity",
+    ),
+    date_from: Optional[date] = Query(
+        None,
+        description="Inclusive start date  YYYY-MM-DD",
+    ),
+    date_to: Optional[date] = Query(
+        None,
+        description="Inclusive end date    YYYY-MM-DD",
+    ),
+    impersonate: Optional[str] = Query(
+        None,
+        description="Admin only — view another user's chart data",
+    ),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(
+            status_code=422,
+            detail="date_from must be earlier than or equal to date_to.",
+        )
+ 
+    username = _effective_username(current_user, impersonate)
+ 
+    try:
+        return crud_chart.get_chart_data(
+            db=db,
+            username=username,
+            breakdown=breakdown,
+            date_from=date_from,
+            date_to=date_to,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+ 
+
+@router.get(
+    "/recent-applications",
+    response_model=RecentApplicationsResponse,
+    summary="Most recent application log entries for the current user",
+)
+def get_recent_applications(
+    limit: int = Query(
+        default=10, ge=1, le=50,
+        description="Number of rows to return (max 50)",
+    ),
+    impersonate: Optional[str] = Query(
+        None, description="Admin only: view another user's data",
+    ),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    username = _effective_username(current_user, impersonate)
+ 
+    data = crud_recent.get_recent_applications(
+        db=db,
+        username=username,
+        limit=limit,
+    )
+ 
+    return RecentApplicationsResponse(
+        data=data,
+        count=len(data),
+        username=username,
+    )
+ 
+ 
