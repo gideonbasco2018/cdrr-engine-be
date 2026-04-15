@@ -40,6 +40,13 @@ class ApplicationLogs(Base):
     is_read = Column(SmallInteger, nullable=False, default=0)   # 0 = unread, 1 = read
     read_at = Column(DateTime, nullable=True)                   # timestamp when opened
 
+    # User who performed the action
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    action_type = Column(String(100), nullable=True, index=True)
+    decision_result = Column(String(255), nullable=True, index=True)
+    decision_authority_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    decision_authority_name = Column(String(255), nullable=True)
+
     # ── Received tracking ─────────────────────────────────────────────
     is_received  = Column(SmallInteger, nullable=False, default=0)  # 0 = not yet, 1 = received
     received_at  = Column(DateTime, nullable=True)                   # timestamp when marked received
