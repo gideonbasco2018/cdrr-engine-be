@@ -7,36 +7,45 @@ from datetime import datetime, date
 
 
 class ApplicationLogBase(BaseModel):
-    """Base schema for Application Log"""
-    application_step: Optional[str] = Field(None, max_length=255, description="Step in application workflow (e.g., Decking, Evaluation, Checking)")
-    user_name: Optional[str] = Field(None, max_length=255, description="Username of person performing action")
-    application_status: Optional[str] = Field(None, max_length=255, description="Current status of application")
-    application_decision: Optional[str] = Field(None, max_length=255, description="Decision made (e.g., Approved, For Checking)")
-    application_remarks: Optional[str] = Field(None, description="Remarks or notes")
-    start_date: Optional[datetime] = Field(None, description="When this step started")
-    accomplished_date: Optional[datetime] = Field(None, description="When this step was completed")
-    del_index: Optional[int] = Field(None, description="Deletion index marker")
-    del_previous: Optional[int] = Field(None, description="Previous deletion reference")
-    del_last_index: Optional[int] = Field(None, description="Last deletion index reference")
-    del_thread: Optional[str] = Field(None, max_length=60, description="Thread identifier for grouping related log entries")
+    application_step: Optional[str] = Field(None, max_length=255)
+    user_name: Optional[str] = Field(None, max_length=255)
+    application_status: Optional[str] = Field(None, max_length=255)
+    application_decision: Optional[str] = Field(None, max_length=255)
+    application_remarks: Optional[str] = Field(None)
+    start_date: Optional[datetime] = Field(None)
+    accomplished_date: Optional[datetime] = Field(None)
+    del_index: Optional[int] = Field(None)
+    del_previous: Optional[int] = Field(None)
+    del_last_index: Optional[int] = Field(None)
+    del_thread: Optional[str] = Field(None, max_length=60)
     deadline_date: Optional[date] = Field(None)
-    working_days:  Optional[int]  = Field(None)
+    working_days: Optional[int] = Field(None)
+
+    # ── New action tracking fields ─────────────────────────────────
+    user_id: Optional[int] = Field(None, description="ID of user who performed the action")
+    action_type: Optional[str] = Field(None, max_length=100, description="Type of action performed")
+    decision_result: Optional[str] = Field(None, max_length=255, description="Result of decision")
+    decision_authority_id: Optional[int] = Field(None, description="ID of decision authority user")
+    decision_authority_name: Optional[str] = Field(None, max_length=255, description="Name of decision authority")
+
+    # ── Received tracking fields ───────────────────────────────────
+    is_received: Optional[int] = Field(None, description="0 = not received, 1 = received")
+    received_at: Optional[datetime] = Field(None)
+    received_by: Optional[str] = Field(None, max_length=255)
 
 
 class ApplicationLogCreate(ApplicationLogBase):
-    """Schema for creating Application Log"""
     main_db_id: int = Field(..., description="ID of the main_db record (DB_ID)")
 
 
 class ApplicationLogUpdate(ApplicationLogBase):
-    """Schema for updating Application Log"""
     pass
 
 
 class ApplicationLogResponse(ApplicationLogBase):
-    """Schema for Application Log response"""
     id: int
     main_db_id: int
+    is_received: int = 0  # default value para hindi mag-error kung null
     created_at: datetime
     updated_at: datetime
 

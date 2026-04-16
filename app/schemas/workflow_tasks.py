@@ -167,6 +167,7 @@ class LogWithMainDBResponse(BaseModel):
     id: int
     main_db_id: int
     application_step: Optional[str] = None
+    user_id: Optional[int] = None
     user_name: Optional[str] = None
     application_status: Optional[str] = None
     application_decision: Optional[str] = None

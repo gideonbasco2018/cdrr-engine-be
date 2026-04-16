@@ -126,35 +126,37 @@ def _notify_on_complete(
 # ─────────────────────────────────────────────────────────────────────
 # CREATE
 # ─────────────────────────────────────────────────────────────────────
-
 def create(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
-    """
-    Create a new application log entry.
-    Automatically fires a notification to the assigned user when the
-    log status is IN PROGRESS (i.e. a task was just assigned).
-    """
     db_log = ApplicationLogs(
-        main_db_id           = log_in.main_db_id,
-        application_step     = log_in.application_step,
-        user_name            = log_in.user_name,
-        application_status   = log_in.application_status,
-        application_decision = log_in.application_decision,
-        application_remarks  = log_in.application_remarks,
-        start_date           = log_in.start_date,
-        accomplished_date    = log_in.accomplished_date,
-        del_index            = log_in.del_index,
-        del_previous         = log_in.del_previous,
-        del_last_index       = log_in.del_last_index,
-        del_thread           = log_in.del_thread,
-        deadline_date        = log_in.deadline_date,
-        working_days         = log_in.working_days,
+        main_db_id              = log_in.main_db_id,
+        application_step        = log_in.application_step,
+        user_name               = log_in.user_name,
+        application_status      = log_in.application_status,
+        application_decision    = log_in.application_decision,
+        application_remarks     = log_in.application_remarks,
+        start_date              = log_in.start_date,
+        accomplished_date       = log_in.accomplished_date,
+        del_index               = log_in.del_index,
+        del_previous            = log_in.del_previous,
+        del_last_index          = log_in.del_last_index,
+        del_thread              = log_in.del_thread,
+        deadline_date           = log_in.deadline_date,
+        working_days            = log_in.working_days,
+        # ── New fields ─────────────────────────────────────────────
+        user_id                 = log_in.user_id,
+        action_type             = log_in.action_type,
+        decision_result         = log_in.decision_result,
+        decision_authority_id   = log_in.decision_authority_id,
+        decision_authority_name = log_in.decision_authority_name,
+        is_received             = log_in.is_received or 0,
+        received_at             = log_in.received_at,
+        received_by             = log_in.received_by,
     )
 
     db.add(db_log)
     db.commit()
     db.refresh(db_log)
 
-    # ── Fire notification (never crashes the request) ─────────────────
     dtn = _get_dtn(db, db_log.main_db_id)
     _notify_assigned_user(db, db_log, dtn)
 
@@ -162,51 +164,43 @@ def create(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
 
 
 def create_bulk(db: Session, logs_in: List[ApplicationLogCreate]) -> List[ApplicationLogs]:
-    """
-    Create multiple application log entries in a single transaction.
-
-    If any log fails, all are rolled back (all-or-nothing).
-    Notifications are fired AFTER the commit so they only go out
-    when the logs are safely persisted.
-
-    Args:
-        db: Database session
-        logs_in: List of ApplicationLogCreate objects
-
-    Returns:
-        List of created ApplicationLogs objects
-
-    Raises:
-        Exception: If any log creation fails
-    """
     try:
         db_logs = []
 
         for log_in in logs_in:
             db_log = ApplicationLogs(
-                main_db_id           = log_in.main_db_id,
-                application_step     = log_in.application_step,
-                user_name            = log_in.user_name,
-                application_status   = log_in.application_status,
-                application_decision = log_in.application_decision,
-                application_remarks  = log_in.application_remarks,
-                start_date           = log_in.start_date,
-                accomplished_date    = log_in.accomplished_date,
-                del_index            = log_in.del_index,
-                del_previous         = log_in.del_previous,
-                del_last_index       = log_in.del_last_index,
+                main_db_id              = log_in.main_db_id,
+                application_step        = log_in.application_step,
+                user_name               = log_in.user_name,
+                application_status      = log_in.application_status,
+                application_decision    = log_in.application_decision,
+                application_remarks     = log_in.application_remarks,
+                start_date              = log_in.start_date,
+                accomplished_date       = log_in.accomplished_date,
+                del_index               = log_in.del_index,
+                del_previous            = log_in.del_previous,
+                del_last_index          = log_in.del_last_index,
+                del_thread              = log_in.del_thread,
+                deadline_date           = log_in.deadline_date,
+                working_days            = log_in.working_days,
+                # ── New fields ─────────────────────────────────────
+                user_id                 = log_in.user_id,
+                action_type             = log_in.action_type,
+                decision_result         = log_in.decision_result,
+                decision_authority_id   = log_in.decision_authority_id,
+                decision_authority_name = log_in.decision_authority_name,
+                is_received             = log_in.is_received or 0,
+                received_at             = log_in.received_at,
+                received_by             = log_in.received_by,
             )
             db.add(db_log)
             db_logs.append(db_log)
 
-        # Commit all at once
         db.commit()
 
-        # Refresh all logs to get their IDs and timestamps
         for db_log in db_logs:
             db.refresh(db_log)
 
-        # ── Fire notifications after successful commit ─────────────────
         for db_log in db_logs:
             dtn = _get_dtn(db, db_log.main_db_id)
             _notify_assigned_user(db, db_log, dtn)
