@@ -27,7 +27,8 @@ class ApplicationLogBase(BaseModel):
     decision_result: Optional[str] = Field(None, max_length=255, description="Result of decision")
     decision_authority_id: Optional[int] = Field(None, description="ID of decision authority user")
     decision_authority_name: Optional[str] = Field(None, max_length=255, description="Name of decision authority")
-
+    doctrack_remarks: Optional[str] = Field(None, description="Doctrack remarks for this log entry")
+    
     # ── Received tracking fields ───────────────────────────────────
     is_received: Optional[int] = Field(None, description="0 = not received, 1 = received")
     received_at: Optional[datetime] = Field(None)

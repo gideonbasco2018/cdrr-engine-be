@@ -148,6 +148,7 @@ def create(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
         decision_result         = log_in.decision_result,
         decision_authority_id   = log_in.decision_authority_id,
         decision_authority_name = log_in.decision_authority_name,
+        doctrack_remarks        = log_in.doctrack_remarks, 
         is_received             = log_in.is_received or 0,
         received_at             = log_in.received_at,
         received_by             = log_in.received_by,
