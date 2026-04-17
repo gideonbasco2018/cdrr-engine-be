@@ -46,6 +46,7 @@ class ApplicationLogs(Base):
     decision_result = Column(String(255), nullable=True, index=True)
     decision_authority_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     decision_authority_name = Column(String(255), nullable=True)
+    doctrack_remarks        = Column(Text, nullable=True)   
 
     # ── Received tracking ─────────────────────────────────────────────
     is_received  = Column(SmallInteger, nullable=False, default=0)  # 0 = not yet, 1 = received
