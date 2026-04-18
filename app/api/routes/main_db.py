@@ -124,7 +124,6 @@ COLUMN_MAPPING = {
     "Pharma Prod Cat Label": "DB_PHARMA_PROD_CAT_LABEL",
     "Is in PM": "DB_IS_IN_PM",
     "Timeline Citizen Charter": "DB_TIMELINE_CITIZEN_CHARTER",
-    # ✅ NEW FIELD
     "Processing Type": "DB_PROCESSING_TYPE",
 }
 
@@ -209,6 +208,17 @@ def get_main_db(
     app_status: Optional[str] = Query(None, description="Filter by Application Status"),
     app_type: Optional[str] = Query(None, description="Filter by Application Type"),
     processing_type: Optional[str] = Query(None, description="Filter by Processing Type"),
+    # ✅ DAGDAG — Supply chain filters
+    dosage_form: Optional[str] = Query(None, description="Filter by Dosage Form"),
+    manufacturer_country: Optional[str] = Query(None, description="Filter by Manufacturer Country"),
+    trader: Optional[str] = Query(None, description="Filter by Trader"),
+    trader_country: Optional[str] = Query(None, description="Filter by Trader Country"),
+    importer: Optional[str] = Query(None, description="Filter by Importer"),
+    importer_country: Optional[str] = Query(None, description="Filter by Importer Country"),
+    distributor: Optional[str] = Query(None, description="Filter by Distributor"),
+    distributor_country: Optional[str] = Query(None, description="Filter by Distributor Country"),
+    repacker: Optional[str] = Query(None, description="Filter by Repacker"),
+    repacker_country: Optional[str] = Query(None, description="Filter by Repacker Country"),
     sort_by: str = Query("DB_DATE_EXCEL_UPLOAD"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     db: Session = Depends(get_db)
@@ -229,6 +239,17 @@ def get_main_db(
         "app_status": app_status,
         "app_type": app_type,
         "processing_type": processing_type,
+        # ✅ DAGDAG — Supply chain filters
+        "dosage_form": dosage_form,
+        "manufacturer_country": manufacturer_country,
+        "trader": trader,
+        "trader_country": trader_country,
+        "importer": importer,
+        "importer_country": importer_country,
+        "distributor": distributor,
+        "distributor_country": distributor_country,
+        "repacker": repacker,
+        "repacker_country": repacker_country,
     }
     
     records, total = get_main_db_records(
@@ -250,19 +271,18 @@ def get_main_db(
     }
 
 
-# ✅ Get unique processing types with counts (always unfiltered — drives the tabs)
+# ✅ Get unique processing types with counts
 @router.get("/processing-types")
 def get_processing_types(
     status: Optional[str] = Query(None, description="Filter by decking status: 'not_decked' or 'decked'"),
-    app_type: Optional[str] = Query(None, description="Filter by application type"),       # ← NEW
-    prescription: Optional[str] = Query(None, description="Filter by prescription type"), # ← NEW
-    app_status: Optional[str] = Query(None, description="Filter by app status"),           # ← NEW
+    app_type: Optional[str] = Query(None, description="Filter by application type"),
+    prescription: Optional[str] = Query(None, description="Filter by prescription type"),
+    app_status: Optional[str] = Query(None, description="Filter by app status"),
     db: Session = Depends(get_db)
 ):
     """Get unique DB_PROCESSING_TYPE values with counts, filtered by active sidebar selections"""
 
     def _build_base_query(base_query):
-        # Decked/not-decked filter
         if status == "decked":
             _decked_ids = db.query(ApplicationLogs.main_db_id).filter(
                 ApplicationLogs.application_step == "Decking"
@@ -279,7 +299,6 @@ def get_processing_types(
                 or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
             )
 
-        # App type filter
         if app_type is not None:
             if app_type == "__EMPTY__":
                 base_query = base_query.filter(
@@ -288,7 +307,6 @@ def get_processing_types(
             else:
                 base_query = base_query.filter(MainDB.DB_APP_TYPE == app_type)
 
-        # Prescription filter
         if prescription is not None:
             if prescription == "__EMPTY__":
                 base_query = base_query.filter(
@@ -297,7 +315,6 @@ def get_processing_types(
             else:
                 base_query = base_query.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
 
-        # App status filter
         if app_status is not None:
             if app_status == "__EMPTY__":
                 base_query = base_query.filter(
@@ -308,7 +325,6 @@ def get_processing_types(
 
         return base_query
 
-    # Named processing types with counts
     query = _build_base_query(
         db.query(MainDB.DB_PROCESSING_TYPE, func.count(MainDB.DB_ID).label('count'))
     )
@@ -319,7 +335,6 @@ def get_processing_types(
         .order_by(MainDB.DB_PROCESSING_TYPE)\
         .all()
 
-    # Null/empty processing type count
     query_no_type = _build_base_query(db.query(func.count(MainDB.DB_ID)))
     no_type_count = query_no_type.filter(
         or_(MainDB.DB_PROCESSING_TYPE.is_(None), MainDB.DB_PROCESSING_TYPE == "")
@@ -333,11 +348,10 @@ def get_processing_types(
     return {"processing_types": processing_types}
 
 
-# ✅ UPDATED: added processing_type filter param so sidebar counts update when a processing tab is active
 @router.get("/app-types")
 def get_app_types(
     status: Optional[str] = Query(None, description="Filter by decking status: 'not_decked' or 'decked'"),
-    processing_type: Optional[str] = Query(None, description="Filter by processing type"),  # ✅ NEW
+    processing_type: Optional[str] = Query(None, description="Filter by processing type"),
     db: Session = Depends(get_db)
 ):
     """Get unique DB_APP_TYPE values with counts"""
@@ -362,7 +376,6 @@ def get_app_types(
             or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
         )
 
-    # ✅ NEW: apply processing_type filter
     query = _apply_processing_type_filter(query, processing_type)
 
     results_with_type = query.filter(
@@ -390,7 +403,6 @@ def get_app_types(
             or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "", MainDB.DB_APP_STATUS != "Completed")
         )
 
-    # ✅ NEW: apply processing_type filter to no-type count too
     query_no_type = _apply_processing_type_filter(query_no_type, processing_type)
 
     no_type_count = query_no_type.filter(
@@ -411,12 +423,11 @@ def get_app_types(
     return {"app_types": app_types}
 
 
-# ✅ UPDATED: added processing_type filter param so sidebar counts update when a processing tab is active
 @router.get("/prescription-types")
 def get_prescription_types(
     status: Optional[str] = Query(None, description="Filter by decking status: 'not_decked' or 'decked'"),
     app_type: Optional[str] = Query(None, description="Filter by application type"),
-    processing_type: Optional[str] = Query(None, description="Filter by processing type"),  # ✅ NEW
+    processing_type: Optional[str] = Query(None, description="Filter by processing type"),
     db: Session = Depends(get_db)
 ):
     """Get unique DB_PROD_CLASS_PRESCRIP values with counts"""
@@ -449,7 +460,6 @@ def get_prescription_types(
         else:
             query = query.filter(MainDB.DB_APP_TYPE == app_type)
 
-    # ✅ NEW: apply processing_type filter
     query = _apply_processing_type_filter(query, processing_type)
 
     results_with_type = query.filter(
@@ -485,7 +495,6 @@ def get_prescription_types(
         else:
             query_no_type = query_no_type.filter(MainDB.DB_APP_TYPE == app_type)
 
-    # ✅ NEW: apply processing_type filter to no-type count too
     query_no_type = _apply_processing_type_filter(query_no_type, processing_type)
 
     no_type_count = query_no_type.filter(
@@ -506,13 +515,12 @@ def get_prescription_types(
     return {"prescription_types": prescription_types}
 
 
-# ✅ UPDATED: added processing_type filter param so sidebar counts update when a processing tab is active
 @router.get("/app-status-types")
 def get_app_status_types(
     status: Optional[str] = Query(None, description="Filter by decking status: 'not_decked' or 'decked'"),
     app_type: Optional[str] = Query(None, description="Filter by application type"),
     prescription: Optional[str] = Query(None, description="Filter by prescription type"),
-    processing_type: Optional[str] = Query(None, description="Filter by processing type"),  # ✅ NEW
+    processing_type: Optional[str] = Query(None, description="Filter by processing type"),
     db: Session = Depends(get_db)
 ):
     """Get unique DB_APP_STATUS values with counts"""
@@ -553,7 +561,6 @@ def get_app_status_types(
         else:
             query = query.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
 
-    # ✅ NEW: apply processing_type filter
     query = _apply_processing_type_filter(query, processing_type)
 
     results_with_status = query.filter(
@@ -597,7 +604,6 @@ def get_app_status_types(
         else:
             query_no_status = query_no_status.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
 
-    # ✅ NEW: apply processing_type filter to no-status count too
     query_no_status = _apply_processing_type_filter(query_no_status, processing_type)
 
     no_status_count = query_no_status.filter(
@@ -916,7 +922,18 @@ async def export_filtered_records(
     generic_name: Optional[str] = Query(None),
     app_status: Optional[str] = Query(None),
     app_type: Optional[str] = Query(None),
-    processing_type: Optional[str] = Query(None),  # ✅ NEW
+    processing_type: Optional[str] = Query(None),
+    # ✅ DAGDAG — Supply chain filters
+    dosage_form: Optional[str] = Query(None),
+    manufacturer_country: Optional[str] = Query(None),
+    trader: Optional[str] = Query(None),
+    trader_country: Optional[str] = Query(None),
+    importer: Optional[str] = Query(None),
+    importer_country: Optional[str] = Query(None),
+    distributor: Optional[str] = Query(None),
+    distributor_country: Optional[str] = Query(None),
+    repacker: Optional[str] = Query(None),
+    repacker_country: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
     """Export filtered records to Excel"""
@@ -935,7 +952,18 @@ async def export_filtered_records(
             "generic_name": generic_name,
             "app_status": app_status,
             "app_type": app_type,
-            "processing_type": processing_type,  # ✅ NEW
+            "processing_type": processing_type,
+            # ✅ DAGDAG — Supply chain filters
+            "dosage_form": dosage_form,
+            "manufacturer_country": manufacturer_country,
+            "trader": trader,
+            "trader_country": trader_country,
+            "importer": importer,
+            "importer_country": importer_country,
+            "distributor": distributor,
+            "distributor_country": distributor_country,
+            "repacker": repacker,
+            "repacker_country": repacker_country,
         }
 
         records, total = get_main_db_records(
@@ -979,6 +1007,14 @@ async def export_filtered_records(
                 "Manufacturer TIN": record.DB_PROD_MANU_TIN,
                 "Manufacturer LTO No.": record.DB_PROD_MANU_LTO_NO,
                 "Manufacturer Country": record.DB_PROD_MANU_COUNTRY,
+                "Trader": record.DB_PROD_TRADER,
+                "Trader Country": record.DB_PROD_TRADER_COUNTRY,
+                "Importer": record.DB_PROD_IMPORTER,
+                "Importer Country": record.DB_PROD_IMPORTER_COUNTRY,
+                "Distributor": record.DB_PROD_DISTRI,
+                "Distributor Country": record.DB_PROD_DISTRI_COUNTRY,
+                "Repacker": record.DB_PROD_REPACKER,
+                "Repacker Country": record.DB_PROD_REPACKER_COUNTRY,
                 "Registration No.": record.DB_REG_NO,
                 "App Type": record.DB_APP_TYPE,
                 "Mother App Type": record.DB_MOTHER_APP_TYPE,
@@ -993,7 +1029,7 @@ async def export_filtered_records(
                 "Date Received Central": record.DB_DATE_RECEIVED_CENT,
                 "Date Deck": record.DB_DATE_DECK,
                 "Date Released": record.DB_DATE_RELEASED,
-                "Processing Type": record.DB_PROCESSING_TYPE,  # ✅ NEW
+                "Processing Type": record.DB_PROCESSING_TYPE,
                 "User Uploader": record.DB_USER_UPLOADER,
                 "Date Excel Upload": str(record.DB_DATE_EXCEL_UPLOAD) if record.DB_DATE_EXCEL_UPLOAD else None,
             }
