@@ -1,6 +1,6 @@
 # app/schemas/main_db.py
 
-from pydantic import BaseModel, ConfigDict, field_serializer
+from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
 from typing import Optional, List
 from datetime import datetime
 
@@ -203,6 +203,17 @@ class MainDBBase(BaseModel):
     DB_IS_IN_PM: Optional[int] = None
     DB_TIMELINE_CITIZEN_CHARTER: Optional[int] = None
     DB_PROCESSING_TYPE: Optional[str] = None
+
+    # ✅ FIX: Convert empty string to None for all Optional[int] fields
+    @field_validator('DB_DTN', 'DB_IS_IN_PM', 'DB_TIMELINE_CITIZEN_CHARTER', mode='before')
+    @classmethod
+    def parse_optional_int(cls, v):
+        if v == "" or v is None:
+            return None
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return None
 
 
 class MainDBCreate(MainDBBase):
