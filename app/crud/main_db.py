@@ -52,21 +52,30 @@ def get_main_db_records(
     if filters is None:
         filters = {}
 
-    status           = filters.get("status")
-    category         = filters.get("category")
-    prescription     = filters.get("prescription")
-    prescription_not = filters.get("prescription_not")
-    dtn              = filters.get("dtn")
-    manufacturer     = filters.get("manufacturer")
-    lto_company      = filters.get("lto_company")
-    brand_name       = filters.get("brand_name")
-    generic_name     = filters.get("generic_name")
-    app_status       = filters.get("app_status")
-    app_type         = filters.get("app_type")
-    processing_type  = filters.get("processing_type")
+    status              = filters.get("status")
+    category            = filters.get("category")
+    prescription        = filters.get("prescription")
+    prescription_not    = filters.get("prescription_not")
+    dtn                 = filters.get("dtn")
+    manufacturer        = filters.get("manufacturer")
+    lto_company         = filters.get("lto_company")
+    brand_name          = filters.get("brand_name")
+    generic_name        = filters.get("generic_name")
+    app_status          = filters.get("app_status")
+    app_type            = filters.get("app_type")
+    processing_type     = filters.get("processing_type")
+    # ✅ DAGDAG — Supply chain filters
+    dosage_form         = filters.get("dosage_form")
+    manufacturer_country = filters.get("manufacturer_country")
+    trader              = filters.get("trader")
+    trader_country      = filters.get("trader_country")
+    importer            = filters.get("importer")
+    importer_country    = filters.get("importer_country")
+    distributor         = filters.get("distributor")
+    distributor_country = filters.get("distributor_country")
+    repacker            = filters.get("repacker")
+    repacker_country    = filters.get("repacker_country")
 
-    # ✅ Decked   = has a Decking log OR DB_APP_STATUS = "Completed"
-    # ✅ Not Decked = no Decking log AND DB_APP_STATUS != "Completed" (or null)
     if status == "decked":
         decked_ids = db.query(ApplicationLogs.main_db_id).filter(
             ApplicationLogs.application_step == "Decking"
@@ -157,6 +166,47 @@ def get_main_db_records(
             query = query.filter(MainDB.DB_PROCESSING_TYPE == processing_type)
         print(f"✅ Applied processing_type filter: {processing_type}")
 
+    # ✅ DAGDAG — Supply chain filter logic
+    if dosage_form:
+        query = query.filter(MainDB.DB_PROD_DOS_FORM.like(f"%{dosage_form}%"))
+        print(f"✅ Applied dosage_form filter: {dosage_form}")
+
+    if manufacturer_country:
+        query = query.filter(MainDB.DB_PROD_MANU_COUNTRY == manufacturer_country)
+        print(f"✅ Applied manufacturer_country filter: {manufacturer_country}")
+
+    if trader:
+        query = query.filter(MainDB.DB_PROD_TRADER.like(f"%{trader}%"))
+        print(f"✅ Applied trader filter: {trader}")
+
+    if trader_country:
+        query = query.filter(MainDB.DB_PROD_TRADER_COUNTRY == trader_country)
+        print(f"✅ Applied trader_country filter: {trader_country}")
+
+    if importer:
+        query = query.filter(MainDB.DB_PROD_IMPORTER.like(f"%{importer}%"))
+        print(f"✅ Applied importer filter: {importer}")
+
+    if importer_country:
+        query = query.filter(MainDB.DB_PROD_IMPORTER_COUNTRY == importer_country)
+        print(f"✅ Applied importer_country filter: {importer_country}")
+
+    if distributor:
+        query = query.filter(MainDB.DB_PROD_DISTRI.like(f"%{distributor}%"))
+        print(f"✅ Applied distributor filter: {distributor}")
+
+    if distributor_country:
+        query = query.filter(MainDB.DB_PROD_DISTRI_COUNTRY == distributor_country)
+        print(f"✅ Applied distributor_country filter: {distributor_country}")
+
+    if repacker:
+        query = query.filter(MainDB.DB_PROD_REPACKER.like(f"%{repacker}%"))
+        print(f"✅ Applied repacker filter: {repacker}")
+
+    if repacker_country:
+        query = query.filter(MainDB.DB_PROD_REPACKER_COUNTRY == repacker_country)
+        print(f"✅ Applied repacker_country filter: {repacker_country}")
+
     if search:
         search_pattern = f"%{search}%"
         search_conditions = [
@@ -179,8 +229,6 @@ def get_main_db_records(
     total = query.count()
     print(f"📊 Total records found: {total}")
 
-    # ── Sorting ──────────────────────────────────────────────────────────
-    # Delegation sort fields still supported for backward compat
     delegation_sort_fields = [
         'DB_DATE_DECKED_END', 'DB_DATE_EVAL_END', 'DB_DATE_CHECKER_END',
         'DB_DATE_SUPERVISOR_END', 'DB_DATE_QA_END', 'DB_DATE_DIRECTOR_END',
@@ -207,7 +255,6 @@ def get_main_db_records(
     records = query.offset(skip).limit(limit).all()
     print(f"✅ Returning {len(records)} records (skip={skip}, limit={limit})")
 
-    # Eager-load delegation for response serialization
     for record in records:
         _ = record.application_delegation
 
@@ -355,8 +402,6 @@ def get_main_db_summary(db: Session) -> dict:
     """Summary statistics — decked/not decked based on application_logs"""
     total_records = db.query(MainDB).count()
 
-    # ✅ Decked   = has a Decking log OR DB_APP_STATUS = "Completed"
-    # ✅ Not Decked = no Decking log AND not Completed
     decked_ids = db.query(ApplicationLogs.main_db_id).filter(
         ApplicationLogs.application_step == "Decking"
     ).subquery()
