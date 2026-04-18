@@ -13,6 +13,14 @@ class BulkDocumentLogCreate(BaseModel):
     logs: List[DocumentLogCreate] = Field(..., description="List of document logs to insert")
 
 
+class SingleDoctrackLogByRsnRequest(BaseModel):
+    rsn: str = Field(..., description="14-digit Doctrack Number")
+    remarks: str = Field(..., description="Remarks text")
+    userID: int = Field(..., description="User ID creating the log")
+
+class BulkDoctrackLogByRsnRequest(BaseModel):
+    entries: List[SingleDoctrackLogByRsnRequest] = Field(..., description="List of RSN + remarks + userID")
+    
 # Response schema for single/bulk log
 
 class DocumentLogResponse(BaseModel):

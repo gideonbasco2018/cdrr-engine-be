@@ -15,11 +15,15 @@ from app.crud.doctrack import (
     get_document_logs_by_ids,
     get_docrecIDs_by_rsns,
     insert_bulk_logs_by_rsns,
+    insert_log_by_rsn_with_user,       
+    insert_bulk_logs_by_rsns_with_user, 
 )
 from app.schemas.doctrack import (
     BulkDocumentLogCreate,
     DocumentLogCreate,
-    DocumentLogResponse
+    DocumentLogResponse,
+    SingleDoctrackLogByRsnRequest,      
+    BulkDoctrackLogByRsnRequest,        
 )
 
 router = APIRouter(
@@ -367,3 +371,66 @@ async def upload_doctrack_excel(
         "all_failed":       all_failed,           # validation errors + RSN-not-found errors
         "inserted_records": confirmed_entries,    # rows successfully inserted
     }
+
+# ─────────────────────────────────────────────
+# NEW: POST /api/doctrack/log/by-rsn
+# Single insert — for ViewDetails modal
+# ─────────────────────────────────────────────
+
+@router.post("/log/by-rsn", response_model=DocumentLogResponse)
+def create_log_by_rsn(payload: SingleDoctrackLogByRsnRequest, db: DBSessionDep):
+    """
+    Resolves RSN → docrecID then inserts a single log with userID.
+    Used by ViewDetails modal when submitting doctrack_remarks.
+    """
+    result = insert_log_by_rsn_with_user(
+        db=db,
+        rsn=payload.rsn,
+        remarks=payload.remarks,
+        userID=payload.userID,
+    )
+    if not result:
+        raise HTTPException(
+            status_code=404,
+            detail=f"RSN '{payload.rsn}' not found in docreceivingtbl or insert failed."
+        )
+    return result
+
+
+# ─────────────────────────────────────────────
+# NEW: POST /api/doctrack/log/bulk-by-rsn-with-user
+# Bulk insert — for BulkDeck modal
+# ─────────────────────────────────────────────
+
+class BulkByRsnWithUserResponse(BaseModel):
+    total_submitted: int
+    total_inserted: int
+    total_failed: int
+    inserted: List[Dict[str, Any]]
+    failed: List[Dict[str, Any]]
+
+@router.post("/log/bulk-by-rsn-with-user", response_model=BulkByRsnWithUserResponse)
+def create_bulk_logs_by_rsn_with_user(
+    payload: BulkDoctrackLogByRsnRequest,
+    db: DBSessionDep,
+):
+    """
+    Accepts { entries: [{ rsn, remarks, userID }] }.
+    Resolves each RSN → docrecID, inserts one log per entry WITH userID.
+    Used by BulkDeck modal when submitting doctrack_remarks for multiple records.
+    """
+    if not payload.entries:
+        raise HTTPException(status_code=400, detail="No entries provided.")
+
+    result = insert_bulk_logs_by_rsns_with_user(
+        db=db,
+        entries=[e.dict() for e in payload.entries],
+    )
+
+    return BulkByRsnWithUserResponse(
+        total_submitted=len(payload.entries),
+        total_inserted=len(result["inserted"]),
+        total_failed=len(result["failed"]),
+        inserted=result["inserted"],
+        failed=result["failed"],
+    )
