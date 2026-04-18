@@ -212,3 +212,75 @@ def insert_bulk_logs_by_rsns(
             })
 
     return {"inserted": inserted_logs, "failed": failed_entries}
+
+# ADD after insert_bulk_logs_by_rsns:
+
+def insert_log_by_rsn_with_user(
+    db: Session,
+    rsn: str,
+    remarks: str,
+    userID: int,
+) -> Optional[Dict[str, Any]]:
+    """
+    Resolve RSN → docrecID then insert a single log WITH userID.
+    Used by: POST /log/by-rsn (ViewDetails + BulkDeck)
+    """
+    rsn_records = get_docrecIDs_by_rsns(db, [rsn])
+    if not rsn_records:
+        return None
+
+    docrecID = rsn_records[0]["docrecID"]
+    return insert_document_log(db=db, docrecID=docrecID, remarks=remarks, userID=userID)
+
+
+def insert_bulk_logs_by_rsns_with_user(
+    db: Session,
+    entries: List[Dict[str, Any]],  # [{ "rsn": "...", "remarks": "...", "userID": int }]
+) -> Dict[str, Any]:
+    """
+    Given a list of { rsn, remarks, userID } pairs:
+      1. Resolve all RSNs → docrecIDs in ONE bulk query
+      2. Insert one log per entry WITH userID
+      3. Return inserted + failed with reasons
+    """
+    if not entries:
+        return {"inserted": [], "failed": []}
+
+    rsns = [e["rsn"] for e in entries]
+    rsn_records = get_docrecIDs_by_rsns(db, rsns)
+
+    rsn_to_docrecid: Dict[str, int] = {}
+    for row in rsn_records:
+        rsn_to_docrecid[str(row["RSN"])] = row["docrecID"]
+
+    inserted_logs: List[Dict[str, Any]] = []
+    failed_entries: List[Dict[str, Any]] = []
+
+    for entry in entries:
+        rsn = entry["rsn"]
+        remarks = entry["remarks"]
+        userID = entry["userID"]
+        docrecID = rsn_to_docrecid.get(rsn)
+
+        if not docrecID:
+            failed_entries.append({
+                "rsn": rsn,
+                "remarks": remarks,
+                "reason": "RSN not found in docreceivingtbl",
+            })
+            continue
+
+        inserted = insert_document_log(
+            db=db, docrecID=docrecID, remarks=remarks, userID=userID
+        )
+
+        if inserted:
+            inserted_logs.append(inserted)
+        else:
+            failed_entries.append({
+                "rsn": rsn,
+                "remarks": remarks,
+                "reason": f"Insert failed for docrecID {docrecID}",
+            })
+
+    return {"inserted": inserted_logs, "failed": failed_entries}
