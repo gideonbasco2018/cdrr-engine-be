@@ -127,14 +127,103 @@ COLUMN_MAPPING = {
     "Processing Type": "DB_PROCESSING_TYPE",
 }
 
+# ============================================================
+# UPDATED LOG_STEPS CONFIGURATION
+# ============================================================
+# Format: (step_label, user_col, decision_col, remarks_col, date_col, thread_col, del_idx)
+# Format: (step_label, user_col, id_col, decision_col, remarks_col, date_col, thread_col, del_idx)
+
 LOG_STEPS = [
-    ("Decking",    "Decker",           "Decker Decision",           "Decker Remarks",           "Date Decked End",            "Decker Del Thread",           1),
-    ("Evaluation", "Evaluator",        "Evaluator Decision",        "Evaluator Remarks",        "Date Eval End",              "Evaluator Del Thread",        2),
-    ("Checking",   "Checker",          "Checker Decision",          "Checker Remarks",          "Date Checker End",           "Checker Del Thread",          3),
-    ("Supervision","Supervisor",       "Supervisor Decision",       "Supervisor Remarks",       "Date Supervisor End",        "Supervisor Del Thread",       4),
-    ("QA",         "QA",               "QA Decision",               "QA Remarks",               "Date QA End",                "QA Del Thread",               5),
-    ("Director",   "Director",         "Director Decision",         "Director Remarks",         "Date Director End",          "Director Del Thread",         6),
-    ("Releasing",  "Releasing Officer","Releasing Officer Decision","Releasing Officer Remarks","Date Releasing Officer End", "Releasing Del Thread",        7),
+    (
+        "Decking",
+        "Decker",
+        "Decker ID",
+        "Decker Decision",
+        "Decker Remarks",
+        "Date Decked End",
+        "Decker Del Thread",
+        1,
+    ),
+    (
+        "Evaluation",
+        "Evaluator",
+        "Evaluator ID",
+        "Evaluator Decision",
+        "Evaluator Remarks",
+        "Date Eval End",
+        "Evaluator Del Thread",
+        2,
+    ),
+    (
+        "Checking",
+        "Checker",
+        "Checker ID",
+        "Checker Decision",
+        "Checker Remarks",
+        "Date Checker End",
+        "Checker Del Thread",
+        3,
+    ),
+    (
+        "Supervisor Review",
+        "Supervisor",
+        "Supervisor ID",
+        "Supervisor Decision",
+        "Supervisor Remarks",
+        "Date Supervisor End",
+        "Supervisor Del Thread",
+        4,
+    ),
+    (
+        "QA Admin Review",
+        "QA Admin",
+        "QA Admin ID",
+        "QA Admin Decision",
+        "QA Admin Remarks",
+        "Date QA Admin End",
+        "QA Admin Del Thread",
+        5,
+    ),
+    (
+        "LRD Chief Admin Review",
+        "LRD Chief Admin",
+        "LRD Chief Admin ID",
+        "LRD Chief Admin Decision",
+        "LRD Chief Admin Remarks",
+        "Date LRD Chief Admin End",
+        "LRD Chief Admin Del Thread",
+        6,
+    ),
+    (
+        "OD-Receiving",
+        "OD-Receiving",
+        "OD-Receiving ID",
+        "OD-Receiving Decision",
+        "OD-Receiving Remarks",
+        "Date OD-Receiving End",
+        "OD-Receiving Del Thread",
+        7,
+    ),
+    (
+        "OD-Releasing",
+        "OD-Releasing",
+        "OD-Releasing ID",
+        "OD-Releasing Decision",
+        "OD-Releasing Remarks",
+        "Date OD-Releasing End",
+        "OD-Releasing Del Thread",
+        8,
+    ),
+    (
+        "Releasing",
+        "Releasing Officer",
+        "Releasing Officer ID",
+        "Releasing Officer Decision",
+        "Releasing Officer Remarks",
+        "Date Releasing Officer End",
+        "Releasing Officer Del Thread",
+        9,
+    ),
 ]
 
 DATE_FIELDS = {
@@ -775,10 +864,21 @@ async def upload_excel(
             print(f"  ✅ Inserted main_db ID {db_record.DB_ID} (DTN: {db_record.DB_DTN})")
 
             logs_inserted = 0
-            for (step_label, user_col, decision_col, remarks_col, date_col, thread_col, del_idx) in LOG_STEPS:
+          # ✅ FIXED — 8-value tuple, with proper id_col parsing
+            for (step_label, user_col, id_col, decision_col, remarks_col, date_col, thread_col, del_idx) in LOG_STEPS:
                 user_val = row.get(user_col)
                 if pd.isna(user_val) or user_val is None or str(user_val).strip() == "":
                     continue
+
+                # ✅ Parse numeric user_id
+                raw_id = row.get(id_col)
+                if raw_id is not None and not (isinstance(raw_id, float) and pd.isna(raw_id)):
+                    try:
+                        user_id_val = int(float(str(raw_id).strip()))
+                    except (ValueError, TypeError):
+                        user_id_val = None
+                else:
+                    user_id_val = None
 
                 accomplished = parse_date_value(row.get(date_col))
                 thread_val = row.get(thread_col)
@@ -806,6 +906,7 @@ async def upload_excel(
                     main_db_id=db_record.DB_ID,
                     application_step=step_label,
                     user_name=str(user_val).strip(),
+                    user_id=user_id_val,                  # ✅ Now properly defined
                     application_status=log_status,
                     application_decision=decision_str,
                     application_remarks=remarks_str,
@@ -818,7 +919,7 @@ async def upload_excel(
                 )
                 db.add(log)
                 logs_inserted += 1
-                print(f"    📝 Log: {step_label} → {str(user_val).strip()} (del_index={del_idx})")
+                print(f"    📝 Log: {step_label} → {str(user_val).strip()} (ID={user_id_val}, del_index={del_idx})")
 
             db.commit()
             print(f"  ✅ Committed {logs_inserted} log(s) for main_db ID {db_record.DB_ID}")
@@ -848,42 +949,106 @@ async def upload_excel(
 async def download_template():
     """Download Excel template with proper column headers"""
     try:
+        from openpyxl.styles import PatternFill, Font, Alignment
+        from openpyxl.utils import get_column_letter
+
         log_step_columns = []
-        for (step_label, user_col, decision_col, remarks_col, date_col, thread_col, _) in LOG_STEPS:
-            log_step_columns += [user_col, decision_col, remarks_col, date_col, thread_col]
+        for (step_label, user_col, id_col, decision_col, remarks_col, date_col, thread_col, _) in LOG_STEPS:
+            log_step_columns += [user_col, id_col, decision_col, remarks_col, date_col, thread_col]
 
         all_columns = list(COLUMN_MAPPING.keys()) + log_step_columns
         template_data = {col: [""] for col in all_columns}
         df = pd.DataFrame(template_data)
 
+        # Color scheme per step
+        STEP_COLORS = [
+            "FFF2CC",  # Decker          — yellow
+            "D9EAD3",  # Evaluator        — green
+            "CFE2F3",  # Checker          — blue
+            "EAD1DC",  # Supervisor       — pink
+            "D9D2E9",  # QA Admin         — purple
+            "FCE5CD",  # LRD Chief Admin  — orange
+            "D0E4F7",  # OD-Receiving     — light blue
+            "F4CCCC",  # OD-Releasing     — red/rose
+            "D9EAD3",  # Releasing Officer— green (different shade optional)
+        ]
+
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df.to_excel(writer, index=False, sheet_name="Template")
 
+            workbook = writer.book
+            worksheet = writer.sheets["Template"]
+
+            main_col_count = len(COLUMN_MAPPING)
+
+            # Style the main DB columns header — subtle gray
+            main_fill = PatternFill(start_color="EFEFEF", end_color="EFEFEF", fill_type="solid")
+            main_font = Font(bold=True)
+            for col_idx in range(1, main_col_count + 1):
+                cell = worksheet.cell(row=1, column=col_idx)
+                cell.fill = main_fill
+                cell.font = main_font
+                cell.alignment = Alignment(horizontal="center", wrap_text=True)
+                worksheet.column_dimensions[get_column_letter(col_idx)].width = 18
+
+            # Style the log step columns — colored per step (6 cols each)
+            log_col_start = main_col_count + 1
+            for step_idx, step_tuple in enumerate(LOG_STEPS):
+                color = STEP_COLORS[step_idx % len(STEP_COLORS)]
+                fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+                bold_font = Font(bold=True)
+
+                for offset in range(6):  # 6 cols per step: name, id, decision, remarks, date, thread
+                    col_idx = log_col_start + (step_idx * 6) + offset
+                    cell = worksheet.cell(row=1, column=col_idx)
+                    cell.fill = fill
+                    cell.font = bold_font
+                    cell.alignment = Alignment(horizontal="center", wrap_text=True)
+                    worksheet.column_dimensions[get_column_letter(col_idx)].width = 20
+
+            # Freeze the first row
+            worksheet.freeze_panes = "A2"
+
+            # Instructions sheet
             instructions = pd.DataFrame({
                 "Column Group": [
                     "Main Database Columns",
                     "Application Log Columns",
+                    "ID Columns",
                     "Del Thread Values",
                     "Date Format Instructions",
                     "Numeric Field Instructions",
                 ],
                 "Description": [
-                    "Columns from 'DTN' to 'Processing Type' are for main database records",
-                    "Columns for Decker, Evaluator, Checker, Supervisor, QA, Director, Releasing Officer — each has: Name, Decision, Remarks, Date, Del Thread",
-                    "Del Thread column per step (e.g. 'Decker Del Thread') — values: 'Open' or 'Close'",
+                    "Columns from 'DTN' to 'Processing Type' — gray highlighted",
+                    "Each step has 6 columns: Name, ID, Decision, Remarks, Date, Del Thread — color coded per step",
+                    "ID columns (e.g. 'Decker ID', 'QA Admin ID') — numeric employee ID (e.g. 1001)",
+                    "Del Thread column per step — values: 'Open' or 'Close'",
                     "For date fields, use formats like: 2026-01-02, Jan 2 2026, 01/02/2026",
                     "Timeline Citizen Charter should be a whole number (e.g., 30, 45, 60)",
                 ],
                 "Note": [
                     "All main database columns are optional",
                     "A log row is only inserted if the Name column (e.g., 'Decker') has a value",
-                    "Leave blank if not applicable",
+                    "Leave blank if no employee ID. Must be a whole number if filled.",
+                    "Leave blank if not applicable — defaults to 'Open'",
                     "Date fields will be automatically parsed. Leave empty if no date.",
                     "Enter numbers without decimals for timeline fields.",
                 ]
             })
             instructions.to_excel(writer, index=False, sheet_name="Instructions")
+
+            # Style instructions sheet header too
+            inst_ws = writer.sheets["Instructions"]
+            inst_fill = PatternFill(start_color="4A90D9", end_color="4A90D9", fill_type="solid")
+            inst_font = Font(bold=True, color="FFFFFF")
+            for col_idx in range(1, 4):
+                cell = inst_ws.cell(row=1, column=col_idx)
+                cell.fill = inst_fill
+                cell.font = inst_font
+                cell.alignment = Alignment(horizontal="center")
+                inst_ws.column_dimensions[get_column_letter(col_idx)].width = 35
 
         output.seek(0)
         return StreamingResponse(
