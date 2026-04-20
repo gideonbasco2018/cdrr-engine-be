@@ -1,6 +1,7 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from datetime import datetime
 from typing import Optional, List
+
 # ------------------------
 # Request schemas
 # ------------------------
@@ -18,14 +19,23 @@ class SingleDoctrackLogByRsnRequest(BaseModel):
     remarks: str = Field(..., description="Remarks text")
     userID: int = Field(..., description="User ID creating the log")
 
-class BulkDoctrackLogByRsnRequest(BaseModel):
-    entries: List[SingleDoctrackLogByRsnRequest] = Field(..., description="List of RSN + remarks + userID")
-    
-# Response schema for single/bulk log
+    # ← IDAGDAG ITO — auto-coerce int/float → str
+    @validator("rsn", pre=True)
+    def coerce_rsn_to_str(cls, v):
+        return str(v)
 
+class BulkDoctrackLogByRsnRequest(BaseModel):
+    entries: List[SingleDoctrackLogByRsnRequest] = Field(
+        ..., description="List of RSN + remarks + userID"
+    )
+
+# Response schema
 class DocumentLogResponse(BaseModel):
     logID: int
     docrecID: int
     logdate: datetime
     remarks: str
     userID: Optional[int] = None
+
+    class Config:
+        from_attributes = True  # para sa Pydantic v2 (dating orm_mode = True)
