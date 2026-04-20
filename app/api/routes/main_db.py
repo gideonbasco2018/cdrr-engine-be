@@ -145,7 +145,7 @@ LOG_STEPS = [
         1,
     ),
     (
-        "Evaluation",
+        "Quality Evaluation",
         "Evaluator",
         "Evaluator ID",
         "Evaluator Decision",
@@ -165,7 +165,7 @@ LOG_STEPS = [
         3,
     ),
     (
-        "Supervisor Review",
+        "Supervisor",
         "Supervisor",
         "Supervisor ID",
         "Supervisor Decision",
@@ -175,7 +175,7 @@ LOG_STEPS = [
         4,
     ),
     (
-        "QA Admin Review",
+        "QA Admin",
         "QA Admin",
         "QA Admin ID",
         "QA Admin Decision",
@@ -185,7 +185,7 @@ LOG_STEPS = [
         5,
     ),
     (
-        "LRD Chief Admin Review",
+        "LRD Chief Admin",
         "LRD Chief Admin",
         "LRD Chief Admin ID",
         "LRD Chief Admin Decision",
@@ -215,7 +215,7 @@ LOG_STEPS = [
         8,
     ),
     (
-        "Releasing",
+        "Releasing Officer",
         "Releasing Officer",
         "Releasing Officer ID",
         "Releasing Officer Decision",
