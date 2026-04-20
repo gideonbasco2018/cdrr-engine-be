@@ -410,8 +410,7 @@ class BulkByRsnWithUserResponse(BaseModel):
     inserted: List[Dict[str, Any]]
     failed: List[Dict[str, Any]]
 
-
-@router.post("/log/bulk-by-rsn-with-user")  # ← TANGGALIN ang response_model
+@router.post("/log/bulk-by-rsn-with-user")
 def create_bulk_logs_by_rsn_with_user(
     payload: BulkDoctrackLogByRsnRequest,
     db: DBSessionDep,
@@ -419,12 +418,19 @@ def create_bulk_logs_by_rsn_with_user(
     if not payload.entries:
         raise HTTPException(status_code=400, detail="No entries provided.")
 
+    # ← IDAGDAG — i-append alias sa remarks bago ipasa sa CRUD
+    entries = []
+    for e in payload.entries:
+        d = e.dict()
+        if payload.alias:
+            d["remarks"] = f"{d['remarks']} Remarks By: {payload.alias}"
+        entries.append(d)
+
     result = insert_bulk_logs_by_rsns_with_user(
         db=db,
-        entries=[e.dict() for e in payload.entries],
+        entries=entries,  # ← dati [e.dict() for e in payload.entries]
     )
 
-    # I-serialize ang datetime manually
     def serialize_row(row: dict) -> dict:
         return {
             k: v.isoformat() if isinstance(v, datetime) else v

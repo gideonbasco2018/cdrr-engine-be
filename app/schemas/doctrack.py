@@ -28,6 +28,7 @@ class BulkDoctrackLogByRsnRequest(BaseModel):
     entries: List[SingleDoctrackLogByRsnRequest] = Field(
         ..., description="List of RSN + remarks + userID"
     )
+    alias: str = Field(default="", description="User alias to append to remarks")
 
 # Response schema
 class DocumentLogResponse(BaseModel):
