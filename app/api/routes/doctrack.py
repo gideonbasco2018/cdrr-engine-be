@@ -5,6 +5,7 @@ from typing import List, Dict, Any
 import pandas as pd
 import io
 
+from datetime import datetime  
 from app.core.deps import get_current_active_user
 from app.db.deps import DBSessionDep
 from app.crud.doctrack import (
@@ -409,16 +410,12 @@ class BulkByRsnWithUserResponse(BaseModel):
     inserted: List[Dict[str, Any]]
     failed: List[Dict[str, Any]]
 
-@router.post("/log/bulk-by-rsn-with-user", response_model=BulkByRsnWithUserResponse)
+
+@router.post("/log/bulk-by-rsn-with-user")  # ← TANGGALIN ang response_model
 def create_bulk_logs_by_rsn_with_user(
     payload: BulkDoctrackLogByRsnRequest,
     db: DBSessionDep,
 ):
-    """
-    Accepts { entries: [{ rsn, remarks, userID }] }.
-    Resolves each RSN → docrecID, inserts one log per entry WITH userID.
-    Used by BulkDeck modal when submitting doctrack_remarks for multiple records.
-    """
     if not payload.entries:
         raise HTTPException(status_code=400, detail="No entries provided.")
 
@@ -427,10 +424,17 @@ def create_bulk_logs_by_rsn_with_user(
         entries=[e.dict() for e in payload.entries],
     )
 
-    return BulkByRsnWithUserResponse(
-        total_submitted=len(payload.entries),
-        total_inserted=len(result["inserted"]),
-        total_failed=len(result["failed"]),
-        inserted=result["inserted"],
-        failed=result["failed"],
-    )
+    # I-serialize ang datetime manually
+    def serialize_row(row: dict) -> dict:
+        return {
+            k: v.isoformat() if isinstance(v, datetime) else v
+            for k, v in row.items()
+        }
+
+    return {
+        "total_submitted": len(payload.entries),
+        "total_inserted":  len(result["inserted"]),
+        "total_failed":    len(result["failed"]),
+        "inserted": [serialize_row(r) for r in result["inserted"]],
+        "failed":   result["failed"],
+    }
