@@ -18,8 +18,8 @@ class SingleDoctrackLogByRsnRequest(BaseModel):
     rsn: str = Field(..., description="14-digit Doctrack Number")
     remarks: str = Field(..., description="Remarks text")
     userID: int = Field(..., description="User ID creating the log")
+    alias: str = Field(default="", description="User alias to append to remarks")  # ← DAGDAG
 
-    # ← IDAGDAG ITO — auto-coerce int/float → str
     @validator("rsn", pre=True)
     def coerce_rsn_to_str(cls, v):
         return str(v)

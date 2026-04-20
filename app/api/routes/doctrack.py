@@ -377,17 +377,17 @@ async def upload_doctrack_excel(
 # NEW: POST /api/doctrack/log/by-rsn
 # Single insert — for ViewDetails modal
 # ─────────────────────────────────────────────
-
 @router.post("/log/by-rsn", response_model=DocumentLogResponse)
 def create_log_by_rsn(payload: SingleDoctrackLogByRsnRequest, db: DBSessionDep):
-    """
-    Resolves RSN → docrecID then inserts a single log with userID.
-    Used by ViewDetails modal when submitting doctrack_remarks.
-    """
+    # ← DAGDAG alias append
+    remarks = (
+        f"{payload.remarks} Remarks By: {payload.alias}"
+        if payload.alias else payload.remarks
+    )
     result = insert_log_by_rsn_with_user(
         db=db,
         rsn=payload.rsn,
-        remarks=payload.remarks,
+        remarks=remarks,  # ← ginamit na yung may alias
         userID=payload.userID,
     )
     if not result:
@@ -396,7 +396,6 @@ def create_log_by_rsn(payload: SingleDoctrackLogByRsnRequest, db: DBSessionDep):
             detail=f"RSN '{payload.rsn}' not found in docreceivingtbl or insert failed."
         )
     return result
-
 
 # ─────────────────────────────────────────────
 # NEW: POST /api/doctrack/log/bulk-by-rsn-with-user
