@@ -7,7 +7,7 @@ from typing import Optional
 from app.models.application_logs import ApplicationLogs
 from app.models.main_db import MainDB
 
-
+import math
 # ─── Status → badge mapping ───────────────────────────────────────────────────
 def _map_status(app_status: Optional[str], del_thread: Optional[str]) -> dict:
     status_raw = (app_status or "").strip().upper()
@@ -47,49 +47,58 @@ def _fmt_date(dt) -> str:
 
 
 # ─── Main CRUD function ───────────────────────────────────────────────────────
+import math
+
 def get_recent_applications(
     db: Session,
     username: str,
     limit: int = 10,
-) -> list[dict]:
-    """
-    Returns the N most recent application_logs rows for `username`,
-    joined with MainDB to pull DTN, brand name, and generic name.
-    Ordered by start_date DESC.
-    Only includes del_thread IN ('Open', 'Close').
-    """
-    rows = (
+    page: int = 1,
+    page_size: int = 10,
+) -> dict:
+    q = (
         db.query(ApplicationLogs)
+        .join(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
         .options(joinedload(ApplicationLogs.main_db))
-        .filter(
-            ApplicationLogs.user_name == username,
-            ApplicationLogs.del_thread.in_(["Open", "Close"]),
-        )
-        .order_by(desc(ApplicationLogs.start_date))
-        .limit(limit)
-        .all()
+        .filter(ApplicationLogs.user_name == username)
+        .order_by(ApplicationLogs.created_at.desc())
     )
 
-    results = []
-    for log in rows:
-        main: MainDB = log.main_db
+    total = q.count()
+    total_pages = max(1, math.ceil(total / page_size))
+    rows_orm = q.offset((page - 1) * page_size).limit(page_size).all()
 
-        # Exact column names from MainDB model
-        dtn          = str(main.DB_DTN) if main and main.DB_DTN else ""
-        brand_name   = (main.DB_PROD_BR_NAME  or "") if main else ""
-        generic_name = (main.DB_PROD_GEN_NAME or "") if main else ""
-        app_step     = log.application_step or ""
+    rows = []
+    for log in rows_orm:
+        main = log.main_db
+        status = log.application_status or ""
+        s = status.upper()
+        if s == "COMPLETED":
+            status_color, status_bg, status_label, icon = "#36a420", "#e9f7e6", "Completed", "✅"
+        elif s == "IN PROGRESS":
+            status_color, status_bg, status_label, icon = "#f59e0b", "#fff8e7", "In Progress", "⏳"
+        else:
+            status_color, status_bg, status_label, icon = "#6b7280", "#f3f4f6", status, "📄"
 
-        results.append({
-            "log_id":       log.id,
-            "main_db_id":   log.main_db_id,
-            "dtn":          dtn,
-            "brand_name":   brand_name,
-            "generic_name": generic_name,
-            "app_step":     app_step,
-            "date_display": _fmt_date(log.start_date),
-            "start_date":   log.start_date.date() if log.start_date else None,
-            **_map_status(log.application_status, log.del_thread),
+        rows.append({
+            "log_id": log.id,
+            "dtn": str(main.DB_DTN) if main and main.DB_DTN else "—",
+            "brand_name": main.DB_PROD_BR_NAME if main else None,
+            "generic_name": main.DB_PROD_GEN_NAME if main else None,
+            "lto_company": main.DB_EST_LTO_COMP if main else None,
+            "app_step": log.application_step,
+            "application_status": log.application_status,
+            "status_color": status_color,
+            "status_bg": status_bg,
+            "status_label": status_label,
+            "icon": icon,
+            "date_display": log.created_at.strftime("%b %d") if log.created_at else "—",
+            "created_at": str(log.created_at) if log.created_at else None,
         })
 
-    return results
+    return {
+        "rows": rows,
+        "total": total,
+        "total_pages": total_pages,
+        "page": page,
+    }
