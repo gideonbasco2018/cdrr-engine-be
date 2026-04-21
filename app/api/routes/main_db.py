@@ -155,6 +155,16 @@ LOG_STEPS = [
         2,
     ),
     (
+        "S&E",
+        "S&E",
+        "S&E ID",
+        "S&E Decision",
+        "S&E Remarks",
+        "Date S&E End",
+        "S&E Del Thread",
+        2,
+    ),
+    (
         "Checking",
         "Checker",
         "Checker ID",
@@ -224,16 +234,7 @@ LOG_STEPS = [
         "Releasing Officer Del Thread",
         9,
     ),
-     (
-        "S&E",
-        "S&E",
-        "S&E ID",
-        "S&E Decision",
-        "S&E Remarks",
-        "Date S&E End",
-        "S&E Del Thread",
-        9,
-    ),
+ 
 ]
 
 DATE_FIELDS = {
