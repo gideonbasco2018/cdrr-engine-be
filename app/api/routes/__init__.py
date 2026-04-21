@@ -21,6 +21,7 @@ from app.api.routes import (
     notifications,
     bulk_upload_history,
     dashboard,
+    applications,
 )
 api_router = APIRouter()
 
@@ -41,5 +42,6 @@ api_router.include_router(field_audit_log.router)
 api_router.include_router(notifications.router)
 api_router.include_router(bulk_upload_history.router)
 api_router.include_router(dashboard.router)
+api_router.include_router(applications.router)
 
 

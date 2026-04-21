@@ -1,7 +1,7 @@
 # app/schemas/recent_applications.py
 
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import date
 
 
@@ -22,11 +22,10 @@ class RecentApplicationItem(BaseModel):
     class Config:
         from_attributes = True
 
-
 class RecentApplicationsResponse(BaseModel):
-    data:     List[RecentApplicationItem]
-    count:    int
+    data: List[Any]
+    count: int
+    total: int = 0
+    total_pages: int = 1
+    page: int = 1
     username: str
-
-    class Config:
-        from_attributes = True

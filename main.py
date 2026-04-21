@@ -24,6 +24,7 @@ from app.api.routes import (
     notifications,  # ← BAGO
     bulk_upload_history,
     dashboard,
+    applications,
 )
 
 # ── Scheduler setup ───────────────────────────────────────────────────
@@ -87,6 +88,7 @@ app.include_router(field_audit_log.router)
 app.include_router(notifications.router)  
 app.include_router(bulk_upload_history.router) 
 app.include_router(dashboard.router) 
+app.include_router(applications.router) 
 
 @app.get("/")
 def root():
