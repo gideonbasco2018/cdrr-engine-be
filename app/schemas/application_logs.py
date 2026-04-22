@@ -34,6 +34,27 @@ class ApplicationLogBase(BaseModel):
     received_at: Optional[datetime] = Field(None)
     received_by: Optional[str] = Field(None, max_length=255)
 
+    # ── Re-assignment tracking fields ─────────────────────────────────
+    reassigned_by_user_id: Optional[int] = Field(None, description="ID of user who performed the re-assignment")
+    reassigned_by_user_name: Optional[str] = Field(None, max_length=255, description="Name of user who performed the re-assignment")
+    reassigned_at: Optional[datetime] = Field(None, description="Timestamp when re-assignment was performed")
+    reassigned_from_user_id: Optional[int] = Field(None, description="ID of user previously assigned")
+    reassigned_from_user_name: Optional[str] = Field(None, max_length=255, description="Name of previously assigned user")
+    reassigned_to_user_id: Optional[int] = Field(None, description="ID of newly assigned user")
+    reassigned_to_user_name: Optional[str] = Field(None, max_length=255, description="Name of newly assigned user")
+    reassignment_reason: Optional[str] = Field(None, max_length=255, description="Reason for re-assignment e.g. 'Supervisory directive'")
+    reassignment_remarks: Optional[str] = Field(None, description="Additional remarks for re-assignment")
+
+    # ── Re-route tracking fields ───────────────────────────────────────
+    rerouted_by_user_id: Optional[int] = Field(None, description="ID of user who performed the re-route")
+    rerouted_by_user_name: Optional[str] = Field(None, max_length=255, description="Name of user who performed the re-route")
+    rerouted_at: Optional[datetime] = Field(None, description="Timestamp when re-route was performed")
+    reroute_from_step: Optional[str] = Field(None, max_length=255, description="Current app step before re-route e.g. 'N/A'")
+    reroute_target_step: Optional[str] = Field(None, max_length=255, description="Target step selected from dropdown e.g. 'Checking'")
+    reroute_reason: Optional[str] = Field(None, max_length=255, description="Reason for re-route from dropdown")
+    reroute_remarks: Optional[str] = Field(None, description="Additional remarks for re-route")
+
+
 
 class ApplicationLogCreate(ApplicationLogBase):
     main_db_id: int = Field(..., description="ID of the main_db record (DB_ID)")

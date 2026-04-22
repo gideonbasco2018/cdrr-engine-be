@@ -892,14 +892,17 @@ async def upload_excel(
                     user_id_val = None
 
                 accomplished = parse_date_value(row.get(date_col))
+
                 thread_val = row.get(thread_col)
                 if not pd.isna(thread_val) and thread_val is not None and str(thread_val).strip() != "":
                     thread_str = str(thread_val).strip()
                 else:
                     thread_str = "Open"
 
-                if thread_str.upper() == "CLOSE":
-                    thread_str = "Close"
+                # ✅ Mark COMPLETED if thread is "Close" OR if a date value is present
+                has_date = accomplished is not None
+                if thread_str.upper() == "CLOSE" or has_date:
+                    thread_str = "Close" if thread_str.upper() == "CLOSE" else "Open"
                     del_last_index = 0
                     log_status = "COMPLETED"
                 else:

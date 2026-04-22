@@ -1,3 +1,4 @@
+# app/crud/application_logs.py
 """
 CRUD Operations for Application Logs
 """
@@ -142,16 +143,34 @@ def create(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
         del_thread              = log_in.del_thread,
         deadline_date           = log_in.deadline_date,
         working_days            = log_in.working_days,
-        # ── New fields ─────────────────────────────────────────────
+        # ── Existing new fields ────────────────────────────────────
         user_id                 = log_in.user_id,
         action_type             = log_in.action_type,
         decision_result         = log_in.decision_result,
         decision_authority_id   = log_in.decision_authority_id,
         decision_authority_name = log_in.decision_authority_name,
-        doctrack_remarks        = log_in.doctrack_remarks, 
+        doctrack_remarks        = log_in.doctrack_remarks,
         is_received             = log_in.is_received or 0,
         received_at             = log_in.received_at,
         received_by             = log_in.received_by,
+        # ── Re-assignment fields ───────────────────────────────────
+        reassigned_by_user_id   = log_in.reassigned_by_user_id,
+        reassigned_by_user_name = log_in.reassigned_by_user_name,
+        reassigned_at           = log_in.reassigned_at,
+        reassigned_from_user_id = log_in.reassigned_from_user_id,
+        reassigned_from_user_name = log_in.reassigned_from_user_name,
+        reassigned_to_user_id   = log_in.reassigned_to_user_id,
+        reassigned_to_user_name = log_in.reassigned_to_user_name,
+        reassignment_reason     = log_in.reassignment_reason,
+        reassignment_remarks    = log_in.reassignment_remarks,
+        # ── Re-route fields ───────────────────────────────────────
+        rerouted_by_user_id     = log_in.rerouted_by_user_id,
+        rerouted_by_user_name   = log_in.rerouted_by_user_name,
+        rerouted_at             = log_in.rerouted_at,
+        reroute_from_step       = log_in.reroute_from_step,
+        reroute_target_step     = log_in.reroute_target_step,
+        reroute_reason          = log_in.reroute_reason,
+        reroute_remarks         = log_in.reroute_remarks,
     )
 
     db.add(db_log)
@@ -399,3 +418,145 @@ def get_last_index(db: Session, main_db_id: int) -> int:
         .scalar()
     )
     return last_index or 0
+
+
+def reassign(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
+    """
+    Re-assignment flow:
+    1. UPDATE current active log → COMPLETED + re-assignment fields
+    2. CREATE new log → IN PROGRESS for new assignee
+    """
+    from sqlalchemy import and_
+
+    # ── STEP 1: Find and UPDATE the current active log ─────────────────
+    current_log = (
+        db.query(ApplicationLogs)
+        .filter(
+            and_(
+                ApplicationLogs.main_db_id == log_in.main_db_id,
+                ApplicationLogs.application_status == "IN PROGRESS",
+                ApplicationLogs.application_step == log_in.application_step,
+            )
+        )
+        .order_by(ApplicationLogs.del_index.desc())
+        .first()
+    )
+
+    if current_log:
+        current_log.application_status  = "COMPLETED"
+        current_log.del_last_index       = 0
+        current_log.del_thread           = "Close"
+        current_log.action_type          = "REASSIGNMENT"
+        current_log.accomplished_date    = log_in.reassigned_at or func.now()
+        # ── Re-assignment tracking ──
+        current_log.reassigned_by_user_id   = log_in.reassigned_by_user_id
+        current_log.reassigned_by_user_name = log_in.reassigned_by_user_name
+        current_log.reassigned_at           = log_in.reassigned_at
+        current_log.reassigned_from_user_id   = current_log.user_id   
+        current_log.reassigned_from_user_name = current_log.user_name  
+        current_log.reassigned_to_user_id   = log_in.reassigned_to_user_id
+        current_log.reassigned_to_user_name = log_in.reassigned_to_user_name
+        current_log.reassignment_reason     = log_in.reassignment_reason
+        current_log.reassignment_remarks    = log_in.reassignment_remarks
+        db.commit()
+        db.refresh(current_log)
+
+    # ── STEP 2: Get next del_index ──────────────────────────────────────
+    last_index = get_last_index(db, log_in.main_db_id)
+    next_index = last_index + 1
+
+    # ── STEP 3: CREATE new log for new assignee ─────────────────────────
+    new_log = ApplicationLogs(
+        main_db_id           = log_in.main_db_id,
+        application_step     = log_in.application_step,
+        application_status   = "IN PROGRESS",
+        application_decision = log_in.application_decision,
+        application_remarks  = log_in.application_remarks,
+        del_index            = next_index,
+        del_previous         = last_index,
+        del_last_index       = 1,
+        del_thread           = "Open",
+        start_date           = log_in.reassigned_at or func.now(),
+        # ── New assignee ──
+        user_name            = log_in.reassigned_to_user_name,
+        user_id              = log_in.reassigned_to_user_id,
+    )
+
+    db.add(new_log)
+    db.commit()
+    db.refresh(new_log)
+
+    dtn = _get_dtn(db, new_log.main_db_id)
+    _notify_assigned_user(db, new_log, dtn)
+
+    return new_log
+
+
+def reroute(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
+    """
+    Re-route flow:
+    1. UPDATE current active log → COMPLETED + re-route fields
+    2. CREATE new log → IN PROGRESS for target step
+    """
+    from sqlalchemy import and_
+
+    # ── STEP 1: Find and UPDATE the current active log ─────────────────
+    current_log = (
+        db.query(ApplicationLogs)
+        .filter(
+            and_(
+                ApplicationLogs.main_db_id == log_in.main_db_id,
+                ApplicationLogs.application_status == "IN PROGRESS",
+                ApplicationLogs.application_step == log_in.reroute_from_step,
+            )
+        )
+        .order_by(ApplicationLogs.del_index.desc())
+        .first()
+    )
+
+    if current_log:
+        current_log.application_status  = "COMPLETED"
+        current_log.del_last_index       = 0
+        current_log.del_thread           = "Close"
+        current_log.action_type          = "REROUTE"
+        current_log.accomplished_date    = log_in.rerouted_at or func.now()
+        # ── Re-route tracking ──
+        current_log.rerouted_by_user_id   = log_in.rerouted_by_user_id
+        current_log.rerouted_by_user_name = log_in.rerouted_by_user_name
+        current_log.rerouted_at           = log_in.rerouted_at
+        current_log.reroute_from_step     = log_in.reroute_from_step
+        current_log.reroute_target_step   = log_in.reroute_target_step
+        current_log.reroute_reason        = log_in.reroute_reason
+        current_log.reroute_remarks       = log_in.reroute_remarks
+        db.commit()
+        db.refresh(current_log)
+
+    # ── STEP 2: Get next del_index ──────────────────────────────────────
+    last_index = get_last_index(db, log_in.main_db_id)
+    next_index = last_index + 1
+
+    # ── STEP 3: CREATE new log for target step ──────────────────────────
+    new_log = ApplicationLogs(
+        main_db_id           = log_in.main_db_id,
+        application_step     = log_in.reroute_target_step,
+        application_status   = "IN PROGRESS",
+        application_decision = log_in.application_decision,
+        application_remarks  = log_in.application_remarks,
+        del_index            = next_index,
+        del_previous         = last_index,
+        del_last_index       = 1,
+        del_thread           = "Open",
+        start_date           = log_in.rerouted_at or func.now(),
+        # ── Assigned user sa target step ──
+        user_name            = log_in.user_name,
+        user_id              = log_in.user_id,
+    )
+
+    db.add(new_log)
+    db.commit()
+    db.refresh(new_log)
+
+    dtn = _get_dtn(db, new_log.main_db_id)
+    _notify_assigned_user(db, new_log, dtn)
+
+    return new_log
