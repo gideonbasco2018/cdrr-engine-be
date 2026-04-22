@@ -1,3 +1,4 @@
+# app/api/routes/application_logs.py
 """
 Application Logs Routes
 Track workflow steps and decisions for applications
@@ -325,3 +326,42 @@ def get_logs_by_dtn(
     )
 
     return logs
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Re-assignment endpoint
+#  POST /api/application-logs/re-assign
+# ══════════════════════════════════════════════════════════════════════
+@router.post("/re-assign", response_model=ApplicationLogResponse, status_code=status.HTTP_201_CREATED)
+def reassign_application(
+    log_in: ApplicationLogCreate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        log = crud_logs.reassign(db, log_in=log_in)
+        return log
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to process re-assignment: {str(e)}"
+        )
+
+# ══════════════════════════════════════════════════════════════════════
+#  Re-route endpoint
+#  POST /api/application-logs/re-route
+# ══════════════════════════════════════════════════════════════════════
+@router.post("/re-route", response_model=ApplicationLogResponse, status_code=status.HTTP_201_CREATED)
+def reroute_application(
+    log_in: ApplicationLogCreate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        log = crud_logs.reroute(db, log_in=log_in)
+        return log
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to process re-route: {str(e)}"
+        )

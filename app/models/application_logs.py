@@ -64,6 +64,26 @@ class ApplicationLogs(Base):
     del_last_index = Column(Integer, nullable=True)
     del_thread = Column(String(60), nullable=True, index=True)
 
+    # ── Re-assignment tracking fields ─────────────────────────────────
+    reassigned_by_user_id = Column(Integer, nullable=True)
+    reassigned_by_user_name = Column(String(255), nullable=True)
+    reassigned_at = Column(DateTime, nullable=True)
+    reassigned_from_user_id = Column(Integer, nullable=True)
+    reassigned_from_user_name = Column(String(255), nullable=True)
+    reassigned_to_user_id = Column(Integer, nullable=True)
+    reassigned_to_user_name = Column(String(255), nullable=True)
+    reassignment_reason = Column(String(255), nullable=True)
+    reassignment_remarks = Column(Text, nullable=True)
+
+    # ── Re-route tracking fields ───────────────────────────────────────
+    rerouted_by_user_id = Column(Integer, nullable=True)
+    rerouted_by_user_name = Column(String(255), nullable=True)
+    rerouted_at = Column(DateTime, nullable=True)
+    reroute_from_step = Column(String(255), nullable=True)
+    reroute_target_step = Column(String(255), nullable=True)
+    reroute_reason = Column(String(255), nullable=True)
+    reroute_remarks = Column(Text, nullable=True)
+
     def __repr__(self):
         return (
             f"<ApplicationLogs(id={self.id}, "
