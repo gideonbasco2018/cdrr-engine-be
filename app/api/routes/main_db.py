@@ -945,17 +945,23 @@ async def upload_excel(
             import traceback
             traceback.print_exc()
             errors.append({
-                "row": index + 2,
-                "error": str(e),
-                "data": {k: str(v)[:50] for k, v in row.to_dict().items() if pd.notna(v)}
+                "row_number": index + 2,
+                "dtn": str(row.get("DTN", "-")) if pd.notna(row.get("DTN", "")) else "-",
+                "brand_name": str(row.get("Brand Name", "-")) if pd.notna(row.get("Brand Name", "")) else "-",
+                "reason": str(e),
             })
 
     print(f"✅ Upload complete: {success} success, {len(errors)} errors")
     return {
         "success": True,
         "message": f"Upload complete: {success} records inserted successfully",
-        "stats": {"total": len(df), "success": success, "errors": len(errors)},
-        "errors": errors[:10]
+        "stats": {
+            "total_processed": len(df),
+            "success": success,
+            "errors": len(errors),
+            "duplicates_skipped": 0,
+        },
+        "failed_records": errors
     }
 
 
