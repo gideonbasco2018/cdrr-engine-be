@@ -77,28 +77,26 @@ def get_main_db_records(
     repacker_country    = filters.get("repacker_country")
 
     if status == "decked":
-        decked_ids = db.query(ApplicationLogs.main_db_id).filter(
-            ApplicationLogs.application_step == "Decking"
+        closed_decking_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking",
+            ApplicationLogs.del_thread == "Close"
         ).subquery()
         query = query.filter(
             or_(
-                MainDB.DB_ID.in_(decked_ids),
-                MainDB.DB_APP_STATUS == "Completed"
+                MainDB.DB_APP_STATUS == "Completed",
+                MainDB.DB_ID.in_(closed_decking_ids)
             )
         )
         print("✅ Applied decked filter (Decking log OR Completed status)")
 
     elif status == "not_decked":
-        decked_ids = db.query(ApplicationLogs.main_db_id).filter(
-            ApplicationLogs.application_step == "Decking"
+        closed_decking_ids = db.query(ApplicationLogs.main_db_id).filter(
+            ApplicationLogs.application_step == "Decking",
+            ApplicationLogs.del_thread == "Close"
         ).subquery()
         query = query.filter(
-            MainDB.DB_ID.notin_(decked_ids),
-            or_(
-                MainDB.DB_APP_STATUS.is_(None),
-                MainDB.DB_APP_STATUS == "",
-                MainDB.DB_APP_STATUS != "Completed"
-            )
+            MainDB.DB_APP_STATUS != "Completed",
+            MainDB.DB_ID.notin_(closed_decking_ids)
         )
         print("✅ Applied not_decked filter (no Decking log AND not Completed)")
 
