@@ -69,7 +69,9 @@ def get_all_records(
     date_to: Optional[date] = Query(None),
     sort_col: str = Query("date"),
     sort_dir: str = Query("desc", regex="^(asc|desc)$"),
-    application_status: Optional[str] = Query(None, description="COMPLETED | IN PROGRESS"),  # ← NEW
+    application_status: Optional[str] = Query(None, description="COMPLETED | IN PROGRESS"),
+    dtn: Optional[str] = Query(None, description="Partial DTN search"),          # ← NEW
+    app_step: Optional[str] = Query(None, description="e.g. Decking, Checking"), # ← NEW
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
@@ -82,7 +84,9 @@ def get_all_records(
         date_to=date_to,
         sort_col=sort_col,
         sort_dir=sort_dir,
-        application_status=application_status,  # ← NEW
+        application_status=application_status,
+        dtn=dtn,        # ← NEW
+        app_step=app_step,  # ← NEW
     )
     return AllRecordsResponse(**result)
 
