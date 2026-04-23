@@ -25,16 +25,19 @@ router = APIRouter(
     response_model=UsersTasksResponse,
     summary="All users with their current task count breakdown",
 )
+@router.get("/users-tasks", response_model=UsersTasksResponse)
 def get_users_tasks(
+    group_id: Optional[int] = Query(None, description="Filter by group ID"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    
     """
     Returns all active users joined with their task counts from
     application_logs. Matches via username OR alias.
     Returns approved / disapproved / on_process / total per user.
     """
-    rows = crud_monitoring.get_users_task_summary(db)
+    rows = crud_monitoring.get_users_task_summary(db, group_id=group_id)
 
     data = [
         UserTaskSummary(

@@ -6,32 +6,19 @@ from datetime import datetime, date
 from app.models.main_db import MainDB
 from app.models.application_logs import ApplicationLogs
 from app.models.user import User
-
+from app.models.user_groups import UserGroup
 
 # ── Tasks per User ────────────────────────────────────────────────────────────
-def get_users_task_summary(db: Session) -> list:
-    """
-    Join Users table with application_logs via user_id (direct FK).
-    Count ALL log entries grouped by application_status (COMPLETED / IN PROGRESS).
-    Each log entry (step) is counted individually — not just the latest per application.
-    """
-
-    # Count all log entries per user_id (no latest-only filtering)
+def get_users_task_summary(db: Session, group_id: Optional[int] = None) -> list:
     task_counts = (
         db.query(
             ApplicationLogs.user_id,
             func.count().label("total"),
             func.sum(
-                case(
-                    (func.upper(ApplicationLogs.application_status) == "COMPLETED", 1),
-                    else_=0,
-                )
+                case((func.upper(ApplicationLogs.application_status) == "COMPLETED", 1), else_=0)
             ).label("completed"),
             func.sum(
-                case(
-                    (func.upper(ApplicationLogs.application_status) == "IN PROGRESS", 1),
-                    else_=0,
-                )
+                case((func.upper(ApplicationLogs.application_status) == "IN PROGRESS", 1), else_=0)
             ).label("in_progress"),
         )
         .filter(ApplicationLogs.user_id.isnot(None))
@@ -39,8 +26,7 @@ def get_users_task_summary(db: Session) -> list:
         .subquery()
     )
 
-    # Join with Users table via user_id (direct FK)
-    rows = (
+    query = (
         db.query(
             User,
             func.coalesce(task_counts.c.total, 0).label("total"),
@@ -49,11 +35,15 @@ def get_users_task_summary(db: Session) -> list:
         )
         .outerjoin(task_counts, task_counts.c.user_id == User.id)
         .filter(User.is_active == True)
-        .order_by(func.coalesce(task_counts.c.total, 0).desc())
-        .all()
     )
 
-    return rows
+    # ── group filter ──────────────────────────────────────────────
+    if group_id:
+        query = query.join(UserGroup, UserGroup.user_id == User.id)\
+                     .filter(UserGroup.group_id == group_id)
+
+    query = query.order_by(func.coalesce(task_counts.c.total, 0).desc())
+    return query.all()
 
 
 # ── All Records ───────────────────────────────────────────────────────────────
