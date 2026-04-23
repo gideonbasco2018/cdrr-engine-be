@@ -625,3 +625,163 @@ def export_all_drugs(
         
     finally:
         engine.dispose()
+
+def bulk_create_drugs_from_dtns(
+    dtn_list: List[int],
+    uploaded_by: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Bulk insert FDA drug registrations sourced from main_db DTN records.
+    Called during End Task flow — fetches each DTN from main_db (local DB),
+    then inserts into fda_drug_registrations (FDA eServices DB).
+
+    Args:
+        dtn_list: List of DB_DTN values to process
+        uploaded_by: Username of the user who triggered End Task
+
+    Returns:
+        {successful: int, failed: int, skipped: int, errors: List}
+    """
+    from app.db.session import SessionLocal  # local main_db session
+
+    local_db = SessionLocal()
+    fda_engine = get_fda_db_engine()
+
+    successful = 0
+    failed = 0
+    skipped = 0
+    errors = []
+
+    try:
+        # ── 1. Fetch all DTN records from main_db (local DB) ──────────────
+        from app.models.main_db import MainDB
+
+        dtn_records = (
+            local_db.query(MainDB)
+            .filter(MainDB.DB_DTN.in_(dtn_list))
+            .all()
+        )
+
+        # Map fetched records by DTN for quick lookup
+        fetched_dtns = {str(r.DB_DTN): r for r in dtn_records}
+
+        # Report any DTNs not found in main_db
+        for dtn in dtn_list:
+            if str(dtn) not in fetched_dtns:
+                skipped += 1
+                errors.append({
+                    "dtn": dtn,
+                    "registration_number": None,
+                    "error": "DTN not found in main_db"
+                })
+
+        # ── 2. Insert each record into fda_drug_registrations ─────────────
+        with fda_engine.connect() as connection:
+            for dtn_key, record in fetched_dtns.items():
+
+                # Skip if no registration number — nothing meaningful to insert
+                if not record.DB_REG_NO or not str(record.DB_REG_NO).strip():
+                    skipped += 1
+                    errors.append({
+                        "dtn": record.DB_DTN,
+                        "registration_number": None,
+                        "error": "No registration number on DTN record"
+                    })
+                    continue
+
+                # ── Parse issuance_date ────────────────────────────────────
+                issuance_date = None
+                if record.DB_DATE_ISSUED:
+                    raw_issued = str(record.DB_DATE_ISSUED).strip()
+                    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d-%m-%Y", "%Y/%m/%d"):
+                        try:
+                            from datetime import datetime as dt
+                            issuance_date = dt.strptime(raw_issued, fmt).date()
+                            break
+                        except ValueError:
+                            continue
+
+                # ── Parse expiry_date (CPR Validity) ──────────────────────
+                expiry_date = None
+                if record.DB_CPR_VALIDITY:
+                    raw_expiry = str(record.DB_CPR_VALIDITY).strip()
+                    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d-%m-%Y", "%Y/%m/%d"):
+                        try:
+                            from datetime import datetime as dt
+                            expiry_date = dt.strptime(raw_expiry, fmt).date()
+                            break
+                        except ValueError:
+                            continue
+
+                # ── Map fields ────────────────────────────────────────────
+                drug_data = {
+                    "reference_number":      str(record.DB_DTN) if record.DB_DTN else None,
+                    "registration_number":   str(record.DB_REG_NO).strip(),
+                    "generic_name":          str(record.DB_PROD_GEN_NAME).strip() if record.DB_PROD_GEN_NAME else None,
+                    "brand_name":            str(record.DB_PROD_BR_NAME).strip() if record.DB_PROD_BR_NAME else None,
+                    "dosage_strength":       str(record.DB_PROD_DOS_STR).strip() if record.DB_PROD_DOS_STR else None,
+                    "dosage_form":           str(record.DB_PROD_DOS_FORM).strip() if record.DB_PROD_DOS_FORM else None,
+                    "classification":        str(record.DB_CLASS).strip() if record.DB_CLASS else None,
+                    "packaging":             str(record.DB_PACKAGING).strip() if record.DB_PACKAGING else None,
+                    "pharmacologic_category":str(record.DB_PROD_PHARMA_CAT).strip() if record.DB_PROD_PHARMA_CAT else None,
+                    "manufacturer":          str(record.DB_PROD_MANU).strip() if record.DB_PROD_MANU else None,
+                    "country_of_origin":     str(record.DB_PROD_MANU_COUNTRY).strip() if record.DB_PROD_MANU_COUNTRY else None,
+                    "trader":                str(record.DB_PROD_TRADER).strip() if record.DB_PROD_TRADER else None,
+                    "importer":              str(record.DB_PROD_IMPORTER).strip() if record.DB_PROD_IMPORTER else None,
+                    "distributor":           str(record.DB_PROD_DISTRI).strip() if record.DB_PROD_DISTRI else None,
+                    "app_type":              str(record.DB_APP_TYPE).strip() if record.DB_APP_TYPE else None,
+                    "issuance_date":         issuance_date,
+                    "expiry_date":           expiry_date,
+                    "uploaded_by":           uploaded_by or record.DB_USER_UPLOADER,
+                }
+
+                try:
+                    insert_query = text("""
+                        INSERT INTO fda_drug_registrations (
+                            reference_number, registration_number, generic_name, brand_name,
+                            dosage_strength, dosage_form, classification, packaging,
+                            pharmacologic_category, manufacturer, country_of_origin,
+                            trader, importer, distributor, app_type,
+                            issuance_date, expiry_date, uploaded_by, date_uploaded
+                        ) VALUES (
+                            :reference_number, :registration_number, :generic_name, :brand_name,
+                            :dosage_strength, :dosage_form, :classification, :packaging,
+                            :pharmacologic_category, :manufacturer, :country_of_origin,
+                            :trader, :importer, :distributor, :app_type,
+                            :issuance_date, :expiry_date, :uploaded_by, NOW()
+                        )
+                    """)
+
+                    connection.execute(insert_query, drug_data)
+                    connection.commit()
+                    successful += 1
+
+                except IntegrityError as e:
+                    connection.rollback()
+                    failed += 1
+                    error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
+                    errors.append({
+                        "dtn": record.DB_DTN,
+                        "registration_number": drug_data["registration_number"],
+                        "error": "Duplicate registration number" if "Duplicate entry" in error_msg else error_msg
+                    })
+
+                except Exception as e:
+                    connection.rollback()
+                    failed += 1
+                    errors.append({
+                        "dtn": record.DB_DTN,
+                        "registration_number": drug_data.get("registration_number"),
+                        "error": str(e)
+                    })
+
+        return {
+            "successful": successful,
+            "failed": failed,
+            "skipped": skipped,
+            "errors": errors[:10]  # cap to first 10 errors same as existing pattern
+        }
+
+    finally:
+        local_db.close()
+        fda_engine.dispose()
