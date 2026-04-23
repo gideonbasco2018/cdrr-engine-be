@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, case, and_
+from sqlalchemy import func, case, and_, or_
 from typing import Optional
 from datetime import datetime, date
 
@@ -8,20 +8,50 @@ from app.models.application_logs import ApplicationLogs
 from app.models.user import User
 from app.models.user_groups import UserGroup
 
+# Excluded action types across both queries
+EXCLUDED_ACTION_TYPES = ("REROUTE", "REASSIGNMENT")
+
+def _exclude_action_types(query):
+    """Helper: exclude REROUTE & REASSIGNMENT but keep NULL action_types."""
+    return query.filter(
+        or_(
+            ApplicationLogs.action_type.is_(None),
+            func.upper(ApplicationLogs.action_type).notin_(EXCLUDED_ACTION_TYPES),
+        )
+    )
+
+
 # ── Tasks per User ────────────────────────────────────────────────────────────
 def get_users_task_summary(db: Session, group_id: Optional[int] = None) -> list:
     task_counts = (
-        db.query(
-            ApplicationLogs.user_id,
-            func.count().label("total"),
-            func.sum(
-                case((func.upper(ApplicationLogs.application_status) == "COMPLETED", 1), else_=0)
-            ).label("completed"),
-            func.sum(
-                case((func.upper(ApplicationLogs.application_status) == "IN PROGRESS", 1), else_=0)
-            ).label("in_progress"),
+        _exclude_action_types(
+            db.query(
+                ApplicationLogs.user_id,
+                func.count().label("total"),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                func.upper(ApplicationLogs.application_status) == "COMPLETED",
+                                or_(
+                                    ApplicationLogs.action_type.is_(None),
+                                    func.upper(ApplicationLogs.action_type).notin_(EXCLUDED_ACTION_TYPES),
+                                ),
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("completed"),
+                func.sum(
+                    case(
+                        (func.upper(ApplicationLogs.application_status) == "IN PROGRESS", 1),
+                        else_=0,
+                    )
+                ).label("in_progress"),
+            )
+            .filter(ApplicationLogs.user_id.isnot(None))
         )
-        .filter(ApplicationLogs.user_id.isnot(None))
         .group_by(ApplicationLogs.user_id)
         .subquery()
     )
@@ -37,7 +67,6 @@ def get_users_task_summary(db: Session, group_id: Optional[int] = None) -> list:
         .filter(User.is_active == True)
     )
 
-    # ── group filter ──────────────────────────────────────────────
     if group_id:
         query = query.join(UserGroup, UserGroup.user_id == User.id)\
                      .filter(UserGroup.group_id == group_id)
@@ -56,51 +85,51 @@ def get_all_records(
     date_to: Optional[date] = None,
     sort_col: str = "date",
     sort_dir: str = "desc",
-    application_status: Optional[str] = None,  # ← NEW: e.g. "COMPLETED", "IN PROGRESS"
+    application_status: Optional[str] = None,
+    dtn: Optional[str] = None,           # ← NEW
+    app_step: Optional[str] = None,      # ← NEW
 ) -> dict:
-    """
-    Fetch paginated records from application_logs joined to main_db.
-    Returns ALL log entries (not just latest per application).
-    Optionally filter by user_id, date range, and application_status.
-    """
 
-    query = (
+    query = _exclude_action_types(
         db.query(ApplicationLogs, MainDB)
-        .join(MainDB, MainDB.DB_ID == ApplicationLogs.main_db_id)  # ← no latest_log_sub
+        .join(MainDB, MainDB.DB_ID == ApplicationLogs.main_db_id)
     )
 
-    # Filter by user
     if user_id:
         query = query.filter(ApplicationLogs.user_id == user_id)
 
-    # Filter by application_status
     if application_status:
         query = query.filter(
             func.upper(ApplicationLogs.application_status) == application_status.upper()
         )
 
-    # Date filters
+    # ── NEW filters ──────────────────────────────────────────────
+    if dtn:
+        query = query.filter(MainDB.DB_DTN.like(f"%{dtn}%"))
+
+    if app_step:
+        query = query.filter(
+            func.upper(ApplicationLogs.application_step) == app_step.upper()
+        )
+    # ─────────────────────────────────────────────────────────────
+
     if date_from:
         query = query.filter(
-            func.date(
-                func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")
-            ) >= date_from
+            func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) >= date_from
         )
 
     if date_to:
         query = query.filter(
-            func.date(
-                func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")
-            ) <= date_to
+            func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) <= date_to
         )
 
-    # Sorting
     sort_map = {
         "date": func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"),
         "dtn": MainDB.DB_DTN,
         "user": ApplicationLogs.user_name,
         "drug": MainDB.DB_PROD_BR_NAME,
         "timeline": ApplicationLogs.application_status,
+        "step": ApplicationLogs.application_step,   # ← NEW
     }
     sort_column = sort_map.get(sort_col, sort_map["date"])
     query = query.order_by(
