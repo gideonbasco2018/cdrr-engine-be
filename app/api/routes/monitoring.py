@@ -13,6 +13,7 @@ from app.schemas.monitoring import (
     TaskStatusBreakdown,
 )
 from app.crud import monitoring as crud_monitoring
+from app.models.group import Group
 
 router = APIRouter(
     prefix="/api/monitoring",
@@ -45,6 +46,7 @@ def get_users_tasks(
             username=user.username,
             full_name=f"{user.first_name} {user.surname}".strip(),
             position=user.position,
+            group_name=user.groups[0].name if user.groups else None,  # ← ADD
             role=user.role.value,
             is_active=user.is_active,
             tasks=TaskStatusBreakdown(
@@ -53,7 +55,7 @@ def get_users_tasks(
                 total=int(total),
             ),
         )
-        for user, total, completed, in_progress in rows   # ← updated unpacking
+        for user, total, completed, in_progress in rows
     ]
 
     return UsersTasksResponse(total_users=len(data), data=data)
@@ -83,3 +85,11 @@ def get_all_records(
         application_status=application_status,  # ← NEW
     )
     return AllRecordsResponse(**result)
+
+@router.get("/groups", summary="List all groups for filtering")
+def get_groups(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    groups = db.query(Group).order_by(Group.name).all()
+    return [{"id": g.id, "name": g.name} for g in groups]
