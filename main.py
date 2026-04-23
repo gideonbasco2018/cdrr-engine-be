@@ -25,6 +25,7 @@ from app.api.routes import (
     bulk_upload_history,
     dashboard,
     applications,
+    monitoring,
 )
 
 # ── Scheduler setup ───────────────────────────────────────────────────
@@ -89,6 +90,7 @@ app.include_router(notifications.router)
 app.include_router(bulk_upload_history.router) 
 app.include_router(dashboard.router) 
 app.include_router(applications.router) 
+app.include_router(monitoring.router) 
 
 @app.get("/")
 def root():

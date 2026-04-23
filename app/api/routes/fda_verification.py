@@ -541,3 +541,57 @@ async def restore_drug(drug_id: int):
             status_code=500,
             detail=f"Failed to restore drug: {str(e)}"
         )
+    
+from pydantic import BaseModel
+
+class BulkFromDTNsRequest(BaseModel):
+    dtn_list: List[int]
+    uploaded_by: Optional[str] = None
+
+
+# ==================== BULK INSERT FROM DTNs (END TASK FLOW) ====================
+@router.post("/drugs/from-dtns")
+async def bulk_create_from_dtns(payload: BulkFromDTNsRequest):
+    """
+    Bulk insert FDA drug registrations from existing main_db DTN records.
+    Triggered during End Task — no Excel upload needed.
+    Data is sourced directly from main_db and inserted into fda_drug_registrations.
+
+    Body:
+        dtn_list   : list of DB_DTN values (e.g. [20210915110410, 20210915110411])
+        uploaded_by: username of the user who confirmed End Task
+    """
+    if not payload.dtn_list:
+        raise HTTPException(
+            status_code=400,
+            detail="dtn_list must not be empty"
+        )
+
+    try:
+        result = crud.bulk_create_drugs_from_dtns(
+            dtn_list=payload.dtn_list,
+            uploaded_by=payload.uploaded_by
+        )
+
+        total = len(payload.dtn_list)
+        has_failures = result["failed"] > 0 or result["skipped"] > 0
+
+        return {
+            "status": "success" if not has_failures else "partial_success",
+            "message": (
+                f"Completed. {result['successful']} inserted, "
+                f"{result['failed']} failed, "
+                f"{result['skipped']} skipped."
+            ),
+            "total_dtns":  total,
+            "successful":  result["successful"],
+            "failed":      result["failed"],
+            "skipped":     result["skipped"],
+            "errors":      result["errors"]
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process DTN records: {str(e)}"
+        )
