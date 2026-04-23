@@ -13,6 +13,7 @@ class UserTaskSummary(BaseModel):
     username: str
     full_name: str
     position: Optional[str] = None
+    group_name: Optional[str] = None
     role: str
     is_active: bool
     tasks: TaskStatusBreakdown
