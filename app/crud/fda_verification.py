@@ -691,8 +691,8 @@ def bulk_create_drugs_from_dtns(
 
                 # ── Parse issuance_date ────────────────────────────────────
                 issuance_date = None
-                if record.DB_DATE_ISSUED:
-                    raw_issued = str(record.DB_DATE_ISSUED).strip()
+                if record.DB_SECPA_ISSUED_ON:  
+                    raw_issued = str(record.DB_SECPA_ISSUED_ON).strip()
                     for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d-%m-%Y", "%Y/%m/%d"):
                         try:
                             from datetime import datetime as dt
@@ -701,10 +701,10 @@ def bulk_create_drugs_from_dtns(
                         except ValueError:
                             continue
 
-                # ── Parse expiry_date (CPR Validity) ──────────────────────
+                # ── Parse expiry_date ─────────────────────────────────────
                 expiry_date = None
-                if record.DB_CPR_VALIDITY:
-                    raw_expiry = str(record.DB_CPR_VALIDITY).strip()
+                if record.DB_SECPA_EXP_DATE: 
+                    raw_expiry = str(record.DB_SECPA_EXP_DATE).strip()
                     for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d-%m-%Y", "%Y/%m/%d"):
                         try:
                             from datetime import datetime as dt
@@ -712,6 +712,7 @@ def bulk_create_drugs_from_dtns(
                             break
                         except ValueError:
                             continue
+
 
                 # ── Map fields ────────────────────────────────────────────
                 drug_data = {
@@ -721,7 +722,7 @@ def bulk_create_drugs_from_dtns(
                     "brand_name":            str(record.DB_PROD_BR_NAME).strip() if record.DB_PROD_BR_NAME else None,
                     "dosage_strength":       str(record.DB_PROD_DOS_STR).strip() if record.DB_PROD_DOS_STR else None,
                     "dosage_form":           str(record.DB_PROD_DOS_FORM).strip() if record.DB_PROD_DOS_FORM else None,
-                    "classification":        str(record.DB_CLASS).strip() if record.DB_CLASS else None,
+                    "classification":        str(record.DB_PROD_CLASS_PRESCRIP).strip() if record.DB_PROD_CLASS_PRESCRIP else None,
                     "packaging":             str(record.DB_PACKAGING).strip() if record.DB_PACKAGING else None,
                     "pharmacologic_category":str(record.DB_PROD_PHARMA_CAT).strip() if record.DB_PROD_PHARMA_CAT else None,
                     "manufacturer":          str(record.DB_PROD_MANU).strip() if record.DB_PROD_MANU else None,
