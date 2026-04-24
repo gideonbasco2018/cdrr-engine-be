@@ -3,7 +3,7 @@
 from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
 from typing import Optional, List
 from datetime import datetime
-
+from datetime import date
 
 # -----------------------------
 # ApplicationLogs schema
@@ -203,6 +203,10 @@ class MainDBBase(BaseModel):
     DB_IS_IN_PM: Optional[int] = None
     DB_TIMELINE_CITIZEN_CHARTER: Optional[int] = None
     DB_PROCESSING_TYPE: Optional[str] = None
+
+    DB_DECISION_RESULT: Optional[str] = None
+    DB_DECISION_AUTHORITY: Optional[str] = None
+    DB_DECISION_SIGNED_DATE: Optional[date] = None
 
     # ✅ FIX: Convert empty string to None for all Optional[int] fields
     @field_validator('DB_DTN', 'DB_IS_IN_PM', 'DB_TIMELINE_CITIZEN_CHARTER', mode='before')
