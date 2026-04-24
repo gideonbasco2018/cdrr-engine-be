@@ -35,7 +35,7 @@ router = APIRouter(
 @router.get("/", response_model=LogWithMainDBListResponse)
 def list_logs_with_main_db(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=200),
+    page_size: int = Query(20, ge=1, le=10000),
     del_thread: Optional[str] = Query(None),
     del_last_index: Optional[int] = Query(None),
     only_latest_per_thread: bool = Query(False),
