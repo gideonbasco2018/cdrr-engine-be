@@ -325,6 +325,15 @@ def update_main_db_record(
             update_data['DB_TRASH_DATE_ENCODED'] = datetime.strptime(update_data['DB_TRASH_DATE_ENCODED'], "%Y-%m-%d %H:%M:%S")
         except ValueError:
             pass
+    
+        # dagdag sa update_main_db_record, kasama ng ibang date parsers:
+    if update_data.get('DB_DECISION_SIGNED_DATE') and isinstance(update_data['DB_DECISION_SIGNED_DATE'], str):
+        try:
+            update_data['DB_DECISION_SIGNED_DATE'] = datetime.strptime(
+                update_data['DB_DECISION_SIGNED_DATE'], "%Y-%m-%d"
+            ).date()
+        except ValueError:
+            pass
 
     for field, value in update_data.items():
         setattr(db_record, field, value)

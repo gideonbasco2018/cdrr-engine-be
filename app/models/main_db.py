@@ -152,6 +152,11 @@ class MainDB(Base):
 
     DB_TIMELINE_CITIZEN_CHARTER = Column(Integer, nullable=True, comment="Timeline for Citizen Charter")
     DB_PROCESSING_TYPE = Column(Text, nullable=True, comment="Processing Type")
+
+    DB_DECISION_AUTHORITY = Column(String(255), nullable=True, comment="Decision Authority Name")
+    DB_DECISION_RESULT = Column(String(255), nullable=True, comment="Decision Result")
+    DB_DECISION_SIGNED_DATE = Column(Date, nullable=True, comment="Decision Authority Signed Date")
+
     
     def __repr__(self):
         return f"<MainDB(id={self.DB_ID}, dtn={self.DB_DTN}, est_cat={self.DB_EST_CAT})>"
