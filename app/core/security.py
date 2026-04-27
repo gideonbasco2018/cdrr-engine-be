@@ -1,3 +1,4 @@
+# app/core/security.py
 """
 Security utilities
 Password hashing and JWT token management
@@ -11,6 +12,7 @@ from passlib.context import CryptContext
 SECRET_KEY = "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7"  # Change this in production!
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
+REFRESH_THRESHOLD_MINUTES = 15
 
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -81,3 +83,29 @@ def decode_access_token(token: str) -> Optional[dict]:  # CHANGED: Return dict i
         return payload  # CHANGED: Return full payload
     except JWTError:
         return None
+    
+
+# Idagdag ito sa dulo ng security.py
+
+
+
+def refresh_token_if_needed(token: str) -> Optional[str]:
+    """
+    Returns a new token if it's close to expiring, otherwise None
+    """
+    payload = decode_access_token(token)
+    if not payload:
+        return None
+    
+    exp = payload.get("exp")
+    if not exp:
+        return None
+    
+    time_remaining = datetime.utcfromtimestamp(exp) - datetime.utcnow()
+    
+    if time_remaining < timedelta(minutes=REFRESH_THRESHOLD_MINUTES):
+        # Alisin ang exp para ma-regenerate
+        new_data = {k: v for k, v in payload.items() if k != "exp"}
+        return create_access_token(new_data)
+    
+    return None

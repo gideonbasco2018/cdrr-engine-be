@@ -1,10 +1,12 @@
+# cdrr-engine/cdrr-engine-be/main.py
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request  
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from app.core.config import settings
-from app.core.deadline_checker import run_deadline_notifications  # ← BAGO
+from app.core.deadline_checker import run_deadline_notifications
+from app.core.security import refresh_token_if_needed
 from app.api.routes import (
     auth, 
     main_db, 
@@ -67,8 +69,24 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
+    expose_headers=["X-New-Token"], 
 )
+
+# ── Token Auto-Refresh Middleware ─────────────────────────────────────  ← BAGO
+@app.middleware("http")
+async def auto_refresh_token(request: Request, call_next):
+    response = await call_next(request)
+    
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else None
+    
+    if token:
+        new_token = refresh_token_if_needed(token)
+        if new_token:
+            response.headers["X-New-Token"] = new_token
+    
+    return response
+
 
 # ── Routers ───────────────────────────────────────────────────────────
 app.include_router(auth.router)
