@@ -5,8 +5,7 @@ CRUD Operations for Application Logs
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Optional, List
-from datetime import datetime
-
+from datetime import datetime, timezone, timedelta
 from app.models.application_logs import ApplicationLogs
 from app.schemas.application_logs import ApplicationLogCreate, ApplicationLogUpdate
 from app.crud.notification import create_notification, already_notified_today
@@ -419,6 +418,13 @@ def get_last_index(db: Session, main_db_id: int) -> int:
     )
     return last_index or 0
 
+# Helper — ilagay bago ang reassign() function
+_PHT = timezone(timedelta(hours=8))
+
+def _now_pht() -> datetime:
+    """Return current time in Philippine Standard Time (UTC+8), timezone-naive for DB."""
+    return datetime.now(_PHT).replace(tzinfo=None)
+
 
 def reassign(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
     """
@@ -447,7 +453,7 @@ def reassign(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
         current_log.del_last_index       = 0
         current_log.del_thread           = "Close"
         current_log.action_type          = "REASSIGNMENT"
-        current_log.accomplished_date    = log_in.reassigned_at or func.now()
+        current_log.accomplished_date    = log_in.reassigned_at or _now_pht() 
         # ── Re-assignment tracking ──
         current_log.reassigned_by_user_id   = log_in.reassigned_by_user_id
         current_log.reassigned_by_user_name = log_in.reassigned_by_user_name
@@ -476,7 +482,7 @@ def reassign(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
         del_previous         = last_index,
         del_last_index       = 1,
         del_thread           = "Open",
-        start_date           = log_in.reassigned_at or func.now(),
+        start_date           = log_in.reassigned_at or _now_pht(), 
         # ── New assignee ──
         user_name            = log_in.reassigned_to_user_name,
         user_id              = log_in.reassigned_to_user_id,
@@ -519,7 +525,7 @@ def reroute(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
         current_log.del_last_index       = 0
         current_log.del_thread           = "Close"
         current_log.action_type          = "REROUTE"
-        current_log.accomplished_date    = log_in.rerouted_at or func.now()
+        current_log.accomplished_date    = log_in.rerouted_at or _now_pht() 
         # ── Re-route tracking ──
         current_log.rerouted_by_user_id   = log_in.rerouted_by_user_id
         current_log.rerouted_by_user_name = log_in.rerouted_by_user_name
@@ -546,7 +552,7 @@ def reroute(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
         del_previous         = last_index,
         del_last_index       = 1,
         del_thread           = "Open",
-        start_date           = log_in.rerouted_at or func.now(),
+        start_date           = log_in.rerouted_at or _now_pht(), 
         # ── Assigned user sa target step ──
         user_name            = log_in.user_name,
         user_id              = log_in.user_id,
