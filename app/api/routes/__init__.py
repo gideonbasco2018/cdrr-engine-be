@@ -23,6 +23,7 @@ from app.api.routes import (
     dashboard,
     applications,
     monitoring,
+    spellcheck,
 )
 api_router = APIRouter()
 
@@ -45,5 +46,6 @@ api_router.include_router(bulk_upload_history.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(applications.router)
 api_router.include_router(monitoring.router)
+api_router.include_router(spellcheck.router)
 
 
