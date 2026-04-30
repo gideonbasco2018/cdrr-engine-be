@@ -351,17 +351,49 @@ def reassign_application(
 #  Re-route endpoint
 #  POST /api/application-logs/re-route
 # ══════════════════════════════════════════════════════════════════════
+# @router.post("/re-route", response_model=ApplicationLogResponse, status_code=status.HTTP_201_CREATED)
+# def reroute_application(
+#     log_in: ApplicationLogCreate,
+#     current_user: User = Depends(get_current_active_user),
+#     db: Session = Depends(get_db)
+# ):
+#     try:
+#         log = crud_logs.reroute(db, log_in=log_in)
+#         return log
+#     except Exception as e:
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail=f"Failed to process re-route: {str(e)}"
+#         )
+
+# app/api/routes/application_logs.py
 @router.post("/re-route", response_model=ApplicationLogResponse, status_code=status.HTTP_201_CREATED)
 def reroute_application(
     log_in: ApplicationLogCreate,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
+    from sqlalchemy import text
+    from datetime import datetime
+    
+    # Check 1: Anong oras sa MySQL ngayon?
+    mysql_now = db.execute(text("SELECT NOW()")).fetchone()[0]
+    
+    # Check 2: Anong natanggap mula frontend?
+    received_at = log_in.rerouted_at
+    
+    # Check 3: Anong oras sa Python server?
+    python_now = datetime.now()
+    
+    print("="*50)
+    print(f"MySQL NOW():     {mysql_now}")
+    print(f"Python now():    {python_now}")
+    print(f"Received rerouted_at: {received_at}")
+    print(f"tzinfo: {received_at.tzinfo if received_at else None}")
+    print("="*50)
+    
     try:
         log = crud_logs.reroute(db, log_in=log_in)
         return log
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to process re-route: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=str(e))

@@ -28,6 +28,7 @@ from app.api.routes import (
     dashboard,
     applications,
     monitoring,
+    spellcheck,
 )
 
 # ── Scheduler setup ───────────────────────────────────────────────────
@@ -109,6 +110,8 @@ app.include_router(bulk_upload_history.router)
 app.include_router(dashboard.router) 
 app.include_router(applications.router) 
 app.include_router(monitoring.router) 
+app.include_router(spellcheck.router) 
+
 
 @app.get("/")
 def root():
