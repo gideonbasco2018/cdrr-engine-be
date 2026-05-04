@@ -2,12 +2,13 @@
 FROM python:3.11-slim AS base
 
 WORKDIR /app
-
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     default-libmysqlclient-dev \
     pkg-config \
+    libenchant-2-dev \
+    enchant-2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy and install Python dependencies
