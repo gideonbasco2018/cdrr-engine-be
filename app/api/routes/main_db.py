@@ -319,6 +319,9 @@ def get_main_db(
     distributor_country: Optional[str] = Query(None, description="Filter by Distributor Country"),
     repacker: Optional[str] = Query(None, description="Filter by Repacker"),
     repacker_country: Optional[str] = Query(None, description="Filter by Repacker Country"),
+    type_doc_released: Optional[str] = Query(None, description="Filter by Type of Document Released"),
+    date_released_from: Optional[str] = Query(None, description="Filter by Date Released from"),
+    date_released_to: Optional[str] = Query(None, description="Filter by Date Released to"),
     sort_by: str = Query("DB_DATE_EXCEL_UPLOAD"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     db: Session = Depends(get_db)
@@ -350,6 +353,9 @@ def get_main_db(
         "distributor_country": distributor_country,
         "repacker": repacker,
         "repacker_country": repacker_country,
+        "type_doc_released": type_doc_released,
+        "date_released_from": date_released_from,
+        "date_released_to": date_released_to,
     }
     
     records, total = get_main_db_records(
@@ -1119,6 +1125,9 @@ async def export_filtered_records(
     distributor_country: Optional[str] = Query(None),
     repacker: Optional[str] = Query(None),
     repacker_country: Optional[str] = Query(None),
+    type_doc_released: Optional[str] = Query(None),
+    date_released_from: Optional[str] = Query(None),
+    date_released_to: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
     """Export filtered records to Excel"""
@@ -1149,6 +1158,9 @@ async def export_filtered_records(
             "distributor_country": distributor_country,
             "repacker": repacker,
             "repacker_country": repacker_country,
+            "type_doc_released": type_doc_released,
+            "date_released_from": date_released_from,
+            "date_released_to": date_released_to,
         }
 
         records, total = get_main_db_records(

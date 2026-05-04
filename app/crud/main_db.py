@@ -75,6 +75,9 @@ def get_main_db_records(
     distributor_country = filters.get("distributor_country")
     repacker            = filters.get("repacker")
     repacker_country    = filters.get("repacker_country")
+    type_doc_released   = filters.get("type_doc_released")
+    date_released_from  = filters.get("date_released_from")
+    date_released_to    = filters.get("date_released_to")
 
     if status == "decked":
         closed_decking_ids = db.query(ApplicationLogs.main_db_id).filter(
@@ -204,6 +207,18 @@ def get_main_db_records(
     if repacker_country:
         query = query.filter(MainDB.DB_PROD_REPACKER_COUNTRY == repacker_country)
         print(f"✅ Applied repacker_country filter: {repacker_country}")
+
+    if type_doc_released:
+        query = query.filter(MainDB.DB_TYPE_DOC_RELEASED.ilike(f"%{type_doc_released}%"))
+        print(f"✅ Applied type_doc_released filter: {type_doc_released}")
+
+    if date_released_from:
+        query = query.filter(MainDB.DB_DATE_RELEASED >= date_released_from)
+        print(f"✅ Applied date_released_from filter: {date_released_from}")
+
+    if date_released_to:
+        query = query.filter(MainDB.DB_DATE_RELEASED <= date_released_to + " 23:59:59")
+        print(f"✅ Applied date_released_to filter: {date_released_to}")   
 
     if search:
         search_pattern = f"%{search}%"
