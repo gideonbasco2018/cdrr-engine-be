@@ -11,6 +11,7 @@ from app.models.user_groups import UserGroup
 # Excluded action types across both queries
 EXCLUDED_ACTION_TYPES = ("REROUTE", "REASSIGNMENT")
 
+
 def _exclude_action_types(query):
     """Helper: exclude REROUTE & REASSIGNMENT but keep NULL action_types."""
     return query.filter(
@@ -21,7 +22,7 @@ def _exclude_action_types(query):
     )
 
 
-# ── Tasks per User ────────────────────────────────────────────────────────────
+# ── Tasks per User ─────────────────────────────────────────────────────────────
 def get_users_task_summary(db: Session, group_id: Optional[int] = None) -> list:
     task_counts = (
         _exclude_action_types(
@@ -68,14 +69,16 @@ def get_users_task_summary(db: Session, group_id: Optional[int] = None) -> list:
     )
 
     if group_id:
-        query = query.join(UserGroup, UserGroup.user_id == User.id)\
-                     .filter(UserGroup.group_id == group_id)
+        query = (
+            query.join(UserGroup, UserGroup.user_id == User.id)
+            .filter(UserGroup.group_id == group_id)
+        )
 
     query = query.order_by(func.coalesce(task_counts.c.total, 0).desc())
     return query.all()
 
 
-# ── All Records ───────────────────────────────────────────────────────────────
+# ── All Records ────────────────────────────────────────────────────────────────
 def get_all_records(
     db: Session,
     page: int = 1,
@@ -86,8 +89,20 @@ def get_all_records(
     sort_col: str = "date",
     sort_dir: str = "desc",
     application_status: Optional[str] = None,
-    dtn: Optional[str] = None,           # ← NEW
-    app_step: Optional[str] = None,      # ← NEW
+    dtn: Optional[str] = None,
+    app_step: Optional[str] = None,
+    # ── DTN date range ────────────────────────────────────────────────────────
+    # Both are 8-digit strings produced by the frontend (YYYYMMDD).
+    # The frontend pads omitted month/day with 01/01 (from) or 12/31 (to),
+    # so the backend only needs to compare LEFT(DB_DTN, 8) against them.
+    #
+    # Example ranges:
+    #   2023-only          → dtn_date_from="20230101"  dtn_date_to="20231231"
+    #   2023-05 only       → dtn_date_from="20230501"  dtn_date_to="20230531"
+    #   2023-05-06 only    → dtn_date_from="20230506"  dtn_date_to="20230506"
+    #   2023 → 2026        → dtn_date_from="20230101"  dtn_date_to="20261231"
+    dtn_date_from: Optional[str] = None,
+    dtn_date_to: Optional[str] = None,
 ) -> dict:
 
     query = _exclude_action_types(
@@ -103,7 +118,6 @@ def get_all_records(
             func.upper(ApplicationLogs.application_status) == application_status.upper()
         )
 
-    # ── NEW filters ──────────────────────────────────────────────
     if dtn:
         query = query.filter(MainDB.DB_DTN.like(f"%{dtn}%"))
 
@@ -111,7 +125,6 @@ def get_all_records(
         query = query.filter(
             func.upper(ApplicationLogs.application_step) == app_step.upper()
         )
-    # ─────────────────────────────────────────────────────────────
 
     if date_from:
         query = query.filter(
@@ -123,13 +136,30 @@ def get_all_records(
             func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) <= date_to
         )
 
+    # ── DTN date range filter ─────────────────────────────────────────────────
+    # Extract the first 8 characters of DB_DTN (which encodes YYYYMMDD) and
+    # compare them as a string range.  Works because the format is zero-padded
+    # and lexicographic order matches chronological order.
+    #
+    #   LEFT(DB_DTN, 8) >= '20230101'  AND  LEFT(DB_DTN, 8) <= '20261231'
+    #
+    # We validate that each prefix is exactly 8 digits before using it so that
+    # a malformed value from the client is silently ignored rather than causing
+    # an unexpected result.
+    if dtn_date_from and len(dtn_date_from) == 8 and dtn_date_from.isdigit():
+        query = query.filter(func.left(MainDB.DB_DTN, 8) >= dtn_date_from)
+
+    if dtn_date_to and len(dtn_date_to) == 8 and dtn_date_to.isdigit():
+        query = query.filter(func.left(MainDB.DB_DTN, 8) <= dtn_date_to)
+    # ─────────────────────────────────────────────────────────────────────────
+
     sort_map = {
         "date": func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"),
         "dtn": MainDB.DB_DTN,
         "user": ApplicationLogs.user_name,
         "drug": MainDB.DB_PROD_BR_NAME,
         "timeline": ApplicationLogs.application_status,
-        "step": ApplicationLogs.application_step,   # ← NEW
+        "step": ApplicationLogs.application_step,
     }
     sort_column = sort_map.get(sort_col, sort_map["date"])
     query = query.order_by(
@@ -156,7 +186,7 @@ def get_all_records(
 
     data = []
     for log, main in rows:
-        brand = main.DB_PROD_BR_NAME or ""
+        brand   = main.DB_PROD_BR_NAME  or ""
         generic = main.DB_PROD_GEN_NAME or ""
         drug_name = (
             f"{brand} ({generic})"

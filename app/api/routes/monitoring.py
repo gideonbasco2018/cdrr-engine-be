@@ -26,13 +26,11 @@ router = APIRouter(
     response_model=UsersTasksResponse,
     summary="All users with their current task count breakdown",
 )
-@router.get("/users-tasks", response_model=UsersTasksResponse)
 def get_users_tasks(
     group_id: Optional[int] = Query(None, description="Filter by group ID"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    
     """
     Returns all active users joined with their task counts from
     application_logs. Matches via username OR alias.
@@ -46,7 +44,7 @@ def get_users_tasks(
             username=user.username,
             full_name=f"{user.first_name} {user.surname}".strip(),
             position=user.position,
-            group_name=user.groups[0].name if user.groups else None,  # ← ADD
+            group_name=user.groups[0].name if user.groups else None,
             role=user.role.value,
             is_active=user.is_active,
             tasks=TaskStatusBreakdown(
@@ -60,6 +58,7 @@ def get_users_tasks(
 
     return UsersTasksResponse(total_users=len(data), data=data)
 
+
 @router.get("/all-records", response_model=AllRecordsResponse)
 def get_all_records(
     page: int = Query(1, ge=1),
@@ -69,9 +68,41 @@ def get_all_records(
     date_to: Optional[date] = Query(None),
     sort_col: str = Query("date"),
     sort_dir: str = Query("desc", regex="^(asc|desc)$"),
-    application_status: Optional[str] = Query(None, description="COMPLETED | IN PROGRESS"),
-    dtn: Optional[str] = Query(None, description="Partial DTN search"),          # ← NEW
-    app_step: Optional[str] = Query(None, description="e.g. Decking, Checking"), # ← NEW
+    application_status: Optional[str] = Query(
+        None, description="COMPLETED | IN PROGRESS"
+    ),
+    dtn: Optional[str] = Query(None, description="Partial DTN text search"),
+    app_step: Optional[str] = Query(
+        None, description="e.g. Decking, Checking, Quality Evaluation"
+    ),
+    # ── DTN date range ────────────────────────────────────────────────────────
+    # Both params are 8-digit strings (YYYYMMDD) built by the frontend.
+    # The frontend pads omitted month → 01/12 and day → 01/31 automatically,
+    # so a year-only range of 2023→2026 arrives as:
+    #   dtn_date_from=20230101  dtn_date_to=20261231
+    #
+    # The CRUD validates that each value is exactly 8 digits before filtering.
+    dtn_date_from: Optional[str] = Query(
+        None,
+        description=(
+            "Lower bound of DTN date range (YYYYMMDD). "
+            "Compared against the first 8 digits of DB_DTN. "
+            "Example: 20230101"
+        ),
+        min_length=8,
+        max_length=8,
+    ),
+    dtn_date_to: Optional[str] = Query(
+        None,
+        description=(
+            "Upper bound of DTN date range (YYYYMMDD). "
+            "Compared against the first 8 digits of DB_DTN. "
+            "Example: 20261231"
+        ),
+        min_length=8,
+        max_length=8,
+    ),
+    # ─────────────────────────────────────────────────────────────────────────
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
@@ -85,10 +116,13 @@ def get_all_records(
         sort_col=sort_col,
         sort_dir=sort_dir,
         application_status=application_status,
-        dtn=dtn,        # ← NEW
-        app_step=app_step,  # ← NEW
+        dtn=dtn,
+        app_step=app_step,
+        dtn_date_from=dtn_date_from,
+        dtn_date_to=dtn_date_to,
     )
     return AllRecordsResponse(**result)
+
 
 @router.get("/groups", summary="List all groups for filtering")
 def get_groups(
