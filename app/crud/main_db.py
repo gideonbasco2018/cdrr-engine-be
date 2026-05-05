@@ -78,6 +78,9 @@ def get_main_db_records(
     type_doc_released   = filters.get("type_doc_released")
     date_released_from  = filters.get("date_released_from")
     date_released_to    = filters.get("date_released_to")
+    user_uploader           = filters.get("user_uploader")
+    date_excel_upload_from  = filters.get("date_excel_upload_from")
+    date_excel_upload_to    = filters.get("date_excel_upload_to")
 
     if status == "decked":
         closed_decking_ids = db.query(ApplicationLogs.main_db_id).filter(
@@ -219,6 +222,28 @@ def get_main_db_records(
     if date_released_to:
         query = query.filter(MainDB.DB_DATE_RELEASED <= date_released_to + " 23:59:59")
         print(f"✅ Applied date_released_to filter: {date_released_to}")   
+    
+    if user_uploader:
+        query = query.filter(MainDB.DB_USER_UPLOADER.like(f"%{user_uploader}%"))
+        print(f"✅ Applied user_uploader filter: {user_uploader}")
+
+    if date_excel_upload_from:
+        try:
+            from_dt = datetime.strptime(date_excel_upload_from, "%Y-%m-%d")
+            query = query.filter(MainDB.DB_DATE_EXCEL_UPLOAD >= from_dt)
+            print(f"✅ Applied date_excel_upload_from filter: {from_dt}")
+        except ValueError:
+            print(f"⚠️ Invalid date_excel_upload_from format: {date_excel_upload_from}")
+
+    if date_excel_upload_to:
+        try:
+            to_dt = datetime.strptime(date_excel_upload_to, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59
+            )
+            query = query.filter(MainDB.DB_DATE_EXCEL_UPLOAD <= to_dt)
+            print(f"✅ Applied date_excel_upload_to filter: {to_dt}")
+        except ValueError:
+            print(f"⚠️ Invalid date_excel_upload_to format: {date_excel_upload_to}")
 
     if search:
         search_pattern = f"%{search}%"

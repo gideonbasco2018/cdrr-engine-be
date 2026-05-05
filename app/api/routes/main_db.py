@@ -322,6 +322,10 @@ def get_main_db(
     type_doc_released: Optional[str] = Query(None, description="Filter by Type of Document Released"),
     date_released_from: Optional[str] = Query(None, description="Filter by Date Released from"),
     date_released_to: Optional[str] = Query(None, description="Filter by Date Released to"),
+  
+    user_uploader: Optional[str] = Query(None, description="Filter by User Uploader"),
+    date_excel_upload_from: Optional[str] = Query(None, description="Filter by Date Excel Upload from"),
+    date_excel_upload_to: Optional[str] = Query(None, description="Filter by Date Excel Upload to"),
     sort_by: str = Query("DB_DATE_EXCEL_UPLOAD"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     db: Session = Depends(get_db)
@@ -356,6 +360,9 @@ def get_main_db(
         "type_doc_released": type_doc_released,
         "date_released_from": date_released_from,
         "date_released_to": date_released_to,
+        "user_uploader": user_uploader,
+        "date_excel_upload_from": date_excel_upload_from,
+        "date_excel_upload_to": date_excel_upload_to,
     }
     
     records, total = get_main_db_records(
