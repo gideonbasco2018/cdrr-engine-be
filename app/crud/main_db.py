@@ -212,9 +212,22 @@ def get_main_db_records(
         print(f"✅ Applied repacker_country filter: {repacker_country}")
 
     if type_doc_released:
-        query = query.filter(MainDB.DB_TYPE_DOC_RELEASED.ilike(f"%{type_doc_released}%"))
-        print(f"✅ Applied type_doc_released filter: {type_doc_released}")
+        CERTIFICATE_ALIASES = {"certificate", "cert"}
+ 
+        if type_doc_released.lower() in CERTIFICATE_ALIASES:
+            # Match both "Certificate" and "Cert" (case-insensitive)
+            query = query.filter(
+                or_(
+                    func.lower(MainDB.DB_TYPE_DOC_RELEASED) == "certificate",
+                    func.lower(MainDB.DB_TYPE_DOC_RELEASED) == "cert",
+                )
+            )
+            print(f"✅ Applied type_doc_released filter (Certificate+Cert alias): {type_doc_released}")
+        else:
+            query = query.filter(MainDB.DB_TYPE_DOC_RELEASED.ilike(f"%{type_doc_released}%"))
+            print(f"✅ Applied type_doc_released filter: {type_doc_released}")
 
+            
     if date_released_from:
         query = query.filter(MainDB.DB_DATE_RELEASED >= date_released_from)
         print(f"✅ Applied date_released_from filter: {date_released_from}")
