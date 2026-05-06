@@ -17,6 +17,7 @@ from app.schemas.recent_applications import RecentApplicationsResponse
 from app.crud import dashboard_detail as crud_detail
 from app.schemas.dashboard_detail import MetricDetailResponse
 from app.models.main_db import MainDB
+from app.models.user import User 
 
 router = APIRouter(
     prefix="/api/dashboard/stats",
@@ -29,15 +30,19 @@ router = APIRouter(
 # ─────────────────────────────────────────────────────────
 def _effective_username(
     current_user,
-    impersonate: Optional[str],
+    impersonate: Optional[int],  # user_id na ngayon
+    db: Session = None,
 ) -> str:
     """
     Resolution order:
-    1. ?impersonate=<username>  →  only honoured when current_user is admin
-    2. current_user.username    →  default (own stats)
+    1. ?impersonate=<user_id>  →  only honoured when current_user is Admin/SuperAdmin
+    2. current_user.username   →  default (own stats)
     """
-    if impersonate and getattr(current_user, "is_admin", False):
-        return impersonate
+    if impersonate and db and current_user.role in ("Admin", "SuperAdmin"):
+        user = db.query(User).filter(User.id == impersonate).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return user.username
     return current_user.username
 
 
@@ -47,10 +52,9 @@ def _effective_username(
 def _common_params(
     date_from:   Optional[date] = Query(None, description="Start date filter  YYYY-MM-DD"),
     date_to:     Optional[date] = Query(None, description="End date filter    YYYY-MM-DD"),
-    impersonate: Optional[str]  = Query(None, description="Admin only: target username"),
+    impersonate: Optional[int]  = Query(None, description="Admin only: user_id of target user"),
 ):
     return {"date_from": date_from, "date_to": date_to, "impersonate": impersonate}
-
 
 # ─────────────────────────────────────────────────────────
 # 1. GET /dashboard/stats/received
@@ -65,7 +69,7 @@ def get_received(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    username = _effective_username(current_user, params["impersonate"])
+    username = _effective_username(current_user, params["impersonate"], db)
     value    = crud_dashboard.get_total_received(
         db, username, params["date_from"], params["date_to"]
     )
@@ -91,7 +95,7 @@ def get_completed(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    username = _effective_username(current_user, params["impersonate"])
+    username = _effective_username(current_user, params["impersonate"], db)
     value    = crud_dashboard.get_total_completed(
         db, username, params["date_from"], params["date_to"]
     )
@@ -117,7 +121,7 @@ def get_on_process(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    username = _effective_username(current_user, params["impersonate"])
+    username = _effective_username(current_user, params["impersonate"], db)
     value    = crud_dashboard.get_total_on_process(
         db, username, params["date_from"], params["date_to"]
     )
@@ -143,7 +147,7 @@ def get_summary(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    username = _effective_username(current_user, params["impersonate"])
+    username = _effective_username(current_user, params["impersonate"], db)
     stats    = crud_dashboard.get_stats_summary(
         db, username, params["date_from"], params["date_to"]
     )
@@ -192,9 +196,8 @@ def get_chart(
         None,
         description="Inclusive end date    YYYY-MM-DD",
     ),
-    impersonate: Optional[str] = Query(
-        None,
-        description="Admin only — view another user's chart data",
+    impersonate: Optional[int] = Query(
+        None, description="Admin only — user_id of target user",
     ),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
@@ -205,7 +208,7 @@ def get_chart(
             detail="date_from must be earlier than or equal to date_to.",
         )
  
-    username = _effective_username(current_user, impersonate)
+    username = _effective_username(current_user, impersonate, db)
  
     try:
         return crud_chart.get_chart_data(
@@ -236,13 +239,13 @@ def get_recent_applications(
         default=10, ge=1, le=50,
         description="Rows per page (max 50)",
     ),
-    impersonate: Optional[str] = Query(
-        None, description="Admin only: view another user's data",
+    impersonate: Optional[int] = Query(
+        None, description="Admin only — user_id of target user",
     ),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    username = _effective_username(current_user, impersonate)
+    username = _effective_username(current_user, impersonate, db)
 
     data = crud_recent.get_recent_applications(
         db=db,
@@ -303,9 +306,8 @@ def get_metric_detail(
         default=10, ge=1, le=50,
         description="Rows per page (max 50)",
     ),
-    impersonate: Optional[str] = Query(
-        None,
-        description="Admin only — view another user's data",
+    impersonate: Optional[int] = Query(
+        None, description="Admin only — user_id of target user",
     ),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
@@ -322,7 +324,7 @@ def get_metric_detail(
             detail="date_from must be earlier than or equal to date_to.",
         )
  
-    username = _effective_username(current_user, impersonate)
+    username = _effective_username(current_user, impersonate, db)
  
     try:
         return crud_detail.get_metric_detail(
