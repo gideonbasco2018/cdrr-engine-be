@@ -10,7 +10,7 @@ PHT = timezone(timedelta(hours=8))
 
 from app.models.application_logs import ApplicationLogs
 from app.models.main_db import MainDB
-
+from app.models.user import User
 
 def get_logs_joined_with_main_db(
     db: Session,
@@ -23,7 +23,7 @@ def get_logs_joined_with_main_db(
     application_status: Optional[str] = None,
     application_decision: Optional[str] = None,
     user_name: Optional[str] = None,
-    user_id: Optional[int] = None, 
+    user_id: Optional[int] = None,
     main_db_id: Optional[int] = None,
     dtn: Optional[int] = None,
     est_cat: Optional[str] = None,
@@ -61,61 +61,46 @@ def get_logs_joined_with_main_db(
             and_(
                 ApplicationLogs.main_db_id == latest_subq.c.main_db_id,
                 ApplicationLogs.del_thread == latest_subq.c.del_thread,
-                ApplicationLogs.del_index == latest_subq.c.max_del_index,
+                ApplicationLogs.del_index  == latest_subq.c.max_del_index,
             ),
         )
 
     if del_thread is not None:
         query = query.filter(ApplicationLogs.del_thread == del_thread)
-
     if del_last_index is not None:
         query = query.filter(ApplicationLogs.del_last_index == del_last_index)
-
     if main_db_id is not None:
         query = query.filter(ApplicationLogs.main_db_id == main_db_id)
-
     if application_step:
         query = query.filter(ApplicationLogs.application_step == application_step)
-
     if application_status:
         query = query.filter(ApplicationLogs.application_status == application_status)
-
     if application_decision:
         query = query.filter(ApplicationLogs.application_decision == application_decision)
-
     if user_name:
         query = query.filter(ApplicationLogs.user_name == user_name)
-
-    if user_id is not None: 
+    if user_id is not None:
         query = query.filter(ApplicationLogs.user_id == user_id)
-
     if dtn is not None:
         query = query.filter(MainDB.DB_DTN == dtn)
-
     if est_cat:
         query = query.filter(MainDB.DB_EST_CAT == est_cat)
-
     if app_type:
         if app_type == "__EMPTY__":
             query = query.filter(or_(MainDB.DB_APP_TYPE.is_(None), MainDB.DB_APP_TYPE == ""))
         else:
             query = query.filter(MainDB.DB_APP_TYPE == app_type)
-
     if db_app_status:
         if db_app_status == "__EMPTY__":
             query = query.filter(or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == ""))
         else:
             query = query.filter(MainDB.DB_APP_STATUS == db_app_status)
-
     if lto_company:
         query = query.filter(MainDB.DB_EST_LTO_COMP.like(f"%{lto_company}%"))
-
     if brand_name:
         query = query.filter(MainDB.DB_PROD_BR_NAME.like(f"%{brand_name}%"))
-
     if generic_name:
         query = query.filter(MainDB.DB_PROD_GEN_NAME.like(f"%{generic_name}%"))
-
     if prescription:
         if prescription == "__EMPTY__":
             query = query.filter(
@@ -123,7 +108,6 @@ def get_logs_joined_with_main_db(
             )
         else:
             query = query.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
-
     if processing_type:
         if processing_type == "__EMPTY__":
             query = query.filter(
@@ -131,7 +115,6 @@ def get_logs_joined_with_main_db(
             )
         else:
             query = query.filter(MainDB.DB_PROCESSING_TYPE == processing_type)
-
     if search:
         pattern = f"%{search}%"
         query = query.filter(
@@ -169,8 +152,94 @@ def get_logs_joined_with_main_db(
         query = query.order_by(desc(ApplicationLogs.created_at))
 
     logs = query.offset(skip).limit(limit).all()
+
+    # ── Attach del_previous log data (sent_by) ────────────────────────────────
+    # For each log, fetch the previous step's log entry (del_index == del_previous)
+    # in a single bulk query — no N+1.
+    #
+    # These 3 attributes are picked up by LogWithMainDBResponse via orm_mode:
+    #   log.sent_by_user_name  → "Sent By" column
+    #   log.sent_by_user_id    → user_id of the sender
+    #   log.sent_at            → "Last Modified" column (when it was forwarded)
+    _attach_sent_by(db, logs)
+    # ─────────────────────────────────────────────────────────────────────────
+
     return logs, total
 
+
+def _attach_sent_by(db: Session, logs: List[ApplicationLogs]) -> None:
+    """
+    Bulk-fetch the previous log entry for each log (where del_index == del_previous)
+    and attach sent_by_user_name, sent_by_user_id, sent_at as Python attributes.
+
+    Uses a single DB query regardless of how many logs are passed.
+    Logs with no del_previous (first step) receive None for all three fields.
+    """
+    # Build (main_db_id, del_previous) pairs for logs that have a previous step
+    pairs = [
+        (log.main_db_id, log.del_previous)
+        for log in logs
+        if log.del_previous is not None
+    ]
+
+    prev_lookup: dict = {}
+
+    if pairs:
+        conditions = [
+            and_(
+                ApplicationLogs.main_db_id == mid,
+                ApplicationLogs.del_index  == didx,
+            )
+            for mid, didx in pairs
+        ]
+        prev_logs = (
+            db.query(ApplicationLogs)
+            .filter(or_(*conditions))
+            .all()
+        )
+        prev_lookup = {
+            (row.main_db_id, row.del_index): row
+            for row in prev_logs
+        }
+
+    # Collect all sent_by_user_ids to bulk-fetch user info
+    user_ids = set()
+    for log in logs:
+        prev = prev_lookup.get((log.main_db_id, log.del_previous))
+        if prev and prev.user_id:
+            user_ids.add(prev.user_id)
+
+    # Single bulk query for all relevant users
+    user_lookup: dict = {}
+    if user_ids:
+        users = db.query(User).filter(User.id.in_(user_ids)).all()
+        user_lookup = {u.id: u for u in users}
+
+    # Attach attributes
+    for log in logs:
+        prev = prev_lookup.get((log.main_db_id, log.del_previous))
+        log.sent_by_user_name        = prev.user_name               if prev else None
+        log.sent_by_user_id          = prev.user_id                 if prev else None
+        log.sent_at                  = prev.updated_at              if prev else None
+
+        # NEW: resolve first_name + surname from sent_by_user_id
+        sender = user_lookup.get(prev.user_id) if prev and prev.user_id else None
+        log.sent_by_first_name       = sender.first_name            if sender else None
+        log.sent_by_surname          = sender.surname               if sender else None
+
+        log.prev_del_index           = prev.del_index               if prev else None
+        log.prev_application_step    = prev.application_step        if prev else None
+        log.prev_application_status  = prev.application_status      if prev else None
+        log.prev_application_decision = prev.application_decision   if prev else None
+        log.prev_application_remarks = prev.application_remarks     if prev else None
+        log.prev_action_type         = prev.action_type             if prev else None
+        log.prev_decision_result     = prev.decision_result         if prev else None
+        log.prev_decision_authority  = prev.decision_authority_name if prev else None
+        log.prev_accomplished_date   = prev.accomplished_date        if prev else None
+        log.prev_start_date          = prev.start_date              if prev else None
+        log.prev_deadline_date       = prev.deadline_date           if prev else None
+
+# ── unchanged functions below ─────────────────────────────────────────────────
 
 def get_logs_by_thread(
     db: Session,
@@ -185,9 +254,8 @@ def get_logs_by_thread(
         .filter(ApplicationLogs.del_thread == del_thread)
         .order_by(ApplicationLogs.del_index.asc())
     )
-
     total = query.count()
-    logs = query.offset(skip).limit(limit).all()
+    logs  = query.offset(skip).limit(limit).all()
     return logs, total
 
 
@@ -195,21 +263,14 @@ def mark_log_as_read(
     db: Session,
     log_id: int,
 ) -> Optional[ApplicationLogs]:
-    """
-    Mark a single ApplicationLog as read.
-    Sets is_read = 1 and read_at = now() only if not already read.
-    """
     log = db.query(ApplicationLogs).filter(ApplicationLogs.id == log_id).first()
-
     if not log:
         return None
-
     if not log.is_read:
         log.is_read = 1
         log.read_at = datetime.now(PHT).replace(tzinfo=None)
         db.commit()
         db.refresh(log)
-
     return log
 
 
@@ -218,36 +279,24 @@ def mark_logs_as_received(
     log_ids: List[int],
     received_by: str,
 ) -> Tuple[List[ApplicationLogs], int, int]:
-    """
-    Bulk mark ApplicationLogs as received.
-
-    - Only updates rows where is_received = 0 (idempotent — safe to call multiple times).
-    - Sets is_received = 1, received_at = now(PHT), received_by = username.
-    - Returns (updated_logs, updated_count, skipped_count).
-    """
     logs = (
         db.query(ApplicationLogs)
         .filter(ApplicationLogs.id.in_(log_ids))
         .all()
     )
-
-    now_pht = datetime.now(PHT).replace(tzinfo=None)
+    now_pht  = datetime.now(PHT).replace(tzinfo=None)
     updated: List[ApplicationLogs] = []
-    skipped: int = 0
-
+    skipped  = 0
     for log in logs:
         if log.is_received:
-            # Already received — skip, no unnecessary DB write
             skipped += 1
         else:
-            log.is_received = 1
-            log.received_at = now_pht
-            log.received_by = received_by
+            log.is_received  = 1
+            log.received_at  = now_pht
+            log.received_by  = received_by
             updated.append(log)
-
     if updated:
         db.commit()
         for log in updated:
             db.refresh(log)
-
     return updated, len(updated), skipped

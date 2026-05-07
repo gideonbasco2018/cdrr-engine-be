@@ -197,6 +197,23 @@ class LogWithMainDBResponse(BaseModel):
     # Joined MainDB info
     main_db: Optional[MainDBBrief] = None
 
+    #  Sent by (previous log) + previous log fields
+    sent_by_user_name:            Optional[str]      = None
+    sent_by_user_id:              Optional[int]      = None
+    sent_at:                      Optional[datetime] = None
+    sent_by_first_name:           Optional[str]      = None 
+    sent_by_surname:              Optional[str]      = None  
+    prev_application_step:        Optional[str]      = None
+    prev_application_status:      Optional[str]      = None
+    prev_application_decision:    Optional[str]      = None
+    prev_application_remarks:     Optional[str]      = None
+    prev_action_type:             Optional[str]      = None
+    prev_decision_result:         Optional[str]      = None
+    prev_decision_authority:      Optional[str]      = None
+    prev_accomplished_date:       Optional[datetime] = None
+    prev_start_date:              Optional[datetime] = None
+    prev_deadline_date:           Optional[date]     = None
+    prev_del_index: Optional[int] = None
     class Config:
         from_attributes = True
 
