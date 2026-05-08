@@ -10,6 +10,7 @@ from app.models.field_audit_log import ApplicationFieldAuditLog
 from app.models.notification import Notification
 from app.models.bulk_upload_history_records import BulkUploadHistoryRecord
 from app.models.bulk_upload_history import BulkUploadHistory
+from app.models.closed_tasks import ClosedTask
 
 
 
@@ -29,7 +30,8 @@ __all__ = [
     "ApplicationFieldAuditLog",
     "Notification",
     "BulkUploadHistoryRecord",
-    "BulkUploadHistory"
+    "BulkUploadHistory",
+    "ClosedTask"
 
 ]
 

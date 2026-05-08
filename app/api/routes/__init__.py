@@ -24,6 +24,7 @@ from app.api.routes import (
     applications,
     monitoring,
     spellcheck,
+    closed_tasks,
 )
 api_router = APIRouter()
 
@@ -47,5 +48,5 @@ api_router.include_router(dashboard.router)
 api_router.include_router(applications.router)
 api_router.include_router(monitoring.router)
 api_router.include_router(spellcheck.router)
-
+api_router.include_router(closed_tasks.router)
 
