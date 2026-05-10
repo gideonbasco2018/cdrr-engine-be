@@ -11,6 +11,7 @@ from app.models.notification import Notification
 from app.models.bulk_upload_history_records import BulkUploadHistoryRecord
 from app.models.bulk_upload_history import BulkUploadHistory
 from app.models.closed_tasks import ClosedTask
+from app.models.lead_assignment import LeadAssignment
 
 
 
@@ -31,7 +32,9 @@ __all__ = [
     "Notification",
     "BulkUploadHistoryRecord",
     "BulkUploadHistory",
-    "ClosedTask"
+    "ClosedTask",
+    "LeadAssignment"
+
 
 ]
 
