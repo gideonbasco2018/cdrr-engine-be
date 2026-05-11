@@ -272,18 +272,6 @@ def get_recent_applications(
     "/detail",
     response_model=MetricDetailResponse,
     summary="Paginated application log rows for a specific KPI metric",
-    description="""
-Returns the individual **ApplicationLog** rows that make up one of the three
-KPI tiles on the dashboard.
- 
-| metric        | rows returned                                              |
-|---------------|------------------------------------------------------------|
-| `received`    | All rows for the user (any status, active threads only)    |
-| `completed`   | Rows where `application_status = 'COMPLETED'`              |
-| `on_process`  | Rows where `application_status = 'IN PROGRESS'`            |
- 
-Results are ordered newest-first and paginated (`page` / `page_size`).
-    """,
 )
 def get_metric_detail(
     metric: str = Query(
@@ -292,19 +280,33 @@ def get_metric_detail(
     ),
     date_from: Optional[date] = Query(
         None,
-        description="Inclusive start date  YYYY-MM-DD",
+        description="Inclusive start date  YYYY-MM-DD  (filters start_date)",
     ),
     date_to: Optional[date] = Query(
         None,
-        description="Inclusive end date    YYYY-MM-DD",
+        description="Inclusive end date    YYYY-MM-DD  (filters start_date)",
+    ),
+    # ✅ New: filter by accomplished/end date
+    accomplished_date_from: Optional[date] = Query(
+        None,
+        description="Filter rows where end_date >= this date",
+    ),
+    accomplished_date_to: Optional[date] = Query(
+        None,
+        description="Filter rows where end_date <= this date",
+    ),
+    # ✅ New: filter by step name
+    app_step: Optional[str] = Query(
+        None,
+        description="Filter rows by app_step (e.g. 'Quality Evaluation')",
     ),
     page: int = Query(
         default=1, ge=1,
         description="1-based page number",
     ),
     page_size: int = Query(
-        default=10, ge=1, le=50,
-        description="Rows per page (max 50)",
+        default=10, ge=1, le=500,
+        description="Rows per page (max 500)",
     ),
     impersonate: Optional[int] = Query(
         None, description="Admin only — user_id of target user",
@@ -324,6 +326,12 @@ def get_metric_detail(
             detail="date_from must be earlier than or equal to date_to.",
         )
  
+    if accomplished_date_from and accomplished_date_to and accomplished_date_from > accomplished_date_to:
+        raise HTTPException(
+            status_code=422,
+            detail="accomplished_date_from must be earlier than or equal to accomplished_date_to.",
+        )
+ 
     username = _effective_username(current_user, impersonate, db)
  
     try:
@@ -333,12 +341,14 @@ def get_metric_detail(
             metric=metric,
             date_from=date_from,
             date_to=date_to,
+            accomplished_date_from=accomplished_date_from,
+            accomplished_date_to=accomplished_date_to,
+            app_step=app_step,
             page=page,
             page_size=page_size,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
-    
 
 
 @router.get(
