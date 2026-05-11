@@ -72,8 +72,13 @@ def _row_to_detail(row: ApplicationLogs) -> ApplicationLogDetail:
         # ── from MainDB ──────────────────────────────────────────────
         dtn=str(main.DB_DTN) if main and main.DB_DTN is not None else None,
         lto_company=main.DB_EST_LTO_COMP if main else None,
+        lto_address=main.DB_EST_LTO_ADD if main else None, 
         brand_name=main.DB_PROD_BR_NAME if main else None,
         generic_name=main.DB_PROD_GEN_NAME if main else None,
+        secpa=main.DB_SECPA if main else None,                  
+        app_type=main.DB_APP_TYPE if main else None,              
+        reg_no=main.DB_REG_NO if main else None,                 
+        atta_released=main.DB_ATTA_RELEASED if main else None, 
         # ── from ApplicationLogs ────────────────────────────────────
         application_status=row.application_status,
         del_thread=row.del_thread,
