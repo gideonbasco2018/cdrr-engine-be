@@ -8,12 +8,14 @@ from typing import List, Dict, Any, Optional
 # ------------------------
 def get_document_by_rsn(db: Session, rsn: str) -> List[Dict[str, Any]]:
     query = text("""
-        SELECT *
-        FROM document_tracker.docreceivingtbl
-        WHERE RSN = :rsn
+        SELECT d.*, dc.docclassName
+        FROM document_tracker.docreceivingtbl d
+        LEFT JOIN document_tracker.docclassificationtbl dc
+            ON d.docclassID = dc.docclassID
+        WHERE d.RSN = :rsn
     """)
     result = db.execute(query, {"rsn": rsn}).mappings().all()
-    return result
+    return [dict(row) for row in result]
 
 
 # ------------------------
