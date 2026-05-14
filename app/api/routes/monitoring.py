@@ -11,6 +11,8 @@ from app.schemas.monitoring import (
     AllRecordsResponse,
     UserTaskSummary,
     TaskStatusBreakdown,
+    ReleaseListResponse,
+    OverviewSummaryResponse,
 )
 from app.crud import monitoring as crud_monitoring
 from app.models.group import Group
@@ -131,3 +133,80 @@ def get_groups(
 ):
     groups = db.query(Group).order_by(Group.name).all()
     return [{"id": g.id, "name": g.name} for g in groups]
+
+# -----------------------------
+# SEAN Release endpoints
+# -----------------------------
+@router.get(
+    "/release",
+    response_model=ReleaseListResponse,
+    summary="Paginated release records from MainDB",
+)
+def get_release(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=1000),
+    search: Optional[str] = Query(None),
+    app_status: Optional[str] = Query(None),
+    type_doc_released: Optional[str] = Query(None),
+    date_released_from: Optional[str] = Query(None),
+    date_released_to: Optional[str] = Query(None),
+    secpa_exp_from: Optional[str] = Query(None),
+    secpa_exp_to: Optional[str] = Query(None),
+    sort_by: str = Query("DB_DATE_EXCEL_UPLOAD"),
+    sort_order: str = Query("desc", regex="^(asc|desc)$"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    result = crud_monitoring.get_release_records(
+        db=db,
+        page=page,
+        page_size=page_size,
+        search=search,
+        app_status=app_status,
+        type_doc_released=type_doc_released,
+        date_released_from=date_released_from,
+        date_released_to=date_released_to,
+        secpa_exp_from=secpa_exp_from,
+        secpa_exp_to=secpa_exp_to,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return ReleaseListResponse(**result)
+
+
+@router.get(
+    "/release/app-status-types",
+    summary="Unique App Status values for dropdown",
+)
+def get_app_status_types(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    values = crud_monitoring.get_release_app_statuses(db)
+    return {"app_status_types": values}
+
+
+@router.get(
+    "/release/doc-types",
+    summary="Unique Type Doc Released values for dropdown",
+)
+def get_doc_types(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    values = crud_monitoring.get_release_doc_types(db)
+    return {"doc_types": values}
+
+# -----------------------------
+# Overview KPI Summary
+# -----------------------------
+@router.get(
+    "/overview-summary",
+    response_model=OverviewSummaryResponse,
+    summary="KPI counts for Overview cards",
+)
+def get_overview_summary(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    return crud_monitoring.get_overview_summary(db)

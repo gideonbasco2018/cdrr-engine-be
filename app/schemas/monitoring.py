@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List
 
 
@@ -48,6 +48,39 @@ class AllRecordsResponse(BaseModel):
     page_size: int
     total_pages: int
     data: List[RecordItem]
+
+    # -----------------------------
+# SEAN Release record response
+# -----------------------------
+class ReleaseRecord(BaseModel):
+    DB_ID: int
+    DB_DTN: Optional[int] = None
+    DB_PROD_BR_NAME: Optional[str] = None
+    DB_PROD_GEN_NAME: Optional[str] = None
+    DB_SECPA_EXP_DATE: Optional[str] = None
+    DB_SECPA_ISSUED_ON: Optional[str] = None
+    DB_APP_STATUS: Optional[str] = None
+    DB_TYPE_DOC_RELEASED: Optional[str] = None
+    DB_DATE_RELEASED: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ReleaseListResponse(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    data: List[ReleaseRecord]
+
+    # -----------------------------
+# Overview KPI Summary
+# -----------------------------
+class OverviewSummaryResponse(BaseModel):
+    total_applications: int
+    cpr_released: int
+    on_process: int
+    lod_released: int
 
 
 # ── DTN date range filter schema (used internally / for OpenAPI docs) ──────────
