@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, case, and_, or_
+from sqlalchemy import func, case, and_, or_, asc, desc
 from typing import Optional
 from datetime import datetime, date
 
@@ -7,6 +7,9 @@ from app.models.main_db import MainDB
 from app.models.application_logs import ApplicationLogs
 from app.models.user import User
 from app.models.user_groups import UserGroup
+
+import math
+
 
 # Excluded action types across both queries
 EXCLUDED_ACTION_TYPES = ("REROUTE", "REASSIGNMENT")
@@ -213,4 +216,134 @@ def get_all_records(
         "page_size": page_size,
         "total_pages": total_pages,
         "data": data,
+    }
+# -----------------------------
+# SEAN Release queries
+# -----------------------------
+def get_release_records(
+    db: Session,
+    page: int = 1,
+    page_size: int = 10,
+    search: Optional[str] = None,
+    app_status: Optional[str] = None,
+    type_doc_released: Optional[str] = None,
+    date_released_from: Optional[str] = None,
+    date_released_to: Optional[str] = None,
+    secpa_exp_from: Optional[str] = None,
+    secpa_exp_to: Optional[str] = None,
+    sort_by: str = "DB_DATE_EXCEL_UPLOAD",
+    sort_order: str = "desc",
+) -> dict:
+    query = db.query(MainDB).filter(
+        or_(
+            MainDB.DB_SECPA_EXP_DATE.isnot(None),
+            MainDB.DB_SECPA_ISSUED_ON.isnot(None),
+            MainDB.DB_APP_STATUS.isnot(None),
+            MainDB.DB_TYPE_DOC_RELEASED.isnot(None),
+            MainDB.DB_DATE_RELEASED.isnot(None),
+        )
+    )
+
+    if search:
+        query = query.filter(
+            or_(
+                MainDB.DB_APP_STATUS.ilike(f"%{search}%"),
+                MainDB.DB_TYPE_DOC_RELEASED.ilike(f"%{search}%"),
+                MainDB.DB_DATE_RELEASED.ilike(f"%{search}%"),
+                MainDB.DB_SECPA_EXP_DATE.ilike(f"%{search}%"),
+                MainDB.DB_SECPA_ISSUED_ON.ilike(f"%{search}%"),
+                MainDB.DB_PROD_BR_NAME.ilike(f"%{search}%"),
+                MainDB.DB_PROD_GEN_NAME.ilike(f"%{search}%"),
+            )
+        )
+
+    if app_status:
+        if app_status == "__EMPTY__":
+            query = query.filter(
+                or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "")
+            )
+        else:
+            query = query.filter(MainDB.DB_APP_STATUS == app_status)
+
+    if type_doc_released:
+        if type_doc_released == "__EMPTY__":
+            query = query.filter(
+                or_(MainDB.DB_TYPE_DOC_RELEASED.is_(None), MainDB.DB_TYPE_DOC_RELEASED == "")
+            )
+        else:
+            query = query.filter(MainDB.DB_TYPE_DOC_RELEASED == type_doc_released)
+
+    if date_released_from:
+        query = query.filter(MainDB.DB_DATE_RELEASED >= date_released_from)
+    if date_released_to:
+        query = query.filter(MainDB.DB_DATE_RELEASED <= date_released_to)
+    if secpa_exp_from:
+        query = query.filter(MainDB.DB_SECPA_EXP_DATE >= secpa_exp_from)
+    if secpa_exp_to:
+        query = query.filter(MainDB.DB_SECPA_EXP_DATE <= secpa_exp_to)
+
+    sort_column = getattr(MainDB, sort_by, MainDB.DB_DATE_EXCEL_UPLOAD)
+    query = query.order_by(desc(sort_column) if sort_order == "desc" else asc(sort_column))
+
+    total = query.count()
+    records = query.offset((page - 1) * page_size).limit(page_size).all()
+    total_pages = math.ceil(total / page_size) if total > 0 else 0
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "data": records,
+    }
+
+
+def get_release_app_statuses(db: Session):
+    results = (
+        db.query(MainDB.DB_APP_STATUS)
+        .filter(MainDB.DB_APP_STATUS.isnot(None), MainDB.DB_APP_STATUS != "")
+        .distinct()
+        .order_by(MainDB.DB_APP_STATUS)
+        .all()
+    )
+    return [r[0] for r in results]
+
+
+def get_release_doc_types(db: Session):
+    results = (
+        db.query(MainDB.DB_TYPE_DOC_RELEASED)
+        .filter(MainDB.DB_TYPE_DOC_RELEASED.isnot(None), MainDB.DB_TYPE_DOC_RELEASED != "")
+        .distinct()
+        .order_by(MainDB.DB_TYPE_DOC_RELEASED)
+        .all()
+    )
+    return [r[0] for r in results]
+
+# -----------------------------
+# SEAN 2 Overview KPI Summary
+# -----------------------------
+def get_overview_summary(db: Session) -> dict:
+    total = db.query(func.count(MainDB.DB_ID)).scalar() or 0
+
+    cpr_released = db.query(func.count(MainDB.DB_ID)).filter(
+        MainDB.DB_TYPE_DOC_RELEASED.ilike("%CPR%")
+    ).scalar() or 0
+
+    on_process = db.query(func.count(MainDB.DB_ID)).filter(
+        and_(
+            MainDB.DB_APP_STATUS.isnot(None),
+            MainDB.DB_APP_STATUS != "",
+            func.upper(MainDB.DB_APP_STATUS).notin_(["COMPLETED", "DISAPPROVED", "RELEASED"])
+        )
+    ).scalar() or 0
+
+    lod_released = db.query(func.count(MainDB.DB_ID)).filter(
+        MainDB.DB_TYPE_DOC_RELEASED.ilike("%LOD%")
+    ).scalar() or 0
+
+    return {
+        "total_applications": total,
+        "cpr_released": cpr_released,
+        "on_process": on_process,
+        "lod_released": lod_released,
     }
