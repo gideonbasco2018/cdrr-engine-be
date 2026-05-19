@@ -26,6 +26,7 @@ from app.api.routes import (
     spellcheck,
     closed_tasks,
     lead_assignment,
+    cpr_correction,    
 )
 api_router = APIRouter()
 
@@ -51,5 +52,6 @@ api_router.include_router(monitoring.router)
 api_router.include_router(spellcheck.router)
 api_router.include_router(closed_tasks.router)
 api_router.include_router(lead_assignment.router)
+api_router.include_router(cpr_correction.router)
 
  

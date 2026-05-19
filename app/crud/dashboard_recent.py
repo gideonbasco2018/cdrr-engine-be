@@ -51,34 +51,57 @@ import math
 
 def get_recent_applications(
     db: Session,
-    username: str,
+    username: Optional[str] = None, 
     limit: int = 10,
     page: int = 1,
     page_size: int = 10,
 ) -> dict:
+
     q = (
         db.query(ApplicationLogs)
         .join(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
         .options(joinedload(ApplicationLogs.main_db))
-        .filter(ApplicationLogs.user_name == username)
-        .order_by(ApplicationLogs.created_at.desc())
     )
+
+
+    if username is not None:
+        q = q.filter(ApplicationLogs.user_name == username)
+
+    q = q.order_by(ApplicationLogs.created_at.desc())
 
     total = q.count()
     total_pages = max(1, math.ceil(total / page_size))
-    rows_orm = q.offset((page - 1) * page_size).limit(page_size).all()
+
+    rows_orm = (
+        q.offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
 
     rows = []
     for log in rows_orm:
         main = log.main_db
-        status = log.application_status or ""
+
+        status = (log.application_status or "")
         s = status.upper()
+
         if s == "COMPLETED":
-            status_color, status_bg, status_label, icon = "#36a420", "#e9f7e6", "Completed", "✅"
+            status_color = "#36a420"
+            status_bg = "#e9f7e6"
+            status_label = "Completed"
+            icon = "✅"
+
         elif s == "IN PROGRESS":
-            status_color, status_bg, status_label, icon = "#f59e0b", "#fff8e7", "In Progress", "⏳"
+            status_color = "#f59e0b"
+            status_bg = "#fff8e7"
+            status_label = "In Progress"
+            icon = "⏳"
+
         else:
-            status_color, status_bg, status_label, icon = "#6b7280", "#f3f4f6", status, "📄"
+            status_color = "#6b7280"
+            status_bg = "#f3f4f6"
+            status_label = status or "Unknown"
+            icon = "📄"
 
         rows.append({
             "log_id": log.id,
@@ -92,7 +115,10 @@ def get_recent_applications(
             "status_bg": status_bg,
             "status_label": status_label,
             "icon": icon,
-            "date_display": log.created_at.strftime("%b %d") if log.created_at else "—",
+            "date_display": (
+                log.created_at.strftime("%b %d")
+                if log.created_at else "—"
+            ),
             "created_at": str(log.created_at) if log.created_at else None,
         })
 

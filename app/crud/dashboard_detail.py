@@ -99,9 +99,10 @@ def get_metric_detail(
     metric: str,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
-    accomplished_date_from: Optional[date] = None,  # ✅ new
-    accomplished_date_to: Optional[date] = None,    # ✅ new
-    app_step: Optional[str] = None,                 # ✅ new
+    accomplished_date_from: Optional[date] = None,  
+    accomplished_date_to: Optional[date] = None,    
+    app_step: Optional[str] = None,                 
+    dtn: Optional[str] = None,  
     page: int = 1,
     page_size: int = 10,
 ) -> MetricDetailResponse:
@@ -139,6 +140,11 @@ def get_metric_detail(
     if app_step:
         q = q.filter(ApplicationLogs.application_step == app_step)
 
+    # ── DTN filter ──────────────────────────────────────────────────────────
+    if dtn:
+        from sqlalchemy import cast, String
+        q = q.filter(cast(MainDB.DB_DTN, String).contains(dtn))
+        
     # ── Order + paginate ─────────────────────────────────────────────────────
     q = q.order_by(ApplicationLogs.start_date.desc(), ApplicationLogs.id.desc())
 

@@ -31,6 +31,7 @@ from app.api.routes import (
     spellcheck,
     closed_tasks,
     lead_assignment,
+    cpr_correction,
 )
 
 # ── Scheduler setup ───────────────────────────────────────────────────
@@ -115,6 +116,7 @@ app.include_router(monitoring.router)
 app.include_router(spellcheck.router) 
 app.include_router(closed_tasks.router) 
 app.include_router(lead_assignment.router) 
+app.include_router(cpr_correction.router) 
 
 
 @app.get("/")
