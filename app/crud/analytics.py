@@ -1,130 +1,10 @@
 # app/crud/analytics.py
-# from sqlalchemy.orm import Session
-# from sqlalchemy import func, and_, extract
-# from app.models.main_db import MainDB
-# from datetime import datetime
-# from typing import List
-
-
-# def _build_date_filters(date_column, year: int, month: int | None, day: int | None):
-#     """
-#     Builds SQL filters for TEXT date fields using STR_TO_DATE
-#     Expected format: YYYY-MM-DD (or compatible)
-#     """
-#     filters = [
-#         func.year(func.str_to_date(date_column, "%Y-%m-%d")) == year
-#     ]
-
-#     if month:
-#         filters.append(
-#             func.month(func.str_to_date(date_column, "%Y-%m-%d")) == month
-#         )
-
-#     if day:
-#         filters.append(
-#             func.day(func.str_to_date(date_column, "%Y-%m-%d")) == day
-#         )
-
-#     return filters
-
-
-# def count_received_fdac(
-#     db: Session,
-#     year: int,
-#     month: int | None = None,
-#     day: int | None = None,
-# ) -> int:
-#     filters = _build_date_filters(
-#         MainDB.DB_DATE_RECEIVED_FDAC, year, month, day
-#     )
-
-#     return (
-#         db.query(func.count(MainDB.DB_ID))
-#         .filter(MainDB.DB_DATE_RECEIVED_FDAC.isnot(None))
-#         .filter(*filters)
-#         .scalar()
-#         or 0
-#     )
-
-
-# def count_received_central(
-#     db: Session,
-#     year: int,
-#     month: int | None = None,
-#     day: int | None = None,
-# ) -> int:
-#     filters = _build_date_filters(
-#         MainDB.DB_DATE_RECEIVED_CENT, year, month, day
-#     )
-
-#     return (
-#         db.query(func.count(MainDB.DB_ID))
-#         .filter(MainDB.DB_DATE_RECEIVED_CENT.isnot(None))
-#         .filter(*filters)
-#         .scalar()
-#         or 0
-#     )
-
-
-# def get_monthly_breakdown(db: Session, year: int | None = None) -> List[dict]:
-#     """
-#     Get monthly breakdown of received applications (Jan-Dec)
-#     If year is None, use current year
-#     """
-#     if year is None:
-#         year = datetime.now().year
-    
-#     monthly_data = []
-#     month_names = [
-#         "January", "February", "March", "April", "May", "June",
-#         "July", "August", "September", "October", "November", "December"
-#     ]
-    
-#     for month_num in range(1, 13):
-#         fdac_count = count_received_fdac(db=db, year=year, month=month_num)
-#         central_count = count_received_central(db=db, year=year, month=month_num)
-        
-#         monthly_data.append({
-#             "period": month_names[month_num - 1],
-#             "month": month_num,
-#             "year": year,
-#             "fdac": fdac_count,
-#             "central": central_count,
-#             "total": fdac_count + central_count,
-#         })
-    
-#     return monthly_data
-
-
-# def get_yearly_breakdown(db: Session, num_years: int = 5) -> List[dict]:
-#     """
-#     Get yearly breakdown of received applications (last N years)
-#     """
-#     current_year = datetime.now().year
-#     yearly_data = []
-    
-#     for year in range(current_year - num_years + 1, current_year + 1):
-#         fdac_count = count_received_fdac(db=db, year=year)
-#         central_count = count_received_central(db=db, year=year)
-        
-#         yearly_data.append({
-#             "period": str(year),
-#             "year": year,
-#             "fdac": fdac_count,
-#             "central": central_count,
-#             "total": fdac_count + central_count,
-#         })
-    
-#     return yearly_data
-
-# NEW/5-15
-
-# app/crud/analytics.py
 
 from sqlalchemy.orm import Session
 from datetime import datetime
 from app.models.main_db import MainDB
 
+from sqlalchemy import case, func, Float, Integer, extract
 
 MONTHS_ORDER = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 
@@ -417,3 +297,80 @@ def get_analytics_top_countries(
             groups[country][category] += 1
 
     return sorted(groups.values(), key=lambda x: x["count"], reverse=True)[:limit]
+
+
+
+def get_analytics_frp_tat_trend(db: Session, year: str = "All", month: str = "All") -> list:
+    """
+    Computes average, min, max TAT (in days) for FRP and CRP applications
+    grouped by quarter based on DB_DATE_RECEIVED_CENT.
+    Supports optional year and month filtering.
+    """
+
+    month_col = func.month(MainDB.DB_DATE_RECEIVED_CENT)
+    year_col = func.year(MainDB.DB_DATE_RECEIVED_CENT)
+
+    quarter_label = case(
+        (month_col.in_([7, 8, 9]),  func.concat('Sep ', year_col)),
+        (month_col.in_([10, 11, 12]), func.concat('Dec ', year_col)),
+        (month_col.in_([1, 2, 3]),  func.concat('Mar ', year_col)),
+        (month_col.in_([4, 5, 6]),  func.concat('Jun ', year_col)),
+        else_='Unknown'
+    )
+
+    quarter_sort = case(
+        (month_col.in_([1, 2, 3]),   1),
+        (month_col.in_([4, 5, 6]),   2),
+        (month_col.in_([7, 8, 9]),   3),
+        (month_col.in_([10, 11, 12]), 4),
+        else_=5
+    )
+
+    tat_days = func.datediff(
+        MainDB.DB_DATE_RELEASED,
+        MainDB.DB_DATE_RECEIVED_CENT
+    )
+
+    query = (
+        db.query(
+            quarter_label.label("quarter"),
+            year_col.label("year"),
+            quarter_sort.label("quarter_sort"),
+            func.count(MainDB.DB_ID).label("total_applications"),
+            func.avg(tat_days).cast(Float).label("avg_tat_days"),
+            func.min(tat_days).cast(Integer).label("min_tat_days"),
+            func.max(tat_days).cast(Integer).label("max_tat_days"),
+        )
+        .filter(
+            MainDB.DB_PROCESSING_TYPE == "FRP and CRP",
+            MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
+            MainDB.DB_DATE_RELEASED.isnot(None),
+            MainDB.DB_TRASH.is_(None),
+        )
+    )
+
+    # ── Optional Filters ──────────────────────────────────────────
+    if year != "All":
+        query = query.filter(year_col == int(year))
+
+    if month != "All":
+        query = query.filter(month_col == int(month))
+    # ─────────────────────────────────────────────────────────────
+
+    rows = (
+        query
+        .group_by("quarter", "year", "quarter_sort")
+        .order_by("year", "quarter_sort")
+        .all()
+    )
+
+    return [
+        {
+            "quarter": row.quarter,
+            "total_applications": row.total_applications,
+            "avg_tat_days": round(row.avg_tat_days, 2) if row.avg_tat_days else None,
+            "min_tat_days": row.min_tat_days,
+            "max_tat_days": row.max_tat_days,
+        }
+        for row in rows
+    ]
