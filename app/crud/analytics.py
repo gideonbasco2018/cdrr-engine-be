@@ -340,6 +340,7 @@ def get_analytics_frp_tat_trend(db: Session, year: str = "All", month: str = "Al
             func.avg(tat_days).cast(Float).label("avg_tat_days"),
             func.min(tat_days).cast(Integer).label("min_tat_days"),
             func.max(tat_days).cast(Integer).label("max_tat_days"),
+            func.min(MainDB.DB_TIMELINE_CITIZEN_CHARTER).label("target_days"),
         )
         .filter(
             MainDB.DB_PROCESSING_TYPE == "FRP and CRP",
@@ -371,6 +372,7 @@ def get_analytics_frp_tat_trend(db: Session, year: str = "All", month: str = "Al
             "avg_tat_days": round(row.avg_tat_days, 2) if row.avg_tat_days else None,
             "min_tat_days": row.min_tat_days,
             "max_tat_days": row.max_tat_days,
+            "target_days":  row.target_days, 
         }
         for row in rows
     ]

@@ -82,6 +82,7 @@ class AnalyticsFRPTATItem(BaseModel):
     avg_tat_days: Optional[float] = None
     min_tat_days: Optional[int] = None
     max_tat_days: Optional[int] = None
+    target_days:  Optional[int]   = None
 
 class AnalyticsFRPTATResponse(BaseModel):
     data: List[AnalyticsFRPTATItem]
