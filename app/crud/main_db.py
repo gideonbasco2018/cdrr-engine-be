@@ -211,11 +211,19 @@ def get_main_db_records(
         query = query.filter(MainDB.DB_PROD_REPACKER_COUNTRY == repacker_country)
         print(f"✅ Applied repacker_country filter: {repacker_country}")
 
+
     if type_doc_released:
         CERTIFICATE_ALIASES = {"certificate", "cert"}
- 
-        if type_doc_released.lower() in CERTIFICATE_ALIASES:
-            # Match both "Certificate" and "Cert" (case-insensitive)
+
+        if type_doc_released == "__EMPTY__":
+            query = query.filter(
+                or_(
+                    MainDB.DB_TYPE_DOC_RELEASED.is_(None),
+                    MainDB.DB_TYPE_DOC_RELEASED == ""
+                )
+            )
+            print(f"✅ Applied type_doc_released filter (Blank/No Data)")
+        elif type_doc_released.lower() in CERTIFICATE_ALIASES:
             query = query.filter(
                 or_(
                     func.lower(MainDB.DB_TYPE_DOC_RELEASED) == "certificate",
