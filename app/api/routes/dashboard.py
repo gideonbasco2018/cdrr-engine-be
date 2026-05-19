@@ -264,6 +264,34 @@ def get_recent_applications(
         username=username,
     )
  
+@router.get(
+    "/global-recent-applications",
+    response_model=RecentApplicationsResponse,
+    summary="Global recent application logs (all users)",
+)
+def get_global_recent_applications(
+    limit: int = Query(50, ge=1, le=500),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    data = crud_recent.get_recent_applications(
+        db=db,
+        username=None,  
+        limit=limit,
+        page=page,
+        page_size=page_size,
+    )
+
+    return RecentApplicationsResponse(
+        data=data["rows"],
+        count=len(data["rows"]),
+        total=data["total"],
+        total_pages=data["total_pages"],
+        page=data["page"],
+        username="ALL",
+    )
  
 # ─────────────────────────────────────────────────────────────────────────────
 # GET /api/dashboard/stats/detail
@@ -300,6 +328,7 @@ def get_metric_detail(
         None,
         description="Filter rows by app_step (e.g. 'Quality Evaluation')",
     ),
+    dtn: Optional[str] = Query(None, description="Filter by DTN (partial match)"), 
     page: int = Query(
         default=1, ge=1,
         description="1-based page number",
@@ -344,6 +373,7 @@ def get_metric_detail(
             accomplished_date_from=accomplished_date_from,
             accomplished_date_to=accomplished_date_to,
             app_step=app_step,
+            dtn=dtn, 
             page=page,
             page_size=page_size,
         )
