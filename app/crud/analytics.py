@@ -345,8 +345,11 @@ def get_analytics_frp_tat_trend(db: Session, year: str = "All", month: str = "Al
         .filter(
             MainDB.DB_PROCESSING_TYPE == "FRP and CRP",
             MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
+            MainDB.DB_DATE_RECEIVED_CENT != "",
             MainDB.DB_DATE_RELEASED.isnot(None),
+            MainDB.DB_DATE_RELEASED != "",
             MainDB.DB_TRASH.is_(None),
+            MainDB.DB_APP_STATUS == "COMPLETED",
         )
     )
 
@@ -404,9 +407,11 @@ def get_analytics_frp_tat_outliers(
         .filter(
             MainDB.DB_PROCESSING_TYPE == "FRP and CRP",
             MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
+            MainDB.DB_DATE_RECEIVED_CENT != "",
             MainDB.DB_DATE_RELEASED.isnot(None),
+            MainDB.DB_DATE_RELEASED != "",
             MainDB.DB_TRASH.is_(None),
-            # Negative OR extreme
+            MainDB.DB_APP_STATUS == "COMPLETED",
             or_(
                 tat_days < 0,
                 tat_days > extreme_threshold,
