@@ -86,3 +86,19 @@ class AnalyticsFRPTATItem(BaseModel):
 
 class AnalyticsFRPTATResponse(BaseModel):
     data: List[AnalyticsFRPTATItem]
+
+class AnalyticsFRPTATOutlierItem(BaseModel):
+    db_id:               int
+    dtn:                 Optional[str] = None
+    quarter:             Optional[str] = None
+    date_received_cent:  Optional[str] = None
+    date_released:       Optional[str] = None
+    tat_days:            Optional[int] = None
+    est_company:         Optional[str] = None
+    issue:               str  
+
+class AnalyticsFRPTATOutlierResponse(BaseModel):
+    total:    int
+    negative: int
+    extreme:  int
+    data:     List[AnalyticsFRPTATOutlierItem]

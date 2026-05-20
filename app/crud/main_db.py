@@ -78,6 +78,8 @@ def get_main_db_records(
     type_doc_released   = filters.get("type_doc_released")
     date_released_from  = filters.get("date_released_from")
     date_released_to    = filters.get("date_released_to")
+    date_received_cent_from = filters.get("date_received_cent_from")
+    date_received_cent_to   = filters.get("date_received_cent_to")     
     user_uploader           = filters.get("user_uploader")
     date_excel_upload_from  = filters.get("date_excel_upload_from")
     date_excel_upload_to    = filters.get("date_excel_upload_to")
@@ -243,6 +245,14 @@ def get_main_db_records(
     if date_released_to:
         query = query.filter(MainDB.DB_DATE_RELEASED <= date_released_to + " 23:59:59")
         print(f"✅ Applied date_released_to filter: {date_released_to}")   
+
+    if date_received_cent_from:
+        query = query.filter(MainDB.DB_DATE_RECEIVED_CENT >= date_received_cent_from)
+        print(f"✅ Applied date_received_cent_from filter: {date_received_cent_from}")
+
+    if date_received_cent_to:
+        query = query.filter(MainDB.DB_DATE_RECEIVED_CENT <= date_received_cent_to + " 23:59:59")
+        print(f"✅ Applied date_received_cent_to filter: {date_received_cent_to}")    
     
     if user_uploader:
         query = query.filter(MainDB.DB_USER_UPLOADER.like(f"%{user_uploader}%"))
