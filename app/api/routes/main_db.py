@@ -1139,6 +1139,8 @@ async def export_filtered_records(
     type_doc_released: Optional[str] = Query(None),
     date_released_from: Optional[str] = Query(None),
     date_released_to: Optional[str] = Query(None),
+    date_received_cent_from: Optional[str] = Query(None),
+    date_received_cent_to: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
     """Export filtered records to Excel"""
@@ -1172,6 +1174,8 @@ async def export_filtered_records(
             "type_doc_released": type_doc_released,
             "date_released_from": date_released_from,
             "date_released_to": date_released_to,
+            "date_received_cent_from": date_received_cent_from,
+            "date_received_cent_to": date_received_cent_to,
         }
 
         records, total = get_main_db_records(
