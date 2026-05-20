@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 from app.models.main_db import MainDB
 
-from sqlalchemy import case, func, Float, Integer, extract
+from sqlalchemy import case, func, Float, Integer, extract, or_
 
 MONTHS_ORDER = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 
@@ -340,6 +340,7 @@ def get_analytics_frp_tat_trend(db: Session, year: str = "All", month: str = "Al
             func.avg(tat_days).cast(Float).label("avg_tat_days"),
             func.min(tat_days).cast(Integer).label("min_tat_days"),
             func.max(tat_days).cast(Integer).label("max_tat_days"),
+            func.min(MainDB.DB_TIMELINE_CITIZEN_CHARTER).label("target_days"),
         )
         .filter(
             MainDB.DB_PROCESSING_TYPE == "FRP and CRP",
@@ -371,6 +372,86 @@ def get_analytics_frp_tat_trend(db: Session, year: str = "All", month: str = "Al
             "avg_tat_days": round(row.avg_tat_days, 2) if row.avg_tat_days else None,
             "min_tat_days": row.min_tat_days,
             "max_tat_days": row.max_tat_days,
+            "target_days":  row.target_days, 
         }
         for row in rows
     ]
+
+def get_analytics_frp_tat_outliers(
+    db: Session,
+    extreme_threshold: int = 365
+) -> dict:
+    """
+    Returns FRP and CRP records with:
+    - Negative TAT (released before received)
+    - Extreme TAT (more than extreme_threshold days)
+    """
+
+    tat_days = func.datediff(
+        MainDB.DB_DATE_RELEASED,
+        MainDB.DB_DATE_RECEIVED_CENT
+    )
+
+    rows = (
+        db.query(
+            MainDB.DB_ID,
+            MainDB.DB_DTN,
+            MainDB.DB_DATE_RECEIVED_CENT,
+            MainDB.DB_DATE_RELEASED,
+            MainDB.DB_EST_LTO_COMP,
+            tat_days.label("tat_days"),
+        )
+        .filter(
+            MainDB.DB_PROCESSING_TYPE == "FRP and CRP",
+            MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
+            MainDB.DB_DATE_RELEASED.isnot(None),
+            MainDB.DB_TRASH.is_(None),
+            # Negative OR extreme
+            or_(
+                tat_days < 0,
+                tat_days > extreme_threshold,
+            )
+        )
+        .order_by(tat_days)  # negative first, then extreme
+        .all()
+    )
+
+    result = []
+    for row in rows:
+        # Determine quarter from DB_DATE_RECEIVED_CENT
+        quarter = None
+        if row.DB_DATE_RECEIVED_CENT:
+            try:
+                from datetime import datetime
+                d = datetime.strptime(str(row.DB_DATE_RECEIVED_CENT), "%Y-%m-%d")
+                m = d.month
+                y = d.year
+                if m in [7, 8, 9]:    quarter = f"Sep {y}"
+                elif m in [10,11,12]: quarter = f"Dec {y}"
+                elif m in [1, 2, 3]:  quarter = f"Mar {y}"
+                else:                 quarter = f"Jun {y}"
+            except Exception:
+                pass
+
+        issue = "negative_tat" if (row.tat_days or 0) < 0 else "extreme_tat"
+
+        result.append({
+            "db_id":              row.DB_ID,
+            "dtn":                str(row.DB_DTN) if row.DB_DTN else None,
+            "quarter":            quarter,
+            "date_received_cent": str(row.DB_DATE_RECEIVED_CENT) if row.DB_DATE_RECEIVED_CENT else None,
+            "date_released":      str(row.DB_DATE_RELEASED)      if row.DB_DATE_RELEASED      else None,
+            "tat_days":           row.tat_days,
+            "est_company":        row.DB_EST_LTO_COMP,
+            "issue":              issue,
+        })
+
+    negative_count = sum(1 for r in result if r["issue"] == "negative_tat")
+    extreme_count  = sum(1 for r in result if r["issue"] == "extreme_tat")
+
+    return {
+        "total":    len(result),
+        "negative": negative_count,
+        "extreme":  extreme_count,
+        "data":     result,
+    }

@@ -14,7 +14,8 @@ from app.schemas.analytics import (
     AnalyticsTopDrugsResponse,
     AnalyticsTopCountriesResponse,
     AnalyticsAvailableYearsResponse,
-    AnalyticsFRPTATResponse
+    AnalyticsFRPTATResponse,
+    AnalyticsFRPTATOutlierResponse
 )
 from app.crud import analytics as crud_analytics
 
@@ -95,3 +96,20 @@ def get_frp_tat_trend(
     """
     data = crud_analytics.get_analytics_frp_tat_trend(db, year=year, month=month)
     return {"data": data}
+
+@router.get("/frp-tat-outliers", response_model=AnalyticsFRPTATOutlierResponse)
+def get_frp_tat_outliers(
+    extreme_threshold: int = Query(365, ge=1),
+    db: Session = Depends(get_db),
+):
+    """
+    Returns suspicious FRP & CRP records:
+    - negative_tat: released before received (data entry error)
+    - extreme_tat:  TAT exceeds threshold in days (default 365)
+
+    Adjust extreme_threshold query param as needed.
+    e.g. /frp-tat-outliers?extreme_threshold=180
+    """
+    return crud_analytics.get_analytics_frp_tat_outliers(
+        db, extreme_threshold=extreme_threshold
+    )
