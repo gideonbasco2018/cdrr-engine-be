@@ -1146,6 +1146,8 @@ async def export_filtered_records(
     date_released_to: Optional[str] = Query(None),
     date_received_cent_from: Optional[str] = Query(None),
     date_received_cent_to: Optional[str] = Query(None),
+    null_date_released: Optional[str] = Query(None),        
+    null_date_received_cent: Optional[str] = Query(None), 
     db: Session = Depends(get_db)
 ):
     """Export filtered records to Excel"""
@@ -1181,6 +1183,8 @@ async def export_filtered_records(
             "date_released_to": date_released_to,
             "date_received_cent_from": date_received_cent_from,
             "date_received_cent_to": date_received_cent_to,
+            "null_date_released": null_date_released,       
+            "null_date_received_cent": null_date_received_cent, 
         }
 
         records, total = get_main_db_records(
