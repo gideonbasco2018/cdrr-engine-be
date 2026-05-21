@@ -296,54 +296,62 @@ def get_main_db(
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=1000),
     search: Optional[str] = Query(None),
+    # ✅ BAGO — multiple DTNs as comma-separated string
+    dtns: Optional[str] = Query(None, description="Comma-separated DTN numbers, e.g. 20260319173438,20260422154843"),
     status: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
-    prescription: Optional[str] = Query(None, description="Filter by Prescription (e.g., 'OTC', 'Rx')"),
-    prescription_not: Optional[str] = Query(None, description="Exclude by Prescription"),
-    dtn: Optional[int] = Query(None, description="Filter by DTN"),
-    manufacturer: Optional[str] = Query(None, description="Filter by Manufacturer"),
-    lto_company: Optional[str] = Query(None, description="Filter by LTO Company"),
-    brand_name: Optional[str] = Query(None, description="Filter by Brand Name"),
-    generic_name: Optional[str] = Query(None, description="Filter by Generic Name"),
-    app_status: Optional[str] = Query(None, description="Filter by Application Status"),
-    app_type: Optional[str] = Query(None, description="Filter by Application Type"),
-    processing_type: Optional[str] = Query(None, description="Filter by Processing Type"),
-    # ✅ DAGDAG — Supply chain filters
-    dosage_form: Optional[str] = Query(None, description="Filter by Dosage Form"),
-    manufacturer_country: Optional[str] = Query(None, description="Filter by Manufacturer Country"),
-    trader: Optional[str] = Query(None, description="Filter by Trader"),
-    trader_country: Optional[str] = Query(None, description="Filter by Trader Country"),
-    importer: Optional[str] = Query(None, description="Filter by Importer"),
-    importer_country: Optional[str] = Query(None, description="Filter by Importer Country"),
-    distributor: Optional[str] = Query(None, description="Filter by Distributor"),
-    distributor_country: Optional[str] = Query(None, description="Filter by Distributor Country"),
-    repacker: Optional[str] = Query(None, description="Filter by Repacker"),
-    repacker_country: Optional[str] = Query(None, description="Filter by Repacker Country"),
-    type_doc_released: Optional[str] = Query(None, description="Filter by Type of Document Released"),
-    date_released_from: Optional[str] = Query(None, description="Filter by Date Released from"),
-    date_released_to: Optional[str] = Query(None, description="Filter by Date Released to"),
-    date_received_cent_from: Optional[str] = Query(None, description="Filter by Date Received Central from"),
-    date_received_cent_to: Optional[str] = Query(None, description="Filter by Date Received Central to"),   
-
-    user_uploader: Optional[str] = Query(None, description="Filter by User Uploader"),
-    date_excel_upload_from: Optional[str] = Query(None, description="Filter by Date Excel Upload from"),
-    date_excel_upload_to: Optional[str] = Query(None, description="Filter by Date Excel Upload to"),
-  
-    null_date_released: Optional[str] = Query(None, description="Filter records with no date released"),
-    null_date_received_cent: Optional[str] = Query(None, description="Filter records with no date received central"),
+    prescription: Optional[str] = Query(None),
+    prescription_not: Optional[str] = Query(None),
+    dtn: Optional[int] = Query(None),
+    manufacturer: Optional[str] = Query(None),
+    lto_company: Optional[str] = Query(None),
+    brand_name: Optional[str] = Query(None),
+    generic_name: Optional[str] = Query(None),
+    app_status: Optional[str] = Query(None),
+    app_type: Optional[str] = Query(None),
+    processing_type: Optional[str] = Query(None),
+    dosage_form: Optional[str] = Query(None),
+    manufacturer_country: Optional[str] = Query(None),
+    trader: Optional[str] = Query(None),
+    trader_country: Optional[str] = Query(None),
+    importer: Optional[str] = Query(None),
+    importer_country: Optional[str] = Query(None),
+    distributor: Optional[str] = Query(None),
+    distributor_country: Optional[str] = Query(None),
+    repacker: Optional[str] = Query(None),
+    repacker_country: Optional[str] = Query(None),
+    type_doc_released: Optional[str] = Query(None),
+    date_released_from: Optional[str] = Query(None),
+    date_released_to: Optional[str] = Query(None),
+    date_received_cent_from: Optional[str] = Query(None),
+    date_received_cent_to: Optional[str] = Query(None),
+    user_uploader: Optional[str] = Query(None),
+    date_excel_upload_from: Optional[str] = Query(None),
+    date_excel_upload_to: Optional[str] = Query(None),
+    null_date_released: Optional[str] = Query(None),
+    null_date_received_cent: Optional[str] = Query(None),
     sort_by: str = Query("DB_DATE_EXCEL_UPLOAD"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     db: Session = Depends(get_db)
 ):
     """Get paginated list of main database records with flexible filtering"""
     skip = (page - 1) * page_size
-    
+ 
+    # ✅ BAGO — parse comma-separated DTNs into list of ints
+    parsed_dtns = []
+    if dtns:
+        for raw in dtns.split(","):
+            raw = raw.strip()
+            if raw.isdigit():
+                parsed_dtns.append(int(raw))
+ 
     filters = {
         "status": status,
         "category": category,
         "prescription": prescription,
         "prescription_not": prescription_not,
         "dtn": dtn,
+        "dtns": parsed_dtns if parsed_dtns else None,  # ✅ BAGO
         "manufacturer": manufacturer,
         "lto_company": lto_company,
         "brand_name": brand_name,
@@ -351,7 +359,6 @@ def get_main_db(
         "app_status": app_status,
         "app_type": app_type,
         "processing_type": processing_type,
-        # ✅ DAGDAG — Supply chain filters
         "dosage_form": dosage_form,
         "manufacturer_country": manufacturer_country,
         "trader": trader,
@@ -373,7 +380,7 @@ def get_main_db(
         "date_excel_upload_from": date_excel_upload_from,
         "date_excel_upload_to": date_excel_upload_to,
     }
-    
+ 
     records, total = get_main_db_records(
         db=db,
         skip=skip,
@@ -391,7 +398,6 @@ def get_main_db(
         "total_pages": total_pages,
         "data": records
     }
-
 
 # ✅ Get unique processing types with counts
 @router.get("/processing-types")
