@@ -82,6 +82,22 @@ def get_top_drugs(
     data = crud_analytics.get_analytics_top_drugs(db, year=year, month=month, prescription=prescription, limit=limit)
     return {"data": data}
 
+@router.get("/top-countries", response_model=AnalyticsTopCountriesResponse)
+def get_top_countries(
+    entity_type: str = Query("mfr"),
+    year: str = Query("All"),
+    month: str = Query("All"),
+    prescription: str = Query("All"),
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+):
+    data = crud_analytics.get_analytics_top_countries(
+        db, entity_type=entity_type, year=year,
+        month=month, prescription=prescription, limit=limit,
+    )
+    return {"data": data}
+
+
 @router.get("/frp-tat-trend", response_model=AnalyticsFRPTATResponse)
 def get_frp_tat_trend(
     year: str = Query("All"),

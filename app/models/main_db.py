@@ -1,6 +1,6 @@
 # app/models/main_db.py
 
-from sqlalchemy import Column, Integer, BigInteger, String, Text, Date, DateTime
+from sqlalchemy import Column, Integer, BigInteger, String, Text, Date, DateTime, Index
 from sqlalchemy.dialects.mysql import TINYINT
 from sqlalchemy.sql import func
 from app.db.base_class import Base
@@ -156,6 +156,18 @@ class MainDB(Base):
     DB_DECISION_AUTHORITY = Column(String(255), nullable=True, comment="Decision Authority Name")
     DB_DECISION_RESULT = Column(String(255), nullable=True, comment="Decision Result")
     DB_DECISION_SIGNED_DATE = Column(Date, nullable=True, comment="Decision Authority Signed Date")
+
+    __table_args__ = (
+        Index("ix_an_date_released",       "DB_DATE_RELEASED",        mysql_length=10),
+        Index("ix_an_type_doc_released",   "DB_TYPE_DOC_RELEASED",    mysql_length=20),
+        Index("ix_an_prod_class_prescrip", "DB_PROD_CLASS_PRESCRIP",  mysql_length=50),
+        Index("ix_an_prod_br_name",        "DB_PROD_BR_NAME",         mysql_length=191),
+        Index("ix_an_prod_manu_country",   "DB_PROD_MANU_COUNTRY",    mysql_length=100),
+        Index("ix_an_trader_country",      "DB_PROD_TRADER_COUNTRY",  mysql_length=100),
+        Index("ix_an_importer_country",    "DB_PROD_IMPORTER_COUNTRY",mysql_length=100),
+        Index("ix_an_distri_country",      "DB_PROD_DISTRI_COUNTRY",  mysql_length=100),
+        Index("ix_an_repacker_country",    "DB_PROD_REPACKER_COUNTRY",mysql_length=100),
+    )
 
     
     def __repr__(self):

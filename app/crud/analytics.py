@@ -1,71 +1,49 @@
 # app/crud/analytics.py
 
 from sqlalchemy.orm import Session
-from datetime import datetime
+from sqlalchemy import case, func, Float, Integer, or_
 from app.models.main_db import MainDB
-
-from sqlalchemy import case, func, Float, Integer, extract, or_
 
 MONTHS_ORDER = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 
-
-# ── Helper: parse date safely ─────────────────────────────────
-def _parse_date(date_str):
-    if not date_str:
-        return None
-    try:
-        return datetime.strptime(date_str.strip(), "%Y-%m-%d")
-    except Exception:
-        return None
-
-
-# ── Helper: classify record ───────────────────────────────────
-def _classify(record):
-    doc = (record.DB_TYPE_DOC_RELEASED or "").upper()
-    status = (record.DB_APP_STATUS or "").upper()
-    if "CPR" in doc:
-        return "cpr"
-    elif "LOD" in doc:
-        return "lod"
-    elif status == "ON-PROCESS":
-        return "on_process"
-    elif status == "COMPLETED":
-        return "completed"
-    return "other"
+def _base_query(db, year="All", month="All", prescription="All"):
+    q = db.query(MainDB)
+    if prescription != "All":
+        q = q.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
+    if year != "All":
+        q = q.filter(func.substr(MainDB.DB_DATE_RELEASED, 1, 4) == str(year))
+        if month != "All":
+            month_num = str(int(month) + 1).zfill(2)
+            q = q.filter(func.substr(MainDB.DB_DATE_RELEASED, 6, 2) == month_num)
+    return q
 
 
-# ── Helper: apply year/month/prescription filters ─────────────
-def _apply_filters(records, year="All", month="All", prescription="All"):
-    result = []
-    for r in records:
-        if prescription != "All":
-            if (r.DB_PROD_CLASS_PRESCRIP or "") != prescription:
-                continue
-        if year != "All":
-            d = _parse_date(r.DB_DATE_RELEASED)
-            if not d or d.year != int(year):
-                continue
-            if month != "All":
-                if d.month != int(month) + 1:
-                    continue
-        result.append(r)
-    return result
+def _cpr_case():
+    return func.sum(case((MainDB.DB_TYPE_DOC_RELEASED.ilike("%CPR%"), 1), else_=0))
+
+def _lod_case():
+    return func.sum(case((MainDB.DB_TYPE_DOC_RELEASED.ilike("%LOD%"), 1), else_=0))
+
+def _on_process_case():
+    return func.sum(case((MainDB.DB_APP_STATUS.ilike("ON-PROCESS"), 1), else_=0))
+
+def _completed_case():
+    return func.sum(case((MainDB.DB_APP_STATUS.ilike("COMPLETED"), 1), else_=0))
 
 
 # ── 1. Available Years ────────────────────────────────────────
 def get_analytics_available_years(db: Session) -> list:
-    records = db.query(MainDB.DB_DATE_RELEASED).filter(
-        MainDB.DB_DATE_RELEASED.isnot(None),
-        MainDB.DB_DATE_RELEASED != "",
-    ).all()
-
-    years = set()
-    for r in records:
-        d = _parse_date(r.DB_DATE_RELEASED)
-        if d:
-            years.add(str(d.year))
-
-    return ["All"] + sorted(years)
+    rows = (
+        db.query(func.substr(MainDB.DB_DATE_RELEASED, 1, 4).label("yr"))
+        .filter(
+            MainDB.DB_DATE_RELEASED.isnot(None),
+            MainDB.DB_DATE_RELEASED != "",
+        )
+        .distinct()
+        .all()
+    )
+    years = sorted({r.yr for r in rows if r.yr})
+    return ["All"] + years
 
 
 # ── 2. Stat Cards Summary ─────────────────────────────────────
@@ -75,23 +53,26 @@ def get_analytics_summary(
     month: str = "All",
     prescription: str = "All",
 ) -> dict:
-    all_records = db.query(MainDB).all()
-    records = _apply_filters(all_records, year, month, prescription)
-
-    total = len(records)
-    cpr = sum(1 for r in records if "CPR" in (r.DB_TYPE_DOC_RELEASED or "").upper())
-    lod = sum(1 for r in records if "LOD" in (r.DB_TYPE_DOC_RELEASED or "").upper())
-    on_process = sum(1 for r in records if (r.DB_APP_STATUS or "").upper() == "ON-PROCESS")
-    completed = sum(1 for r in records if (r.DB_APP_STATUS or "").upper() == "COMPLETED")
-    approval_rate = round((cpr / total * 100), 1) if total > 0 else 0.0
-
+    row = (
+        _base_query(db, year, month, prescription)
+        .with_entities(
+            func.count(MainDB.DB_ID).label("total"),
+            _cpr_case().label("cpr"),
+            _lod_case().label("lod"),
+            _on_process_case().label("on_process"),
+            _completed_case().label("completed"),
+        )
+        .one()
+    )
+    total = row.total or 0
+    cpr   = row.cpr   or 0
     return {
-        "total": total,
-        "cpr": cpr,
-        "lod": lod,
-        "on_process": on_process,
-        "completed": completed,
-        "approval_rate": approval_rate,
+        "total":         total,
+        "cpr":           cpr,
+        "lod":           row.lod        or 0,
+        "on_process":    row.on_process or 0,
+        "completed":     row.completed  or 0,
+        "approval_rate": round(cpr / total * 100, 1) if total else 0.0,
     }
 
 
@@ -102,42 +83,46 @@ def get_analytics_trend(
     month: str = "All",
     prescription: str = "All",
 ) -> list:
-    all_records = db.query(MainDB).filter(
-        MainDB.DB_DATE_RELEASED.isnot(None),
-        MainDB.DB_DATE_RELEASED != "",
-    ).all()
-
-    records = _apply_filters(all_records, year, month, prescription)
-    groups = {}
-
-    for r in records:
-        d = _parse_date(r.DB_DATE_RELEASED)
-        if not d:
-            continue
-
-        key = str(d.year) if year == "All" else d.strftime("%b")
-
-        if key not in groups:
-            groups[key] = {
-                "label": key,
-                "cpr": 0,
-                "lod": 0,
-                "on_process": 0,
-                "completed": 0,
-            }
-
-        category = _classify(r)
-        if category in groups[key]:
-            groups[key][category] += 1
-
     if year == "All":
-        return sorted(groups.values(), key=lambda x: x["label"])
+        group_expr = func.substr(MainDB.DB_DATE_RELEASED, 1, 4).label("grp")
     else:
-        return sorted(
-            groups.values(),
-            key=lambda x: MONTHS_ORDER.index(x["label"])
-            if x["label"] in MONTHS_ORDER else 99,
+        group_expr = func.substr(MainDB.DB_DATE_RELEASED, 6, 2).label("grp")
+
+    rows = (
+        _base_query(db, year, month, prescription)
+        .filter(
+            MainDB.DB_DATE_RELEASED.isnot(None),
+            MainDB.DB_DATE_RELEASED != "",
         )
+        .with_entities(
+            group_expr,
+            _cpr_case().label("cpr"),
+            _lod_case().label("lod"),
+            _on_process_case().label("on_process"),
+            _completed_case().label("completed"),
+        )
+        .group_by("grp")
+        .all()
+    )
+
+    result = []
+    for r in rows:
+        if year == "All":
+            label, sort_key = r.grp, r.grp
+        else:
+            label    = MONTH_ABBR.get(int(r.grp), r.grp)
+            sort_key = int(r.grp)
+        result.append({
+            "label":      label,
+            "cpr":        r.cpr        or 0,
+            "lod":        r.lod        or 0,
+            "on_process": r.on_process or 0,
+            "completed":  r.completed  or 0,
+            "_s":         sort_key,
+        })
+
+    result.sort(key=lambda x: x.pop("_s"))
+    return result
 
 
 # ── 4. By Classification ──────────────────────────────────────
@@ -147,65 +132,69 @@ def get_analytics_by_classification(
     month: str = "All",
     prescription: str = "All",
 ) -> list:
-    all_records = db.query(MainDB).filter(
-        MainDB.DB_PROD_CLASS_PRESCRIP.isnot(None),
-        MainDB.DB_PROD_CLASS_PRESCRIP != "",
-    ).all()
-
-    records = _apply_filters(all_records, year, month, prescription)
-    groups = {}
-
-    for r in records:
-        rx = r.DB_PROD_CLASS_PRESCRIP
-        if rx not in groups:
-            groups[rx] = {"type": rx, "count": 0, "cpr": 0, "lod": 0}
-
-        groups[rx]["count"] += 1
-        doc = (r.DB_TYPE_DOC_RELEASED or "").upper()
-        if "CPR" in doc:
-            groups[rx]["cpr"] += 1
-        elif "LOD" in doc:
-            groups[rx]["lod"] += 1
-
-    for g in groups.values():
-        g["rate"] = round((g["cpr"] / g["count"] * 100), 1) if g["count"] > 0 else 0.0
-
-    return sorted(groups.values(), key=lambda x: x["count"], reverse=True)
+    rows = (
+        _base_query(db, year, month, prescription)
+        .filter(
+            MainDB.DB_PROD_CLASS_PRESCRIP.isnot(None),
+            MainDB.DB_PROD_CLASS_PRESCRIP != "",
+        )
+        .with_entities(
+            MainDB.DB_PROD_CLASS_PRESCRIP.label("rx"),
+            func.count(MainDB.DB_ID).label("count"),
+            _cpr_case().label("cpr"),
+            _lod_case().label("lod"),
+        )
+        .group_by(MainDB.DB_PROD_CLASS_PRESCRIP)
+        .order_by(func.count(MainDB.DB_ID).desc())
+        .all()
+    )
+    result = []
+    for r in rows:
+        count = r.count or 0
+        cpr   = r.cpr   or 0
+        result.append({
+            "type":  r.rx,
+            "count": count,
+            "cpr":   cpr,
+            "lod":   r.lod or 0,
+            "rate":  round(cpr / count * 100, 1) if count else 0.0,
+        })
+    return result
 
 
 # ── 5. Year-by-Year Summary ───────────────────────────────────
 def get_analytics_year_summary(db: Session) -> list:
-    records = db.query(MainDB).filter(
-        MainDB.DB_DATE_RELEASED.isnot(None),
-        MainDB.DB_DATE_RELEASED != "",
-    ).all()
-
-    groups = {}
-    for r in records:
-        d = _parse_date(r.DB_DATE_RELEASED)
-        if not d:
-            continue
-
-        year = str(d.year)
-        if year not in groups:
-            groups[year] = {
-                "year": year,
-                "total": 0,
-                "cpr": 0,
-                "lod": 0,
-                "on_process": 0,
-                "completed": 0,
-            }
-
-        groups[year]["total"] += 1
-        category = _classify(r)
-        if category in groups[year]:
-            groups[year][category] += 1
-
-    for g in groups.values():
-        g["rate"] = round((g["cpr"] / g["total"] * 100), 1) if g["total"] > 0 else 0.0
-
-    return sorted(groups.values(), key=lambda x: x["year"])
+    rows = (
+        db.query(
+            func.substr(MainDB.DB_DATE_RELEASED, 1, 4).label("yr"),
+            func.count(MainDB.DB_ID).label("total"),
+            _cpr_case().label("cpr"),
+            _lod_case().label("lod"),
+            _on_process_case().label("on_process"),
+            _completed_case().label("completed"),
+        )
+        .filter(
+            MainDB.DB_DATE_RELEASED.isnot(None),
+            MainDB.DB_DATE_RELEASED != "",
+        )
+        .group_by("yr")
+        .order_by("yr")
+        .all()
+    )
+    result = []
+    for r in rows:
+        total = r.total or 0
+        cpr   = r.cpr   or 0
+        result.append({
+            "year":       r.yr,
+            "total":      total,
+            "cpr":        cpr,
+            "lod":        r.lod        or 0,
+            "on_process": r.on_process or 0,
+            "completed":  r.completed  or 0,
+            "rate":       round(cpr / total * 100, 1) if total else 0.0,
+        })
+    return result
 
 
 # ── 6. Top Drugs ──────────────────────────────────────────────
@@ -216,46 +205,48 @@ def get_analytics_top_drugs(
     prescription: str = "All",
     limit: int = 8,
 ) -> list:
-    all_records = db.query(MainDB).filter(
-        MainDB.DB_PROD_BR_NAME.isnot(None),
-        MainDB.DB_PROD_BR_NAME != "",
-    ).all()
-
-    records = _apply_filters(all_records, year, month, prescription)
-    groups = {}
-
-    for r in records:
-        name = r.DB_PROD_BR_NAME
-        if name not in groups:
-            groups[name] = {
-                "name": name,
-                "generic": r.DB_PROD_GEN_NAME or "",
-                "rx": r.DB_PROD_CLASS_PRESCRIP or "",
-                "total": 0,
-                "cpr": 0,
-                "lod": 0,
-            }
-
-        groups[name]["total"] += 1
-        doc = (r.DB_TYPE_DOC_RELEASED or "").upper()
-        if "CPR" in doc:
-            groups[name]["cpr"] += 1
-        elif "LOD" in doc:
-            groups[name]["lod"] += 1
-
-    for g in groups.values():
-        g["rate"] = round((g["cpr"] / g["total"] * 100), 1) if g["total"] > 0 else 0.0
-
-    return sorted(groups.values(), key=lambda x: x["total"], reverse=True)[:limit]
+    rows = (
+        _base_query(db, year, month, prescription)
+        .filter(
+            MainDB.DB_PROD_BR_NAME.isnot(None),
+            MainDB.DB_PROD_BR_NAME != "",
+        )
+        .with_entities(
+            MainDB.DB_PROD_BR_NAME.label("name"),
+            func.min(MainDB.DB_PROD_GEN_NAME).label("generic"),
+            func.min(MainDB.DB_PROD_CLASS_PRESCRIP).label("rx"),
+            func.count(MainDB.DB_ID).label("total"),
+            _cpr_case().label("cpr"),
+            _lod_case().label("lod"),
+        )
+        .group_by(MainDB.DB_PROD_BR_NAME)
+        .order_by(func.count(MainDB.DB_ID).desc())
+        .limit(limit)
+        .all()
+    )
+    result = []
+    for r in rows:
+        total = r.total or 0
+        cpr   = r.cpr   or 0
+        result.append({
+            "name":    r.name,
+            "generic": r.generic or "",
+            "rx":      r.rx      or "",
+            "total":   total,
+            "cpr":     cpr,
+            "lod":     r.lod or 0,
+            "rate":    round(cpr / total * 100, 1) if total else 0.0,
+        })
+    return result
 
 
 # ── 7. Top Countries ─────────────────────────────────────────
 ENTITY_FIELD_MAP = {
-    "mfr":          "DB_PROD_MANU_COUNTRY",
-    "trader":       "DB_PROD_TRADER_COUNTRY",
-    "importer":     "DB_PROD_IMPORTER_COUNTRY",
-    "distributor":  "DB_PROD_DISTRI_COUNTRY",
-    "repacker":     "DB_PROD_REPACKER_COUNTRY",
+    "mfr":         "DB_PROD_MANU_COUNTRY",
+    "trader":      "DB_PROD_TRADER_COUNTRY",
+    "importer":    "DB_PROD_IMPORTER_COUNTRY",
+    "distributor": "DB_PROD_DISTRI_COUNTRY",
+    "repacker":    "DB_PROD_REPACKER_COUNTRY",
 }
 
 def get_analytics_top_countries(
@@ -267,36 +258,33 @@ def get_analytics_top_countries(
     limit: int = 10,
 ) -> list:
     field_name = ENTITY_FIELD_MAP.get(entity_type, "DB_PROD_MANU_COUNTRY")
-    field = getattr(MainDB, field_name)
+    field      = getattr(MainDB, field_name)
 
-    all_records = db.query(MainDB).filter(
-        field.isnot(None),
-        field != "",
-    ).all()
-
-    records = _apply_filters(all_records, year, month, prescription)
-    groups = {}
-
-    for r in records:
-        country = getattr(r, field_name)
-        if not country:
-            continue
-
-        if country not in groups:
-            groups[country] = {
-                "country": country,
-                "count": 0,
-                "cpr": 0,
-                "lod": 0,
-                "on_process": 0,
-            }
-
-        groups[country]["count"] += 1
-        category = _classify(r)
-        if category in groups[country]:
-            groups[country][category] += 1
-
-    return sorted(groups.values(), key=lambda x: x["count"], reverse=True)[:limit]
+    rows = (
+        _base_query(db, year, month, prescription)
+        .filter(field.isnot(None), field != "")
+        .with_entities(
+            field.label("country"),
+            func.count(MainDB.DB_ID).label("count"),
+            _cpr_case().label("cpr"),
+            _lod_case().label("lod"),
+            _on_process_case().label("on_process"),
+        )
+        .group_by(field)
+        .order_by(func.count(MainDB.DB_ID).desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "country":    r.country,
+            "count":      r.count      or 0,
+            "cpr":        r.cpr        or 0,
+            "lod":        r.lod        or 0,
+            "on_process": r.on_process or 0,
+        }
+        for r in rows
+    ]
 
 
 
