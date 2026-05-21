@@ -57,6 +57,8 @@ def get_main_db_records(
     prescription        = filters.get("prescription")
     prescription_not    = filters.get("prescription_not")
     dtn                 = filters.get("dtn")
+    # ✅ BAGO — multiple DTNs support
+    dtns                = filters.get("dtns")  # List[int]
     manufacturer        = filters.get("manufacturer")
     lto_company         = filters.get("lto_company")
     brand_name          = filters.get("brand_name")
@@ -64,7 +66,6 @@ def get_main_db_records(
     app_status          = filters.get("app_status")
     app_type            = filters.get("app_type")
     processing_type     = filters.get("processing_type")
-    # ✅ DAGDAG — Supply chain filters
     dosage_form         = filters.get("dosage_form")
     manufacturer_country = filters.get("manufacturer_country")
     trader              = filters.get("trader")
@@ -79,7 +80,7 @@ def get_main_db_records(
     date_released_from  = filters.get("date_released_from")
     date_released_to    = filters.get("date_released_to")
     date_received_cent_from = filters.get("date_received_cent_from")
-    date_received_cent_to   = filters.get("date_received_cent_to")     
+    date_received_cent_to   = filters.get("date_received_cent_to")
     user_uploader           = filters.get("user_uploader")
     date_excel_upload_from  = filters.get("date_excel_upload_from")
     date_excel_upload_to    = filters.get("date_excel_upload_to")
@@ -127,7 +128,11 @@ def get_main_db_records(
         query = query.filter(MainDB.DB_PROD_CLASS_PRESCRIP != prescription_not)
         print(f"✅ Applied prescription_not filter (exclude): {prescription_not}")
 
-    if dtn:
+    # ✅ BAGO — multiple DTNs (takes priority over single dtn)
+    if dtns and len(dtns) > 0:
+        query = query.filter(MainDB.DB_DTN.in_(dtns))
+        print(f"✅ Applied multiple DTNs filter: {dtns}")
+    elif dtn:
         query = query.filter(MainDB.DB_DTN == dtn)
         print(f"✅ Applied DTN filter: {dtn}")
 
@@ -174,7 +179,6 @@ def get_main_db_records(
             query = query.filter(MainDB.DB_PROCESSING_TYPE == processing_type)
         print(f"✅ Applied processing_type filter: {processing_type}")
 
-    # ✅ DAGDAG — Supply chain filter logic
     if dosage_form:
         query = query.filter(MainDB.DB_PROD_DOS_FORM.like(f"%{dosage_form}%"))
         print(f"✅ Applied dosage_form filter: {dosage_form}")
@@ -214,7 +218,6 @@ def get_main_db_records(
     if repacker_country:
         query = query.filter(MainDB.DB_PROD_REPACKER_COUNTRY == repacker_country)
         print(f"✅ Applied repacker_country filter: {repacker_country}")
-
 
     if type_doc_released:
         CERTIFICATE_ALIASES = {"certificate", "cert"}
@@ -264,6 +267,7 @@ def get_main_db_records(
         if date_received_cent_to:
             query = query.filter(MainDB.DB_DATE_RECEIVED_CENT <= date_received_cent_to + " 23:59:59")
             print(f"✅ Applied date_received_cent_to filter: {date_received_cent_to}")
+
     if user_uploader:
         query = query.filter(MainDB.DB_USER_UPLOADER.like(f"%{user_uploader}%"))
         print(f"✅ Applied user_uploader filter: {user_uploader}")
@@ -286,7 +290,8 @@ def get_main_db_records(
         except ValueError:
             print(f"⚠️ Invalid date_excel_upload_to format: {date_excel_upload_to}")
 
-    if search:
+    # ✅ BAGO — skip global search when multi-DTN mode is active
+    if search and not (dtns and len(dtns) > 0):
         search_pattern = f"%{search}%"
         search_conditions = [
             MainDB.DB_EST_LTO_COMP.like(search_pattern),
@@ -406,8 +411,7 @@ def update_main_db_record(
             update_data['DB_TRASH_DATE_ENCODED'] = datetime.strptime(update_data['DB_TRASH_DATE_ENCODED'], "%Y-%m-%d %H:%M:%S")
         except ValueError:
             pass
-    
-        # dagdag sa update_main_db_record, kasama ng ibang date parsers:
+
     if update_data.get('DB_DECISION_SIGNED_DATE') and isinstance(update_data['DB_DECISION_SIGNED_DATE'], str):
         try:
             update_data['DB_DECISION_SIGNED_DATE'] = datetime.strptime(
