@@ -1,8 +1,8 @@
-"""index for analytics
+"""add analytics indexes
 
-Revision ID: 9d780749c6c0
-Revises: c40a88fd1c40
-Create Date: 2026-05-21 05:46:27.190026
+Revision ID: 2e1ded56fbc4
+Revises: 6bc70ac32785
+Create Date: 2026-05-21 07:43:48.481001
 
 """
 from typing import Sequence, Union
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '9d780749c6c0'
-down_revision: Union[str, Sequence[str], None] = 'c40a88fd1c40'
+revision: str = '2e1ded56fbc4'
+down_revision: Union[str, Sequence[str], None] = '6bc70ac32785'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
