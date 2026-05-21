@@ -328,6 +328,9 @@ def get_main_db(
     user_uploader: Optional[str] = Query(None, description="Filter by User Uploader"),
     date_excel_upload_from: Optional[str] = Query(None, description="Filter by Date Excel Upload from"),
     date_excel_upload_to: Optional[str] = Query(None, description="Filter by Date Excel Upload to"),
+  
+    null_date_released: Optional[str] = Query(None, description="Filter records with no date released"),
+    null_date_received_cent: Optional[str] = Query(None, description="Filter records with no date received central"),
     sort_by: str = Query("DB_DATE_EXCEL_UPLOAD"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     db: Session = Depends(get_db)
@@ -365,6 +368,8 @@ def get_main_db(
         "date_received_cent_from": date_received_cent_from,
         "date_received_cent_to": date_received_cent_to,
         "user_uploader": user_uploader,
+        "null_date_released": null_date_released,
+        "null_date_received_cent": null_date_received_cent,
         "date_excel_upload_from": date_excel_upload_from,
         "date_excel_upload_to": date_excel_upload_to,
     }
