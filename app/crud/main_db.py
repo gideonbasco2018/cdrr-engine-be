@@ -239,27 +239,31 @@ def get_main_db_records(
             query = query.filter(MainDB.DB_TYPE_DOC_RELEASED.ilike(f"%{type_doc_released}%"))
             print(f"✅ Applied type_doc_released filter: {type_doc_released}")
 
-            
-        if null_date_released:
-            query = query.filter(
-                or_(MainDB.DB_DATE_RELEASED.is_(None), MainDB.DB_DATE_RELEASED == "")
+    if null_date_released:
+        query = query.filter(
+            or_(MainDB.DB_DATE_RELEASED.is_(None), MainDB.DB_DATE_RELEASED == "")
         )
-        elif date_released_from or date_released_to:
-            if date_released_from:
-                query = query.filter(MainDB.DB_DATE_RELEASED >= date_released_from)
-            if date_released_to:
-                query = query.filter(MainDB.DB_DATE_RELEASED <= date_released_to + " 23:59:59")
+        print(f"✅ Applied null_date_released filter")
+    elif date_released_from or date_released_to:
+        if date_released_from:
+            query = query.filter(MainDB.DB_DATE_RELEASED >= date_released_from)
+            print(f"✅ Applied date_released_from filter: {date_released_from}")
+        if date_released_to:
+            query = query.filter(MainDB.DB_DATE_RELEASED <= date_released_to + " 23:59:59")
+            print(f"✅ Applied date_released_to filter: {date_released_to}")
 
-        if null_date_received_cent:
-            query = query.filter(
-                or_(MainDB.DB_DATE_RECEIVED_CENT.is_(None), MainDB.DB_DATE_RECEIVED_CENT == "")
-            )
-        elif date_received_cent_from or date_received_cent_to:
-            if date_received_cent_from:
-                query = query.filter(MainDB.DB_DATE_RECEIVED_CENT >= date_received_cent_from)
-            if date_received_cent_to:
-                query = query.filter(MainDB.DB_DATE_RECEIVED_CENT <= date_received_cent_to + " 23:59:59")
-    
+    if null_date_received_cent:
+        query = query.filter(
+            or_(MainDB.DB_DATE_RECEIVED_CENT.is_(None), MainDB.DB_DATE_RECEIVED_CENT == "")
+        )
+        print(f"✅ Applied null_date_received_cent filter")
+    elif date_received_cent_from or date_received_cent_to:
+        if date_received_cent_from:
+            query = query.filter(MainDB.DB_DATE_RECEIVED_CENT >= date_received_cent_from)
+            print(f"✅ Applied date_received_cent_from filter: {date_received_cent_from}")
+        if date_received_cent_to:
+            query = query.filter(MainDB.DB_DATE_RECEIVED_CENT <= date_received_cent_to + " 23:59:59")
+            print(f"✅ Applied date_received_cent_to filter: {date_received_cent_to}")
     if user_uploader:
         query = query.filter(MainDB.DB_USER_UPLOADER.like(f"%{user_uploader}%"))
         print(f"✅ Applied user_uploader filter: {user_uploader}")
