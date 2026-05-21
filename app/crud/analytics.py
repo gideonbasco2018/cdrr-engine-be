@@ -25,8 +25,8 @@ def _classify(record):
     status = (record.DB_APP_STATUS or "").upper()
     if "CPR" in doc:
         return "cpr"
-    elif "NOD" in doc:
-        return "nod"
+    elif "LOD" in doc:
+        return "lod"
     elif status == "ON-PROCESS":
         return "on_process"
     elif status == "COMPLETED":
@@ -80,7 +80,7 @@ def get_analytics_summary(
 
     total = len(records)
     cpr = sum(1 for r in records if "CPR" in (r.DB_TYPE_DOC_RELEASED or "").upper())
-    nod = sum(1 for r in records if "NOD" in (r.DB_TYPE_DOC_RELEASED or "").upper())
+    lod = sum(1 for r in records if "LOD" in (r.DB_TYPE_DOC_RELEASED or "").upper())
     on_process = sum(1 for r in records if (r.DB_APP_STATUS or "").upper() == "ON-PROCESS")
     completed = sum(1 for r in records if (r.DB_APP_STATUS or "").upper() == "COMPLETED")
     approval_rate = round((cpr / total * 100), 1) if total > 0 else 0.0
@@ -88,7 +88,7 @@ def get_analytics_summary(
     return {
         "total": total,
         "cpr": cpr,
-        "nod": nod,
+        "lod": lod,
         "on_process": on_process,
         "completed": completed,
         "approval_rate": approval_rate,
@@ -121,7 +121,7 @@ def get_analytics_trend(
             groups[key] = {
                 "label": key,
                 "cpr": 0,
-                "nod": 0,
+                "lod": 0,
                 "on_process": 0,
                 "completed": 0,
             }
@@ -158,14 +158,14 @@ def get_analytics_by_classification(
     for r in records:
         rx = r.DB_PROD_CLASS_PRESCRIP
         if rx not in groups:
-            groups[rx] = {"type": rx, "count": 0, "cpr": 0, "nod": 0}
+            groups[rx] = {"type": rx, "count": 0, "cpr": 0, "lod": 0}
 
         groups[rx]["count"] += 1
         doc = (r.DB_TYPE_DOC_RELEASED or "").upper()
         if "CPR" in doc:
             groups[rx]["cpr"] += 1
-        elif "NOD" in doc:
-            groups[rx]["nod"] += 1
+        elif "LOD" in doc:
+            groups[rx]["lod"] += 1
 
     for g in groups.values():
         g["rate"] = round((g["cpr"] / g["count"] * 100), 1) if g["count"] > 0 else 0.0
@@ -192,7 +192,7 @@ def get_analytics_year_summary(db: Session) -> list:
                 "year": year,
                 "total": 0,
                 "cpr": 0,
-                "nod": 0,
+                "lod": 0,
                 "on_process": 0,
                 "completed": 0,
             }
@@ -233,15 +233,15 @@ def get_analytics_top_drugs(
                 "rx": r.DB_PROD_CLASS_PRESCRIP or "",
                 "total": 0,
                 "cpr": 0,
-                "nod": 0,
+                "lod": 0,
             }
 
         groups[name]["total"] += 1
         doc = (r.DB_TYPE_DOC_RELEASED or "").upper()
         if "CPR" in doc:
             groups[name]["cpr"] += 1
-        elif "NOD" in doc:
-            groups[name]["nod"] += 1
+        elif "LOD" in doc:
+            groups[name]["lod"] += 1
 
     for g in groups.values():
         g["rate"] = round((g["cpr"] / g["total"] * 100), 1) if g["total"] > 0 else 0.0
@@ -287,7 +287,7 @@ def get_analytics_top_countries(
                 "country": country,
                 "count": 0,
                 "cpr": 0,
-                "nod": 0,
+                "lod": 0,
                 "on_process": 0,
             }
 
