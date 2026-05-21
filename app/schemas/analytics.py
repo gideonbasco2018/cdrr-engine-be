@@ -7,7 +7,7 @@ from typing import Optional, List
 class AnalyticsSummaryResponse(BaseModel):
     total: int
     cpr: int
-    nod: int
+    lod: int
     on_process: int
     completed: int
     approval_rate: float
@@ -16,7 +16,7 @@ class AnalyticsSummaryResponse(BaseModel):
 class AnalyticsTrendItem(BaseModel):
     label: str
     cpr: int
-    nod: int
+    lod: int
     on_process: int
     completed: int
 
@@ -28,7 +28,7 @@ class AnalyticsClassificationItem(BaseModel):
     type: str
     count: int
     cpr: int
-    nod: int
+    lod: int
     rate: float
 
 class AnalyticsClassificationResponse(BaseModel):
@@ -39,7 +39,7 @@ class AnalyticsYearItem(BaseModel):
     year: str
     total: int
     cpr: int
-    nod: int
+    lod: int
     on_process: int
     completed: int
     rate: float
@@ -54,7 +54,7 @@ class AnalyticsDrugItem(BaseModel):
     rx: Optional[str] = None
     total: int
     cpr: int
-    nod: int
+    lod: int
     rate: float
 
 class AnalyticsTopDrugsResponse(BaseModel):
@@ -65,7 +65,7 @@ class AnalyticsCountryItem(BaseModel):
     country: str
     count: int
     cpr: int
-    nod: int
+    lod: int
     on_process: int
 
 class AnalyticsTopCountriesResponse(BaseModel):
