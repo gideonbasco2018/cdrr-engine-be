@@ -4,8 +4,8 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.core.deps import get_current_active_user
 from app.models.user import User
-from app.schemas.cpr_correction import DTNVerifyRequest, DTNVerifyResponse
-from app.crud.cpr_correction import verify_dtn
+from app.schemas.cpr_correction import DTNVerifyRequest, DTNVerifyResponse, CorrectionSubmitRequest, CorrectionSubmitResponse
+from app.crud.cpr_correction import verify_dtn, submit_correction
 
 router = APIRouter(
     prefix="/api/cpr-correction",
@@ -32,3 +32,23 @@ def verify_dtn_endpoint(
         raise HTTPException(status_code=422, detail="DTN cannot be empty.")
 
     return verify_dtn(dtn=payload.dtn, db=db)
+
+
+@router.post(
+    "/submit-correction",
+    response_model=CorrectionSubmitResponse,
+    summary="Submit CPR Correction",
+    description=(
+        "Inserts a new MainDB record with the corrected DTN and updated fields. "
+        "Re-validates that the original DTN is still COMPLETED before inserting."
+    ),
+)
+def submit_correction_endpoint(
+    payload: CorrectionSubmitRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+) -> CorrectionSubmitResponse:
+    if not payload.old_dtn.strip() or not payload.new_dtn.strip():
+        raise HTTPException(status_code=422, detail="Both old_dtn and new_dtn are required.")
+
+    return submit_correction(payload=payload, db=db)
