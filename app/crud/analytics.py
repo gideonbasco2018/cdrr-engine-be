@@ -1,7 +1,7 @@
 # app/crud/analytics.py
 
 from sqlalchemy.orm import Session
-from sqlalchemy import case, func, Float, Integer, or_
+from sqlalchemy import case, func, Float, Integer, literal, or_
 from app.models.main_db import MainDB
 
 MONTHS_ORDER = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
@@ -29,6 +29,25 @@ def _on_process_case():
 
 def _completed_case():
     return func.sum(case((MainDB.DB_APP_STATUS.ilike("COMPLETED"), 1), else_=0))
+
+def _wd_diff(start_col, end_col):
+    """
+    Working days (Mon–Fri) between two MySQL date columns.
+
+    Uses the lookup-table formula:
+        5 * FLOOR(n / 7) + SUBSTR(lut, WEEKDAY(start)*7 + WEEKDAY(end) + 1, 1)
+
+    MySQL WEEKDAY(): 0 = Monday … 6 = Sunday.
+    Does NOT account for public holidays.
+    """
+    _LUT = literal("0123444401234443012345440123456601234566")
+    n    = func.datediff(end_col, start_col)
+    w1   = func.weekday(start_col)
+    w2   = func.weekday(end_col)
+    return (
+        func.floor(n / 7) * 5
+        + func.cast(func.substr(_LUT, w1 * 7 + w2 + 1, 1), Integer)
+    )
 
 
 # ── 1. Available Years ────────────────────────────────────────
@@ -287,36 +306,37 @@ def get_analytics_top_countries(
     ]
 
 
+# ── 8. FRP & CRP — TAT Trend (per month, grouped by timeline) ────────────────
 
 MONTH_ABBR = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun",
     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ]
- 
- 
+
+
 def get_analytics_frp_tat_trend(
     db: Session,
     year: str = "All",
     month: str = "All",
 ) -> list:
     """
-    Returns avg/min/max TAT per calendar month, split by DB_TIMELINE_CITIZEN_CHARTER
-    so the frontend can render a separate tab / series for each target-day group
-    (e.g. 30-day, 45-day, 65-day tracks).
- 
+    Returns avg/min/max working-day TAT per calendar month, split by
+    DB_TIMELINE_CITIZEN_CHARTER so the frontend can render a separate tab
+    for each target-day group (30-day, 45-day, 65-day tracks).
+
     Filters:
-    - year  : "2025", "2026", …  or "All"
-    - month : "1"–"12"           or "All"
+    - year  : "2025", "2026", … or "All"
+    - month : "1"–"12"          or "All"
     """
- 
+
     month_col = func.month(MainDB.DB_DATE_RECEIVED_CENT)
     year_col  = func.year(MainDB.DB_DATE_RECEIVED_CENT)
- 
-    tat_days = func.datediff(
-        MainDB.DB_DATE_RELEASED,
+
+    tat_days = _wd_diff(
         MainDB.DB_DATE_RECEIVED_CENT,
+        MainDB.DB_DATE_RELEASED,
     )
- 
+
     query = (
         db.query(
             year_col.label("year"),
@@ -337,20 +357,20 @@ def get_analytics_frp_tat_trend(
             MainDB.DB_APP_STATUS == "COMPLETED",
         )
     )
- 
+
     if year != "All":
         query = query.filter(year_col == int(year))
- 
+
     if month != "All":
         query = query.filter(month_col == int(month))
- 
+
     rows = (
         query
         .group_by("year", "month_num", "timeline_days")
         .order_by("timeline_days", "year", "month_num")
         .all()
     )
- 
+
     return [
         {
             "month":              f"{MONTH_ABBR[row.month_num - 1]} {row.year}",
@@ -366,19 +386,21 @@ def get_analytics_frp_tat_trend(
     ]
 
 
+# ── 9. FRP & CRP — TAT Outliers ──────────────────────────────────────────────
+
 def get_analytics_frp_tat_outliers(
     db: Session,
-    extreme_threshold: int = 365
+    extreme_threshold: int = 365,
 ) -> dict:
     """
     Returns FRP and CRP records with:
-    - Negative TAT (released before received)
-    - Extreme TAT (more than extreme_threshold days)
+    - Negative TAT  (released before received — data-entry error)
+    - Extreme TAT   (working days > extreme_threshold)
     """
 
-    tat_days = func.datediff(
+    tat_days = _wd_diff(
+        MainDB.DB_DATE_RECEIVED_CENT,
         MainDB.DB_DATE_RELEASED,
-        MainDB.DB_DATE_RECEIVED_CENT
     )
 
     rows = (
@@ -401,26 +423,24 @@ def get_analytics_frp_tat_outliers(
             or_(
                 tat_days < 0,
                 tat_days > extreme_threshold,
-            )
+            ),
         )
-        .order_by(tat_days)  # negative first, then extreme
+        .order_by(tat_days)   # negative first, then extreme
         .all()
     )
 
     result = []
     for row in rows:
-        # Determine quarter from DB_DATE_RECEIVED_CENT
         quarter = None
         if row.DB_DATE_RECEIVED_CENT:
             try:
                 from datetime import datetime
                 d = datetime.strptime(str(row.DB_DATE_RECEIVED_CENT), "%Y-%m-%d")
-                m = d.month
-                y = d.year
-                if m in [7, 8, 9]:    quarter = f"Sep {y}"
-                elif m in [10,11,12]: quarter = f"Dec {y}"
-                elif m in [1, 2, 3]:  quarter = f"Mar {y}"
-                else:                 quarter = f"Jun {y}"
+                m, y = d.month, d.year
+                if m in [7, 8, 9]:     quarter = f"Sep {y}"
+                elif m in [10, 11, 12]: quarter = f"Dec {y}"
+                elif m in [1, 2, 3]:   quarter = f"Mar {y}"
+                else:                   quarter = f"Jun {y}"
             except Exception:
                 pass
 
@@ -437,12 +457,9 @@ def get_analytics_frp_tat_outliers(
             "issue":              issue,
         })
 
-    negative_count = sum(1 for r in result if r["issue"] == "negative_tat")
-    extreme_count  = sum(1 for r in result if r["issue"] == "extreme_tat")
-
     return {
         "total":    len(result),
-        "negative": negative_count,
-        "extreme":  extreme_count,
+        "negative": sum(1 for r in result if r["issue"] == "negative_tat"),
+        "extreme":  sum(1 for r in result if r["issue"] == "extreme_tat"),
         "data":     result,
     }
