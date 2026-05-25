@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 from app.models.main_db import MainDB
 from app.schemas.cpr_correction import DTNVerifyResponse,CorrectionSubmitRequest, CorrectionSubmitResponse
+from app.models.user import User
 
 ELIGIBLE_STATUS = "COMPLETED"
 
@@ -164,7 +165,7 @@ def verify_dtn(dtn: str, db: Session) -> DTNVerifyResponse:
     )
 
 
-def submit_correction(payload: CorrectionSubmitRequest, db: Session) -> CorrectionSubmitResponse:
+def submit_correction(payload: CorrectionSubmitRequest, db: Session,  current_user: User) -> CorrectionSubmitResponse:
     """
     Validate old_dtn still exists and is COMPLETED,
     then insert a new MainDB row with new_dtn and the corrected fields.
@@ -208,7 +209,8 @@ def submit_correction(payload: CorrectionSubmitRequest, db: Session) -> Correcti
         DB_DTN=new_dtn_int,
 
         # Carry over unchanged fields from original
-        DB_APP_STATUS=original.DB_APP_STATUS,
+        DB_APP_STATUS="ON-PROCESS",
+        DB_USER_UPLOADER=current_user.username,
         DB_PROCESSING_TYPE=original.DB_PROCESSING_TYPE,
         DB_EST_CAT=original.DB_EST_CAT,
         DB_APP_TYPE=original.DB_APP_TYPE,
@@ -280,7 +282,9 @@ def submit_correction(payload: CorrectionSubmitRequest, db: Session) -> Correcti
 
         DB_REG_NO=payload.reg_no or original.DB_REG_NO,
         DB_MOTHER_APP_TYPE=payload.mother_app_type or original.DB_MOTHER_APP_TYPE,
-        DB_OLD_RSN=payload.old_rsn or original.DB_OLD_RSN,
+        DB_OLD_RSN=payload.old_dtn or original.DB_OLD_RSN,
+        DB_ENTRY_TYPE=payload.DB_ENTRY_TYPE or original.DB_ENTRY_TYPE, 
+
         DB_CERTIFICATION=payload.certification or original.DB_CERTIFICATION,
         DB_CLASS=payload.class_ or original.DB_CLASS,
         DB_MO=payload.mo or original.DB_MO,
@@ -314,4 +318,5 @@ def submit_correction(payload: CorrectionSubmitRequest, db: Session) -> Correcti
         success=True,
         message="Correction submitted successfully. New record created.",
         new_dtn=payload.new_dtn,
+        main_db_id=new_record.DB_ID, 
     )

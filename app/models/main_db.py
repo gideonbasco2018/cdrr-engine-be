@@ -156,6 +156,7 @@ class MainDB(Base):
     DB_DECISION_AUTHORITY = Column(String(255), nullable=True, comment="Decision Authority Name")
     DB_DECISION_RESULT = Column(String(255), nullable=True, comment="Decision Result")
     DB_DECISION_SIGNED_DATE = Column(Date, nullable=True, comment="Decision Authority Signed Date")
+    DB_ENTRY_TYPE = Column(String(50), nullable=True, default="ORIGINAL", comment="Entry Type: ORIGINAL, CORRECTION, RECONSTRUCTION")
 
     __table_args__ = (
         Index("ix_an_date_released",       "DB_DATE_RELEASED",        mysql_length=10),

@@ -150,6 +150,7 @@ class MainDBBrief(BaseModel):
 
     # Processing Type
     DB_PROCESSING_TYPE: Optional[str] = None
+    DB_ENTRY_TYPE: Optional[str] = None
 
     class Config:
         from_attributes = True

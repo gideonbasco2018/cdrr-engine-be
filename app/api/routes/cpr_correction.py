@@ -51,4 +51,4 @@ def submit_correction_endpoint(
     if not payload.old_dtn.strip() or not payload.new_dtn.strip():
         raise HTTPException(status_code=422, detail="Both old_dtn and new_dtn are required.")
 
-    return submit_correction(payload=payload, db=db)
+    return submit_correction(payload=payload, db=db, current_user=current_user)
