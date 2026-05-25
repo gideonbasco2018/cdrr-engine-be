@@ -77,13 +77,15 @@ class AnalyticsAvailableYearsResponse(BaseModel):
 
 
 class AnalyticsFRPTATItem(BaseModel):
-    quarter: str
+    month: str                        # e.g. "Jan 2025"
+    year: int
+    month_num: int                    # 1-12 (for frontend sorting)
+    timeline_days: Optional[int] = None   # 30 / 45 / 65 …
     total_applications: int
     avg_tat_days: Optional[float] = None
     min_tat_days: Optional[int] = None
     max_tat_days: Optional[int] = None
-    target_days:  Optional[int]   = None
-
+ 
 class AnalyticsFRPTATResponse(BaseModel):
     data: List[AnalyticsFRPTATItem]
 

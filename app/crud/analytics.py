@@ -288,47 +288,44 @@ def get_analytics_top_countries(
 
 
 
-def get_analytics_frp_tat_trend(db: Session, year: str = "All", month: str = "All") -> list:
+MONTH_ABBR = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+]
+ 
+ 
+def get_analytics_frp_tat_trend(
+    db: Session,
+    year: str = "All",
+    month: str = "All",
+) -> list:
     """
-    Computes average, min, max TAT (in days) for FRP and CRP applications
-    grouped by quarter based on DB_DATE_RECEIVED_CENT.
-    Supports optional year and month filtering.
+    Returns avg/min/max TAT per calendar month, split by DB_TIMELINE_CITIZEN_CHARTER
+    so the frontend can render a separate tab / series for each target-day group
+    (e.g. 30-day, 45-day, 65-day tracks).
+ 
+    Filters:
+    - year  : "2025", "2026", …  or "All"
+    - month : "1"–"12"           or "All"
     """
-
+ 
     month_col = func.month(MainDB.DB_DATE_RECEIVED_CENT)
-    year_col = func.year(MainDB.DB_DATE_RECEIVED_CENT)
-
-    quarter_label = case(
-        (month_col.in_([7, 8, 9]),  func.concat('Sep ', year_col)),
-        (month_col.in_([10, 11, 12]), func.concat('Dec ', year_col)),
-        (month_col.in_([1, 2, 3]),  func.concat('Mar ', year_col)),
-        (month_col.in_([4, 5, 6]),  func.concat('Jun ', year_col)),
-        else_='Unknown'
-    )
-
-    quarter_sort = case(
-        (month_col.in_([1, 2, 3]),   1),
-        (month_col.in_([4, 5, 6]),   2),
-        (month_col.in_([7, 8, 9]),   3),
-        (month_col.in_([10, 11, 12]), 4),
-        else_=5
-    )
-
+    year_col  = func.year(MainDB.DB_DATE_RECEIVED_CENT)
+ 
     tat_days = func.datediff(
         MainDB.DB_DATE_RELEASED,
-        MainDB.DB_DATE_RECEIVED_CENT
+        MainDB.DB_DATE_RECEIVED_CENT,
     )
-
+ 
     query = (
         db.query(
-            quarter_label.label("quarter"),
             year_col.label("year"),
-            quarter_sort.label("quarter_sort"),
+            month_col.label("month_num"),
+            MainDB.DB_TIMELINE_CITIZEN_CHARTER.label("timeline_days"),
             func.count(MainDB.DB_ID).label("total_applications"),
             func.avg(tat_days).cast(Float).label("avg_tat_days"),
             func.min(tat_days).cast(Integer).label("min_tat_days"),
             func.max(tat_days).cast(Integer).label("max_tat_days"),
-            func.min(MainDB.DB_TIMELINE_CITIZEN_CHARTER).label("target_days"),
         )
         .filter(
             MainDB.DB_PROCESSING_TYPE == "FRP and CRP",
@@ -340,33 +337,34 @@ def get_analytics_frp_tat_trend(db: Session, year: str = "All", month: str = "Al
             MainDB.DB_APP_STATUS == "COMPLETED",
         )
     )
-
-    # ── Optional Filters ──────────────────────────────────────────
+ 
     if year != "All":
         query = query.filter(year_col == int(year))
-
+ 
     if month != "All":
         query = query.filter(month_col == int(month))
-    # ─────────────────────────────────────────────────────────────
-
+ 
     rows = (
         query
-        .group_by("quarter", "year", "quarter_sort")
-        .order_by("year", "quarter_sort")
+        .group_by("year", "month_num", "timeline_days")
+        .order_by("timeline_days", "year", "month_num")
         .all()
     )
-
+ 
     return [
         {
-            "quarter": row.quarter,
+            "month":              f"{MONTH_ABBR[row.month_num - 1]} {row.year}",
+            "year":               row.year,
+            "month_num":          row.month_num,
+            "timeline_days":      row.timeline_days,
             "total_applications": row.total_applications,
-            "avg_tat_days": round(row.avg_tat_days, 2) if row.avg_tat_days else None,
-            "min_tat_days": row.min_tat_days,
-            "max_tat_days": row.max_tat_days,
-            "target_days":  row.target_days, 
+            "avg_tat_days":       round(row.avg_tat_days, 2) if row.avg_tat_days is not None else None,
+            "min_tat_days":       row.min_tat_days,
+            "max_tat_days":       row.max_tat_days,
         }
         for row in rows
     ]
+
 
 def get_analytics_frp_tat_outliers(
     db: Session,
