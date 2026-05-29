@@ -313,22 +313,11 @@ MONTH_ABBR = [
     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ]
 
-
 def get_analytics_frp_tat_trend(
     db: Session,
     year: str = "All",
     month: str = "All",
 ) -> list:
-    """
-    Returns avg/min/max working-day TAT per calendar month, split by
-    DB_TIMELINE_CITIZEN_CHARTER so the frontend can render a separate tab
-    for each target-day group (30-day, 45-day, 65-day tracks).
-
-    Filters:
-    - year  : "2025", "2026", … or "All"
-    - month : "1"–"12"          or "All"
-    """
-
     month_col = func.month(MainDB.DB_DATE_RECEIVED_CENT)
     year_col  = func.year(MainDB.DB_DATE_RECEIVED_CENT)
 
@@ -342,6 +331,7 @@ def get_analytics_frp_tat_trend(
             year_col.label("year"),
             month_col.label("month_num"),
             MainDB.DB_TIMELINE_CITIZEN_CHARTER.label("timeline_days"),
+            MainDB.DB_TYPE_DOC_RELEASED.label("type_of_doc_released"),  # ← DAGDAG
             func.count(MainDB.DB_ID).label("total_applications"),
             func.avg(tat_days).cast(Float).label("avg_tat_days"),
             func.min(tat_days).cast(Integer).label("min_tat_days"),
@@ -366,25 +356,25 @@ def get_analytics_frp_tat_trend(
 
     rows = (
         query
-        .group_by("year", "month_num", "timeline_days")
+        .group_by("year", "month_num", "timeline_days", "type_of_doc_released")  # ← DAGDAG
         .order_by("timeline_days", "year", "month_num")
         .all()
     )
 
     return [
         {
-            "month":              f"{MONTH_ABBR[row.month_num - 1]} {row.year}",
-            "year":               row.year,
-            "month_num":          row.month_num,
-            "timeline_days":      row.timeline_days,
-            "total_applications": row.total_applications,
-            "avg_tat_days":       round(row.avg_tat_days, 2) if row.avg_tat_days is not None else None,
-            "min_tat_days":       row.min_tat_days,
-            "max_tat_days":       row.max_tat_days,
+            "month":                f"{MONTH_ABBR[row.month_num - 1]} {row.year}",
+            "year":                 row.year,
+            "month_num":            row.month_num,
+            "timeline_days":        row.timeline_days,
+            "type_of_doc_released": row.type_of_doc_released,  # ← DAGDAG
+            "total_applications":   row.total_applications,
+            "avg_tat_days":         round(row.avg_tat_days, 2) if row.avg_tat_days is not None else None,
+            "min_tat_days":         row.min_tat_days,
+            "max_tat_days":         row.max_tat_days,
         }
         for row in rows
     ]
-
 
 # ── 9. FRP & CRP — TAT Outliers ──────────────────────────────────────────────
 
