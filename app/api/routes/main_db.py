@@ -1108,17 +1108,16 @@ async def download_template():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate template: {str(e)}")
 
-
 @router.get("/upload-history")
 async def get_upload_history(
     limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),          # ← BAGO
     impersonated_user_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
     """Get upload history grouped by upload batch (per user)"""
     try:
-
         target_username = current_user.username
 
         if impersonated_user_id and current_user.role.value in ("Admin", "SuperAdmin"):
@@ -1126,7 +1125,7 @@ async def get_upload_history(
             if target:
                 target_username = target.username
 
-        rows = (
+        base_query = (
             db.query(
                 MainDB.DB_DATE_EXCEL_UPLOAD,
                 MainDB.DB_USER_UPLOADER,
@@ -1138,13 +1137,21 @@ async def get_upload_history(
                 MainDB.DB_DATE_EXCEL_UPLOAD,
                 MainDB.DB_USER_UPLOADER,
             )
+        )
+
+        total = base_query.count()          # ← BAGO: total bago i-paginate
+
+        rows = (
+            base_query
             .order_by(MainDB.DB_DATE_EXCEL_UPLOAD.desc())
+            .offset(offset)                 # ← BAGO
             .limit(limit)
             .all()
         )
 
         return {
             "success": True,
+            "total": total,                
             "data": [
                 {
                     "upload_date": r.DB_DATE_EXCEL_UPLOAD,
@@ -1156,7 +1163,6 @@ async def get_upload_history(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch upload history: {str(e)}")
-
 
 @router.get("/export-filtered")
 async def export_filtered_records(
