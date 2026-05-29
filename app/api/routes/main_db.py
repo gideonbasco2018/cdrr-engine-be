@@ -25,6 +25,7 @@ from app.models.main_db import MainDB
 from app.models.application_delegation import ApplicationDelegation
 from app.models.application_logs import ApplicationLogs
 from app.core.deps import get_current_active_user  
+from app.models.user import User
 
 router = APIRouter(
     prefix="/api/main-db",
@@ -1110,13 +1111,49 @@ async def download_template():
 
 @router.get("/upload-history")
 async def get_upload_history(
-    limit: int = Query(50, ge=1, le=100),
-    db: Session = Depends(get_db)
+    limit: int = Query(50, ge=1, le=200),
+    impersonated_user_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
 ):
-    """Get upload history grouped by user and date"""
+    """Get upload history grouped by upload batch (per user)"""
     try:
-        history = crud.get_upload_history(db=db, limit=limit)
-        return {"success": True, "data": history}
+
+        target_username = current_user.username
+
+        if impersonated_user_id and current_user.role.value in ("Admin", "SuperAdmin"):
+            target = db.query(User).filter(User.id == impersonated_user_id).first()
+            if target:
+                target_username = target.username
+
+        rows = (
+            db.query(
+                MainDB.DB_DATE_EXCEL_UPLOAD,
+                MainDB.DB_USER_UPLOADER,
+                func.count(MainDB.DB_ID).label("record_count"),
+            )
+            .filter(MainDB.DB_USER_UPLOADER == target_username)
+            .filter(MainDB.DB_DATE_EXCEL_UPLOAD.isnot(None))
+            .group_by(
+                MainDB.DB_DATE_EXCEL_UPLOAD,
+                MainDB.DB_USER_UPLOADER,
+            )
+            .order_by(MainDB.DB_DATE_EXCEL_UPLOAD.desc())
+            .limit(limit)
+            .all()
+        )
+
+        return {
+            "success": True,
+            "data": [
+                {
+                    "upload_date": r.DB_DATE_EXCEL_UPLOAD,
+                    "uploader": r.DB_USER_UPLOADER,
+                    "record_count": r.record_count,
+                }
+                for r in rows
+            ],
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch upload history: {str(e)}")
 
