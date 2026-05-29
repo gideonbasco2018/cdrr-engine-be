@@ -11,7 +11,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 import enum
-
+from sqlalchemy.dialects.mysql import TINYINT
 
 # Define Role Enum
 class UserRole(str, enum.Enum):
@@ -66,6 +66,8 @@ class User(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+    
+    has_upload_history = Column(TINYINT(1), nullable=False, default=0, comment="Show upload history on dashboard")
 
     # 🔙 Backward compatibility (KEEP SAFE)
     @property
