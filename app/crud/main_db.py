@@ -6,13 +6,12 @@ Database operations for pharmaceutical reports
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, desc, or_, cast, String, nullslast, exists
 from typing import Optional, List, Tuple, Dict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 from app.models.main_db import MainDB
 from app.models.application_logs import ApplicationLogs
 from app.models.application_delegation import ApplicationDelegation
 from app.schemas.main_db import MainDBCreate, MainDBUpdate
-
 
 # ✅ Subquery helpers — "decked" = has a Decking log
 def _decked_subquery(db: Session):
@@ -619,3 +618,62 @@ def get_upload_history(db: Session, limit: int = 50) -> List[dict]:
     except Exception as e:
         print(f"Error fetching upload history: {e}")
         return []
+    
+def get_upload_history_paginated(
+    db: Session,
+    username: str,
+    limit: int = 10,
+    offset: int = 0,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+) -> Tuple[List[dict], int]:
+    """
+    Get upload history grouped by batch (upload_date + uploader),
+    filtered by user and optional date range, with pagination.
+    """
+    from datetime import date as date_type
+
+    base_query = (
+        db.query(
+            MainDB.DB_DATE_EXCEL_UPLOAD,
+            MainDB.DB_USER_UPLOADER,
+            func.count(MainDB.DB_ID).label("record_count"),
+        )
+        .filter(MainDB.DB_USER_UPLOADER == username)
+        .filter(MainDB.DB_DATE_EXCEL_UPLOAD.isnot(None))
+    )
+
+    if date_from:
+        base_query = base_query.filter(
+            func.date(MainDB.DB_DATE_EXCEL_UPLOAD) >= date_from
+        )
+    if date_to:
+        base_query = base_query.filter(
+            func.date(MainDB.DB_DATE_EXCEL_UPLOAD) <= date_to
+        )
+
+    base_query = base_query.group_by(
+        MainDB.DB_DATE_EXCEL_UPLOAD,
+        MainDB.DB_USER_UPLOADER,
+    )
+
+    total = base_query.count()
+
+    rows = (
+        base_query
+        .order_by(desc(MainDB.DB_DATE_EXCEL_UPLOAD))
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    data = [
+        {
+            "upload_date": r.DB_DATE_EXCEL_UPLOAD,
+            "uploader": r.DB_USER_UPLOADER,
+            "record_count": r.record_count,
+        }
+        for r in rows
+    ]
+
+    return data, total  
