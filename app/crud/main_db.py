@@ -626,7 +626,7 @@ def get_upload_history_paginated(
     offset: int = 0,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
-) -> Tuple[List[dict], int]:
+) -> Tuple[List[dict], int, int]:
     """
     Get upload history grouped by batch (upload_date + uploader),
     filtered by user and optional date range, with pagination.
@@ -659,6 +659,9 @@ def get_upload_history_paginated(
 
     total = base_query.count()
 
+    subq = base_query.subquery()
+    total_records = db.query(func.sum(subq.c.record_count)).scalar() or 0
+
     rows = (
         base_query
         .order_by(desc(MainDB.DB_DATE_EXCEL_UPLOAD))
@@ -676,4 +679,4 @@ def get_upload_history_paginated(
         for r in rows
     ]
 
-    return data, total  
+    return data, total, total_records   

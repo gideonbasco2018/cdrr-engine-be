@@ -1127,7 +1127,7 @@ async def get_upload_history(
             if target:
                 target_username = target.username
 
-        data, total = get_upload_history_paginated(
+        data, total, total_records  = get_upload_history_paginated(
             db=db,
             username=target_username,
             limit=limit,
@@ -1139,6 +1139,7 @@ async def get_upload_history(
         return {
             "success": True,
             "total": total,
+            "total_records": total_records,
             "data": data,
         }
 
