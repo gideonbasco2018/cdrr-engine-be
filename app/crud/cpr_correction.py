@@ -301,6 +301,7 @@ def submit_correction(payload: CorrectionSubmitRequest, db: Session,  current_us
         DB_AMMEND3=payload.ammend3 or original.DB_AMMEND3,
         DB_APP_REMARKS=payload.app_remarks or original.DB_APP_REMARKS,
         DB_REMARKS_1=payload.remarks1 or original.DB_REMARKS_1,
+        DB_SUBJECT=payload.subject or original.DB_SUBJECT,
     )
 
     try:

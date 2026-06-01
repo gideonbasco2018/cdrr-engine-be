@@ -119,7 +119,7 @@ class CorrectionSubmitRequest(BaseModel):
     old_dtn: str
     new_dtn: str
     DB_ENTRY_TYPE: Optional[str] = None
-
+    subject: Optional[str] = None
     # Establishment
     lto_comp: Optional[str] = None
     lto_add: Optional[str] = None
@@ -210,7 +210,9 @@ class CorrectionSubmitResponse(BaseModel):
     success: bool
     message: str
     new_dtn: Optional[str] = None
-    main_db_id: Optional[int] = None 
+    main_db_id: Optional[int] = None
+    subject: Optional[str] = None
+    
 
     class Config:
         orm_mode = True
