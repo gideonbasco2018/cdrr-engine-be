@@ -20,6 +20,7 @@ class ApplicationLogDetail(BaseModel):
     entry_type:           Optional[str]  = Field(None)
     subject:              Optional[str]  = Field(None)
     date_received_fdac:   Optional[str]  = Field(None)
+    evaluator:            Optional[str]  = Field(None)
     application_status:   Optional[str]  = Field(None)
     del_thread:           Optional[str]  = Field(None)
     app_step:             Optional[str]  = Field(None)

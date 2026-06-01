@@ -84,6 +84,7 @@ def _row_to_detail(row: ApplicationLogs) -> ApplicationLogDetail:
         entry_type=main.DB_ENTRY_TYPE if main else None,
         subject=main.DB_SUBJECT if main else None,
         date_received_fdac=str(main.DB_LTR_DATE_RECEIVED_FDAC) if main and main.DB_LTR_DATE_RECEIVED_FDAC is not None else None,
+        evaluator=main.DB_EVAL if main else None,
         # ── from ApplicationLogs ────────────────────────────────────
         application_status=row.application_status,
         del_thread=row.del_thread,
