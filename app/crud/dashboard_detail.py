@@ -72,13 +72,18 @@ def _row_to_detail(row: ApplicationLogs) -> ApplicationLogDetail:
         # ── from MainDB ──────────────────────────────────────────────
         dtn=str(main.DB_DTN) if main and main.DB_DTN is not None else None,
         lto_company=main.DB_EST_LTO_COMP if main else None,
-        lto_address=main.DB_EST_LTO_ADD if main else None, 
+        lto_address=main.DB_EST_LTO_ADD if main else None,
         brand_name=main.DB_PROD_BR_NAME if main else None,
         generic_name=main.DB_PROD_GEN_NAME if main else None,
-        secpa=main.DB_SECPA if main else None,                  
-        app_type=main.DB_APP_TYPE if main else None,              
-        reg_no=main.DB_REG_NO if main else None,                 
-        atta_released=main.DB_ATTA_RELEASED if main else None, 
+        secpa=main.DB_SECPA if main else None,
+        app_type=main.DB_APP_TYPE if main else None,
+        reg_no=main.DB_REG_NO if main else None,
+        atta_released=main.DB_ATTA_RELEASED if main else None,
+        # ── correction/reconstruction fields ────────────────────────
+        old_rsn=main.DB_OLD_RSN if main else None,
+        entry_type=main.DB_ENTRY_TYPE if main else None,
+        subject=main.DB_SUBJECT if main else None,
+        date_received_fdac=str(main.DB_LTR_DATE_RECEIVED_FDAC) if main and main.DB_LTR_DATE_RECEIVED_FDAC is not None else None,
         # ── from ApplicationLogs ────────────────────────────────────
         application_status=row.application_status,
         del_thread=row.del_thread,
