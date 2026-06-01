@@ -5,7 +5,7 @@ from sqlalchemy import func, or_
 from typing import Optional, List
 import pandas as pd
 import io
-from datetime import datetime
+from datetime import datetime, date
 import math
 import numpy as np
 from dateutil import parser
@@ -20,7 +20,7 @@ from app.schemas.main_db import (
     ApplicationLogResponse
 )
 from app.crud import main_db as crud
-from app.crud.main_db import get_main_db_records, get_application_logs
+from app.crud.main_db import get_main_db_records, get_application_logs, get_upload_history_paginated
 from app.models.main_db import MainDB
 from app.models.application_delegation import ApplicationDelegation
 from app.models.application_logs import ApplicationLogs
@@ -1110,13 +1110,15 @@ async def download_template():
 
 @router.get("/upload-history")
 async def get_upload_history(
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),          # ← BAGO
+    limit: int = Query(10, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     impersonated_user_id: Optional[int] = Query(None),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    """Get upload history grouped by upload batch (per user)"""
+    """Get upload history grouped by upload batch (per user), with optional date filtering."""
     try:
         target_username = current_user.username
 
@@ -1125,44 +1127,26 @@ async def get_upload_history(
             if target:
                 target_username = target.username
 
-        base_query = (
-            db.query(
-                MainDB.DB_DATE_EXCEL_UPLOAD,
-                MainDB.DB_USER_UPLOADER,
-                func.count(MainDB.DB_ID).label("record_count"),
-            )
-            .filter(MainDB.DB_USER_UPLOADER == target_username)
-            .filter(MainDB.DB_DATE_EXCEL_UPLOAD.isnot(None))
-            .group_by(
-                MainDB.DB_DATE_EXCEL_UPLOAD,
-                MainDB.DB_USER_UPLOADER,
-            )
-        )
-
-        total = base_query.count()          # ← BAGO: total bago i-paginate
-
-        rows = (
-            base_query
-            .order_by(MainDB.DB_DATE_EXCEL_UPLOAD.desc())
-            .offset(offset)                 # ← BAGO
-            .limit(limit)
-            .all()
+        data, total = get_upload_history_paginated(
+            db=db,
+            username=target_username,
+            limit=limit,
+            offset=offset,
+            date_from=date_from,
+            date_to=date_to,
         )
 
         return {
             "success": True,
-            "total": total,                
-            "data": [
-                {
-                    "upload_date": r.DB_DATE_EXCEL_UPLOAD,
-                    "uploader": r.DB_USER_UPLOADER,
-                    "record_count": r.record_count,
-                }
-                for r in rows
-            ],
+            "total": total,
+            "data": data,
         }
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch upload history: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch upload history: {str(e)}"
+        )
 
 @router.get("/export-filtered")
 async def export_filtered_records(
