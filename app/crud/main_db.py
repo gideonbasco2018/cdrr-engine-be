@@ -335,9 +335,15 @@ def get_main_db_records(
         print(f"⚠️ Unknown sort field: {sort_by}, using default")
         query = query.order_by(desc(MainDB.DB_DATE_EXCEL_UPLOAD))
 
-    records = query.offset(skip).limit(limit).all()
+    
+    if limit >= 10000:
+        records = list(query.offset(skip).limit(limit).yield_per(500))
+    else:
+        records = query.offset(skip).limit(limit).all()
+
     print(f"✅ Returning {len(records)} records (skip={skip}, limit={limit})")
 
+    # ✅ Eager load delegation para hindi mag-trigger ng N+1 queries
     for record in records:
         _ = record.application_delegation
 
