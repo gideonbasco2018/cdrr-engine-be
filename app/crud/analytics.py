@@ -364,10 +364,15 @@ def get_analytics_frp_tat_trend(
             MainDB.DB_PROCESSING_TYPE == "FRP and CRP",
             MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
             MainDB.DB_DATE_RECEIVED_CENT != "",
+            MainDB.DB_DATE_RECEIVED_CENT != "N/A",
             MainDB.DB_DATE_RELEASED.isnot(None),
             MainDB.DB_DATE_RELEASED != "",
+            MainDB.DB_DATE_RELEASED != "N/A",
             MainDB.DB_TRASH.is_(None),
             func.upper(MainDB.DB_APP_STATUS) == "COMPLETED",
+            # Ensure str_to_date actually parses successfully (not NULL)
+            clean_received.isnot(None),
+            clean_released.isnot(None),
         )
     )
 
