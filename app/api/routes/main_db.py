@@ -1164,7 +1164,6 @@ async def export_filtered_records(
     app_status: Optional[str] = Query(None),
     app_type: Optional[str] = Query(None),
     processing_type: Optional[str] = Query(None),
-    # ✅ DAGDAG — Supply chain filters
     dosage_form: Optional[str] = Query(None),
     manufacturer_country: Optional[str] = Query(None),
     trader: Optional[str] = Query(None),
@@ -1180,13 +1179,13 @@ async def export_filtered_records(
     date_released_to: Optional[str] = Query(None),
     date_received_cent_from: Optional[str] = Query(None),
     date_received_cent_to: Optional[str] = Query(None),
-    null_date_released: Optional[str] = Query(None),        
-    null_date_received_cent: Optional[str] = Query(None), 
+    null_date_released: Optional[str] = Query(None),
+    null_date_received_cent: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
-    """Export filtered records to Excel"""
+    """Export filtered records to Excel — streamed, no auto-fit loop"""
     try:
-        print(f"📥 Export request received with params: status={status}, app_type={app_type}, search={search}")
+        print(f"📥 Export request: status={status}, app_type={app_type}, search={search}")
 
         filters = {
             "status": status,
@@ -1201,7 +1200,6 @@ async def export_filtered_records(
             "app_status": app_status,
             "app_type": app_type,
             "processing_type": processing_type,
-            # ✅ DAGDAG — Supply chain filters
             "dosage_form": dosage_form,
             "manufacturer_country": manufacturer_country,
             "trader": trader,
@@ -1217,8 +1215,8 @@ async def export_filtered_records(
             "date_released_to": date_released_to,
             "date_received_cent_from": date_received_cent_from,
             "date_received_cent_to": date_received_cent_to,
-            "null_date_released": null_date_released,       
-            "null_date_received_cent": null_date_received_cent, 
+            "null_date_released": null_date_released,
+            "null_date_received_cent": null_date_received_cent,
         }
 
         records, total = get_main_db_records(
@@ -1231,190 +1229,227 @@ async def export_filtered_records(
             sort_order="desc"
         )
 
-        print(f"📊 Found {total} records to export")
+        print(f"📊 Exporting {total} records")
 
         if not records:
             raise HTTPException(status_code=404, detail="No records found to export")
 
-        data_for_export = []
-        for record in records:
+        # ── Build Excel using write_only mode (much faster, low memory) ──
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+
+        wb = Workbook(write_only=True)  # ✅ write_only — no cell reads, no auto-fit loop
+        ws = wb.create_sheet("Filtered Records")
+
+        HEADERS = [
+            "Processing Type", "DTN", "Category", "Applicant Company",
+            "Address", "Email Address", "TIN", "Contact No.", "LTO No.", "Validity",
+            "Brand Name", "Generic Name", "Dosage Strength",
+            "Dosage Form and Route of Administration", "Classification",
+            "Essential Drug List", "Pharmacologic Category",
+            "Manufacturer", "Manufacturer Address", "Manufacturer TIN",
+            "Manufacturer LTO No.", "Manufacturer Country",
+            "Trader", "Trader Address", "Trader TIN", "Trader LTO No.", "Trader Country",
+            "Repacker", "Repacker Address", "Repacker TIN",
+            "Repacker LTO No.", "Repacker Country",
+            "Importer", "Importer Address", "Importer TIN",
+            "Importer LTO No.", "Importer Country",
+            "Distributor", "Distributor Address", "Distributor TIN",
+            "Distributor LTO No.", "Distributor Country", "Shelf Life",
+            "Storage Condition", "Packaging", "Suggested Retail Price",
+            "Registration Number", "Application Type", "Mother Application Type",
+            "Old RSN/ Other DTN", "Amendment 1", "Amendment 2", "Amendment 3",
+            "Product Category", "Certification",
+            "Fee", "LRF", "SURC", "Total", "OR No.", "Date Issued",
+            "Date when the application was received by FDAC",
+            "Date when the application was received by CDRR",
+            "MO", "FILE COPY", "SECPA No.", "Expiry Date", "Issued On",
+            "Remarks (1)(e.g. reason of application returned)",
+            "Date of Remarks (1)", "Class",
+            "Date Released by the CDRR", "Type of Document Released",
+            "Attachment/s released with authorization",
+            "CPR Condition/s Ticked at the back of CPR",
+            "CPR Cond Remarks", "CPR Cond Additional Remarks",
+            "App Status", "App Remarks", "Timeline (Days)",
+            "Evaluator", "Evaluator Decision", "Evaluator Remarks", "Date Eval End",
+            "Decker", "Decker Decision", "Decker Remarks", "Date Decked End",
+            "Checker", "Checker Decision", "Date Checker End",
+        ]
+
+        # ── Header row with styling ──
+        header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=10)
+        header_align = Alignment(horizontal="center", vertical="center")
+
+        from openpyxl.cell import WriteOnlyCell
+        header_cells = []
+        for h in HEADERS:
+            c = WriteOnlyCell(ws, value=h)
+            c.fill = header_fill
+            c.font = header_font
+            c.alignment = header_align
+            header_cells.append(c)
+        ws.append(header_cells)
+
+        # ── Set fixed column widths (no loop needed) ──
+        FIXED_WIDTHS = {
+            1: 18,   # Processing Type
+            2: 20,   # DTN
+            3: 15,   # Category
+            4: 35,   # Applicant Company
+            5: 40,   # Address
+            6: 30,   # Email
+            7: 15,   # TIN
+            8: 18,   # Contact No
+            9: 18,   # LTO No
+            10: 15,  # Validity
+            11: 30,  # Brand Name
+            12: 30,  # Generic Name
+            13: 20,  # Dosage Strength
+            14: 30,  # Dosage Form
+            15: 20,  # Classification
+        }
+        for col_idx, width in FIXED_WIDTHS.items():
+            ws.column_dimensions[get_column_letter(col_idx)].width = width
+        # Default width for remaining columns
+        for col_idx in range(len(HEADERS) + 1):
+            letter = get_column_letter(col_idx) if col_idx > 0 else None
+            if letter and col_idx not in FIXED_WIDTHS:
+                ws.column_dimensions[letter].width = 20
+
+        # ── Data rows — alternate row color ──
+        even_fill = PatternFill(start_color="EBF3FB", end_color="EBF3FB", fill_type="solid")
+        data_align = Alignment(vertical="center")
+
+        for row_idx, record in enumerate(records, start=2):
             delegation = record.application_delegation if hasattr(record, 'application_delegation') else None
 
-            row_data = {
-                "Processing Type": record.DB_PROCESSING_TYPE,
-                "DTN": record.DB_DTN,
-                "Category": record.DB_EST_CAT,
-                "Applicant Company": record.DB_EST_LTO_COMP,
-                "Address": record.DB_EST_LTO_ADD,
-                "Email Address": record.DB_EST_EADD,
-                "TIN": record.DB_EST_TIN,
-                "Contact No.": record.DB_EST_CONTACT_NO,
-                "LTO No.": record.DB_EST_LTO_NO,
-                "Validity": record.DB_EST_VALIDITY,
-                "Brand Name": record.DB_PROD_BR_NAME,
-                "Generic Name": record.DB_PROD_GEN_NAME,
-                "Dosage Strength": record.DB_PROD_DOS_STR,
-                "Dosage Form and Route of Administration": record.DB_PROD_DOS_FORM,
-                "Classification": record.DB_PROD_CLASS_PRESCRIP,
-                "Essential Drug List": record.DB_PROD_ESS_DRUG_LIST,
-                "Pharmacologic Category": record.DB_PROD_PHARMA_CAT,
-                "Manufacturer": record.DB_PROD_MANU,
-                "Manufacturer Address": record.DB_PROD_MANU_ADD,
-                "Manufacturer TIN": record.DB_PROD_MANU_TIN,
-                "Manufacturer LTO No.": record.DB_PROD_MANU_LTO_NO,
-                "Manufacturer Country": record.DB_PROD_MANU_COUNTRY,
-                "Trader": record.DB_PROD_TRADER,
-                "Trader Address": record.DB_PROD_TRADER_ADD,
-                "Trader TIN": record.DB_PROD_TRADER_TIN,
-                "Trader LTO No.": record.DB_PROD_TRADER_LTO_NO,
-                "Trader Country": record.DB_PROD_TRADER_COUNTRY,
-                "Repacker": record.DB_PROD_REPACKER,
-                "Repacker Address": record.DB_PROD_REPACKER_ADD,
-                "Repacker TIN": record.DB_PROD_REPACKER_TIN,
-                "Repacker LTO No.": record.DB_PROD_REPACKER_LTO_NO,
-                "Repacker Country": record.DB_PROD_REPACKER_COUNTRY,
-                "Importer": record.DB_PROD_IMPORTER,
-                "Importer Address": record.DB_PROD_IMPORTER_ADD,
-                "Importer TIN": record.DB_PROD_IMPORTER_TIN,
-                "Importer LTO No.": record.DB_PROD_IMPORTER_LTO_NO,
-                "Importer Country": record.DB_PROD_IMPORTER_COUNTRY,
-                "Distributor": record.DB_PROD_DISTRI,
-                "Distributor Address": record.DB_PROD_DISTRI_ADD,
-                "Distributor TIN": record.DB_PROD_DISTRI_TIN,
-                "Distributor LTO No.": record.DB_PROD_DISTRI_LTO_NO,
-                "Distributor Country": record.DB_PROD_DISTRI_COUNTRY,
-                "Shelf Life": record.DB_PROD_DISTRI_SHELF_LIFE,
-                "Storage Condition": record.DB_STORAGE_COND,
-                "Packaging": record.DB_PACKAGING,
-                "Suggested Retail Price": record.DB_SUGG_RP,
-                "Registration Number": record.DB_REG_NO,
-                "Application Type": record.DB_APP_TYPE,
-                "Mother Application Type": record.DB_MOTHER_APP_TYPE,
-                "Old RSN/ Other DTN": record.DB_OLD_RSN,
-                "Amendment 1": record.DB_AMMEND1,
-                "Amendment 2": record.DB_AMMEND2,
-                "Amendment 3": record.DB_AMMEND3,
-                "Product Category": record.DB_PROD_CAT,
-                "Certification": record.DB_CERTIFICATION,
-                "Fee": record.DB_FEE,
-                "LRF": record.DB_LRF,
-                "SURC": record.DB_SURC,
-                "Total": record.DB_TOTAL,
-                "OR No.": record.DB_OR_NO,
-                "Date Issued": record.DB_DATE_ISSUED,
-                "Date when the application was received by FDAC": record.DB_DATE_RECEIVED_FDAC,
-                "Date when the application was received by CDRR": record.DB_DATE_RECEIVED_CENT,   # 👈 DAGDAG
-                "MO": record.DB_MO,
-                "FILE COPY": record.DB_FILE,
-                "SECPA No.": record.DB_SECPA,                                # 👈 DAGDAG
-                "Expiry Date": record.DB_SECPA_EXP_DATE,             # 👈 DAGDAG
-                "Issued On": record.DB_SECPA_ISSUED_ON,           # 👈 DAGDAG
-                "Remarks (1)(e.g. reason of application returned)": record.DB_REMARKS_1,                        # 👈 DAGDAG
-                "Date of Remarks (1)": record.DB_DATE_REMARKS,                  # 👈 DAGDAG
-                "Class": record.DB_CLASS,                                # 👈 DAGDAG
-                "Date Released by the CDRR": record.DB_DATE_RELEASED,
-                "Type of Document Released": record.DB_TYPE_DOC_RELEASED,        # 👈 DAGDAG
-                "Attachment/s released with authorization": record.DB_ATTA_RELEASED,                # 👈 DAGDAG
-                "CPR Condition/s Ticked at the back of CPR": record.DB_CPR_COND,                     # 👈 DAGDAG
-                "CPR Cond Remarks": record.DB_CPR_COND_REMARKS,         # 👈 DAGDAG
-                "CPR Cond Additional Remarks": record.DB_CPR_COND_ADD_REMARKS, # 👈 DAGDAG
-                "App Status": record.DB_APP_STATUS,
-                "App Remarks": record.DB_APP_REMARKS,                    # 👈 DAGDAG
-                "Timeline (Days)": record.DB_TIMELINE_CITIZEN_CHARTER,  # 👈 DAGDAG
-                
-                # "User Uploader": record.DB_USER_UPLOADER,
-                # "Date Excel Upload": str(record.DB_DATE_EXCEL_UPLOAD) if record.DB_DATE_EXCEL_UPLOAD else None,
-            }
-            if delegation:
-                row_data.update({
-                    "Evaluator": delegation.DB_EVALUATOR,
-                    "Evaluator Decision": delegation.DB_EVAL_DECISION,
-                    "Evaluator Remarks": delegation.DB_EVAL_REMARKS,
-                    "Date Eval End": str(delegation.DB_DATE_EVAL_END) if delegation.DB_DATE_EVAL_END else None,
-                    "Decker": delegation.DB_DECKER,
-                    "Decker Decision": delegation.DB_DECKER_DECISION,
-                    "Decker Remarks": delegation.DB_DECKER_REMARKS,
-                    "Date Decked End": str(delegation.DB_DATE_DECKED_END) if delegation.DB_DATE_DECKED_END else None,
-                    "Checker": delegation.DB_CHECKER,
-                    "Checker Decision": delegation.DB_CHECKER_DECISION,
-                    "Date Checker End": str(delegation.DB_DATE_CHECKER_END) if delegation.DB_DATE_CHECKER_END else None,
-                })
+            values = [
+                record.DB_PROCESSING_TYPE,
+                record.DB_DTN,
+                record.DB_EST_CAT,
+                record.DB_EST_LTO_COMP,
+                record.DB_EST_LTO_ADD,
+                record.DB_EST_EADD,
+                record.DB_EST_TIN,
+                record.DB_EST_CONTACT_NO,
+                record.DB_EST_LTO_NO,
+                record.DB_EST_VALIDITY,
+                record.DB_PROD_BR_NAME,
+                record.DB_PROD_GEN_NAME,
+                record.DB_PROD_DOS_STR,
+                record.DB_PROD_DOS_FORM,
+                record.DB_PROD_CLASS_PRESCRIP,
+                record.DB_PROD_ESS_DRUG_LIST,
+                record.DB_PROD_PHARMA_CAT,
+                record.DB_PROD_MANU,
+                record.DB_PROD_MANU_ADD,
+                record.DB_PROD_MANU_TIN,
+                record.DB_PROD_MANU_LTO_NO,
+                record.DB_PROD_MANU_COUNTRY,
+                record.DB_PROD_TRADER,
+                record.DB_PROD_TRADER_ADD,
+                record.DB_PROD_TRADER_TIN,
+                record.DB_PROD_TRADER_LTO_NO,
+                record.DB_PROD_TRADER_COUNTRY,
+                record.DB_PROD_REPACKER,
+                record.DB_PROD_REPACKER_ADD,
+                record.DB_PROD_REPACKER_TIN,
+                record.DB_PROD_REPACKER_LTO_NO,
+                record.DB_PROD_REPACKER_COUNTRY,
+                record.DB_PROD_IMPORTER,
+                record.DB_PROD_IMPORTER_ADD,
+                record.DB_PROD_IMPORTER_TIN,
+                record.DB_PROD_IMPORTER_LTO_NO,
+                record.DB_PROD_IMPORTER_COUNTRY,
+                record.DB_PROD_DISTRI,
+                record.DB_PROD_DISTRI_ADD,
+                record.DB_PROD_DISTRI_TIN,
+                record.DB_PROD_DISTRI_LTO_NO,
+                record.DB_PROD_DISTRI_COUNTRY,
+                record.DB_PROD_DISTRI_SHELF_LIFE,
+                record.DB_STORAGE_COND,
+                record.DB_PACKAGING,
+                record.DB_SUGG_RP,
+                record.DB_REG_NO,
+                record.DB_APP_TYPE,
+                record.DB_MOTHER_APP_TYPE,
+                record.DB_OLD_RSN,
+                record.DB_AMMEND1,
+                record.DB_AMMEND2,
+                record.DB_AMMEND3,
+                record.DB_PROD_CAT,
+                record.DB_CERTIFICATION,
+                record.DB_FEE,
+                record.DB_LRF,
+                record.DB_SURC,
+                record.DB_TOTAL,
+                record.DB_OR_NO,
+                record.DB_DATE_ISSUED,
+                record.DB_DATE_RECEIVED_FDAC,
+                record.DB_DATE_RECEIVED_CENT,
+                record.DB_MO,
+                record.DB_FILE,
+                record.DB_SECPA,
+                record.DB_SECPA_EXP_DATE,
+                record.DB_SECPA_ISSUED_ON,
+                record.DB_REMARKS_1,
+                record.DB_DATE_REMARKS,
+                record.DB_CLASS,
+                record.DB_DATE_RELEASED,
+                record.DB_TYPE_DOC_RELEASED,
+                record.DB_ATTA_RELEASED,
+                record.DB_CPR_COND,
+                record.DB_CPR_COND_REMARKS,
+                record.DB_CPR_COND_ADD_REMARKS,
+                record.DB_APP_STATUS,
+                record.DB_APP_REMARKS,
+                record.DB_TIMELINE_CITIZEN_CHARTER,
+                delegation.DB_EVALUATOR if delegation else None,
+                delegation.DB_EVAL_DECISION if delegation else None,
+                delegation.DB_EVAL_REMARKS if delegation else None,
+                str(delegation.DB_DATE_EVAL_END) if delegation and delegation.DB_DATE_EVAL_END else None,
+                delegation.DB_DECKER if delegation else None,
+                delegation.DB_DECKER_DECISION if delegation else None,
+                delegation.DB_DECKER_REMARKS if delegation else None,
+                str(delegation.DB_DATE_DECKED_END) if delegation and delegation.DB_DATE_DECKED_END else None,
+                delegation.DB_CHECKER if delegation else None,
+                delegation.DB_CHECKER_DECISION if delegation else None,
+                str(delegation.DB_DATE_CHECKER_END) if delegation and delegation.DB_DATE_CHECKER_END else None,
+            ]
 
-            data_for_export.append(row_data)
+            is_even = (row_idx % 2 == 0)
+            row_cells = []
+            for val in values:
+                c = WriteOnlyCell(ws, value=val)
+                c.alignment = data_align
+                if is_even:
+                    c.fill = even_fill
+                row_cells.append(c)
+            ws.append(row_cells)
 
-        df = pd.DataFrame(data_for_export)
-
+        # ── Save to buffer and stream ──
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Filtered Records')
-
-            # 👇 DAGDAG — auto-fit columns + style headers
-            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-            from openpyxl.utils import get_column_letter
-
-            workbook = writer.book
-            worksheet = writer.sheets['Filtered Records']
-
-            # Header style
-            header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
-            header_font = Font(bold=True, color="FFFFFF", size=10)
-            header_align = Alignment(horizontal="center", vertical="center", wrap_text=False)
-            thin_border = Border(
-                bottom=Side(style="thin", color="FFFFFF")
-            )
-
-            for col_idx, col_name in enumerate(df.columns, start=1):
-                col_letter = get_column_letter(col_idx)
-                cell = worksheet.cell(row=1, column=col_idx)
-                cell.fill = header_fill
-                cell.font = header_font
-                cell.alignment = header_align
-                cell.border = thin_border
-
-                # Auto-fit width based on content
-                max_length = len(str(col_name))  # start with header length
-                for row_idx in range(2, min(len(df) + 2, 502)):  # check up to 500 rows
-                    cell_val = worksheet.cell(row=row_idx, column=col_idx).value
-                    if cell_val:
-                        max_length = max(max_length, len(str(cell_val)))
-
-                # Cap width and set
-                adjusted_width = min(max_length + 4, 60)
-                adjusted_width = max(adjusted_width, 12)  # minimum 12
-                worksheet.column_dimensions[col_letter].width = adjusted_width
-
-                # Style data cells — alternate row colors
-                for row_idx in range(2, len(df) + 2):
-                    data_cell = worksheet.cell(row=row_idx, column=col_idx)
-                    data_cell.alignment = Alignment(vertical="center", wrap_text=False)
-                    if row_idx % 2 == 0:
-                        data_cell.fill = PatternFill(start_color="EBF3FB", end_color="EBF3FB", fill_type="solid")
-
-            # Freeze header row
-            worksheet.freeze_panes = "A2"
-
-            # Set row height for header
-            worksheet.row_dimensions[1].height = 20
-
+        wb.save(output)
         output.seek(0)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filter_description = []
+        parts = ["main_db_export"]
         if app_type:
-            filter_description.append(f"{app_type}")
+            parts.append(app_type.replace(" ", "_"))
         if status:
-            filter_description.append(f"{status}")
-
-        filename_parts = ["main_db_export", timestamp]
-        if filter_description:
-            filename_parts.insert(1, "_".join(filter_description))
-
-        filename = "_".join(filename_parts) + ".xlsx"
+            parts.append(status)
+        parts.append(timestamp)
+        filename = "_".join(parts) + ".xlsx"
 
         return StreamingResponse(
             output,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f"attachment; filename={filename}"}
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}",
+                "Content-Length": str(output.getbuffer().nbytes),  # ✅ enables real % on frontend
+            }
         )
 
     except HTTPException:
@@ -1424,7 +1459,6 @@ async def export_filtered_records(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to export records: {str(e)}")
-
 
 @router.get("/{record_id}", response_model=MainDBResponse)
 def get_record(record_id: int, db: Session = Depends(get_db)):
