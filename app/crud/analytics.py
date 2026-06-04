@@ -341,14 +341,18 @@ def get_analytics_frp_tat_trend(
     clean_released = func.str_to_date(
         func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d"
     )
-    month_col = func.month(clean_received)
-    year_col  = func.year(clean_received)
+    month_col_received = func.month(clean_received)
+    year_col_received  = func.year(clean_received)
+    month_col_released = func.month(clean_released)
+    year_col_released  = func.year(clean_released)
 
     tat_days = _wd_diff(clean_received, clean_released)
     query = (
         db.query(
-            year_col.label("year"),
-            month_col.label("month_num"),
+            year_col_received.label("year_received"),
+            month_col_received.label("month_num_received"),
+            year_col_released.label("year_released"),
+            month_col_released.label("month_num_released"),
             MainDB.DB_TIMELINE_CITIZEN_CHARTER.label("timeline_days"),
             MainDB.DB_TYPE_DOC_RELEASED.label("type_of_doc_released"),  # ← DAGDAG
             func.count(MainDB.DB_ID).label("total_applications"),
@@ -368,23 +372,41 @@ def get_analytics_frp_tat_trend(
     )
 
     if year != "All":
-        query = query.filter(year_col == int(year))
-
+        query = query.filter(
+            or_(
+                year_col_received == int(year),
+                year_col_released == int(year),
+            )
+        )
     if month != "All":
-        query = query.filter(month_col == int(month))
+        query = query.filter(
+            or_(
+                month_col_received == int(month),
+                month_col_released == int(month),
+            )
+        )
 
     rows = (
         query
-        .group_by("year", "month_num", "timeline_days", "type_of_doc_released")  # ← DAGDAG
-        .order_by("timeline_days", "year", "month_num")
+        .group_by(
+            "year_received", "month_num_received",
+            "year_released", "month_num_released",
+            "timeline_days", "type_of_doc_released"
+        )
+        .order_by("timeline_days", "year_received", "month_num_received")
         .all()
     )
 
     return [
         {
-            "month":                f"{MONTH_ABBR.get(row.month_num, str(row.month_num))} {row.year}",
-            "year":                 row.year,
-            "month_num":            row.month_num,
+            # Received
+            "month":                f"{MONTH_ABBR.get(row.month_num_received, str(row.month_num_received))} {row.year_received}",
+            "year":                 row.year_received,
+            "month_num":            row.month_num_received,
+            # Released
+            "month_released":       f"{MONTH_ABBR.get(row.month_num_released, str(row.month_num_released))} {row.year_released}",
+            "year_released":        row.year_released,
+            "month_num_released":   row.month_num_released,
             "timeline_days":        row.timeline_days,
             "type_of_doc_released": row.type_of_doc_released,  # ← DAGDAG
             "total_applications":   row.total_applications,
