@@ -147,6 +147,8 @@ def get_analytics_trend(
 
     result = []
     for r in rows:
+        if r.grp is None:
+            continue
         if year == "All":
             label, sort_key = str(r.grp), r.grp
         else:
