@@ -11,10 +11,17 @@ def _base_query(db, year="All", month="All", prescription="All"):
     if prescription != "All":
         q = q.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
     if year != "All":
-        q = q.filter(func.substr(MainDB.DB_DATE_RELEASED, 1, 4) == str(year))
+        q = q.filter(
+            func.year(func.str_to_date(
+                func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d"
+            )) == int(year)
+        )
         if month != "All":
-            month_num = str(int(month) + 1).zfill(2)
-            q = q.filter(func.substr(MainDB.DB_DATE_RELEASED, 6, 2) == month_num)
+            q = q.filter(
+                func.month(func.str_to_date(
+                    func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d"
+                )) == int(month)
+            )
     return q
 
 
@@ -25,7 +32,11 @@ def _lod_case():
     return func.sum(case((MainDB.DB_TYPE_DOC_RELEASED.ilike("%LOD%"), 1), else_=0))
 
 def _on_process_case():
-    return func.sum(case((MainDB.DB_APP_STATUS.ilike("ON-PROCESS"), 1), else_=0))
+    return func.sum(case((
+        or_(
+            MainDB.DB_APP_STATUS.ilike("ON-PROCESS"),
+            MainDB.DB_APP_STATUS.ilike("ON PROCESS"),
+        ), 1), else_=0))
 
 def _completed_case():
     return func.sum(case((MainDB.DB_APP_STATUS.ilike("COMPLETED"), 1), else_=0))
@@ -53,7 +64,11 @@ def _wd_diff(start_col, end_col):
 # ── 1. Available Years ────────────────────────────────────────
 def get_analytics_available_years(db: Session) -> list:
     rows = (
-        db.query(func.substr(MainDB.DB_DATE_RELEASED, 1, 4).label("yr"))
+        db.query(
+            func.year(func.str_to_date(
+                func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d"
+            )).label("yr")
+        )
         .filter(
             MainDB.DB_DATE_RELEASED.isnot(None),
             MainDB.DB_DATE_RELEASED != "",
@@ -102,10 +117,11 @@ def get_analytics_trend(
     month: str = "All",
     prescription: str = "All",
 ) -> list:
+    date_col = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
     if year == "All":
-        group_expr = func.substr(MainDB.DB_DATE_RELEASED, 1, 4).label("grp")
+        group_expr = func.year(date_col).label("grp")
     else:
-        group_expr = func.substr(MainDB.DB_DATE_RELEASED, 6, 2).label("grp")
+        group_expr = func.month(date_col).label("grp")
 
     rows = (
         _base_query(db, year, month, prescription)
@@ -185,7 +201,9 @@ def get_analytics_by_classification(
 def get_analytics_year_summary(db: Session) -> list:
     rows = (
         db.query(
-            func.substr(MainDB.DB_DATE_RELEASED, 1, 4).label("yr"),
+            func.year(func.str_to_date(
+                func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d"
+            )).label("yr"),
             func.count(MainDB.DB_ID).label("total"),
             _cpr_case().label("cpr"),
             _lod_case().label("lod"),
@@ -344,7 +362,7 @@ def get_analytics_frp_tat_trend(
             MainDB.DB_DATE_RELEASED.isnot(None),
             MainDB.DB_DATE_RELEASED != "",
             MainDB.DB_TRASH.is_(None),
-            MainDB.DB_APP_STATUS == "COMPLETED",
+            func.upper(MainDB.DB_APP_STATUS) == "COMPLETED",
         )
     )
 
