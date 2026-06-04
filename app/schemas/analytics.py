@@ -80,8 +80,12 @@ class AnalyticsFRPTATItem(BaseModel):
     month: str
     year: int
     month_num: int
+    # Released date fields
+    month_released: Optional[str] = None
+    year_released: Optional[int] = None
+    month_num_released: Optional[int] = None
     timeline_days: Optional[int] = None
-    type_of_doc_released: Optional[str] = None   # ← DAGDAG
+    type_of_doc_released: Optional[str] = None
     total_applications: int
     avg_tat_days: Optional[float] = None
     min_tat_days: Optional[int] = None
