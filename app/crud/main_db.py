@@ -334,19 +334,17 @@ def get_main_db_records(
     else:
         print(f"⚠️ Unknown sort field: {sort_by}, using default")
         query = query.order_by(desc(MainDB.DB_DATE_EXCEL_UPLOAD))
-
     
+    # ✅ joinedload — single JOIN query, no N+1
+    query = query.options(joinedload(MainDB.application_delegation))
+
     if limit >= 10000:
         records = list(query.offset(skip).limit(limit).yield_per(500))
     else:
         records = query.offset(skip).limit(limit).all()
 
     print(f"✅ Returning {len(records)} records (skip={skip}, limit={limit})")
-
-    # ✅ Eager load delegation para hindi mag-trigger ng N+1 queries
-    for record in records:
-        _ = record.application_delegation
-
+    
     return records, total
 
 

@@ -1148,6 +1148,7 @@ async def get_upload_history(
             status_code=500,
             detail=f"Failed to fetch upload history: {str(e)}"
         )
+
 @router.get("/export-filtered")
 async def export_filtered_records(
     search: Optional[str] = Query(None),
@@ -1458,7 +1459,6 @@ async def export_filtered_records(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to export records: {str(e)}")
-
 
 @router.get("/{record_id}", response_model=MainDBResponse)
 def get_record(record_id: int, db: Session = Depends(get_db)):
