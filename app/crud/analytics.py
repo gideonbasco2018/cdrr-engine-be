@@ -402,13 +402,6 @@ def get_analytics_frp_tat_trend(
         .all()
     )
 
-    # DEBUG: log total rows and check for released 2025 data
-    print(f"[FRP TAT DEBUG] Total grouped rows returned: {len(rows)}")
-    released_2025 = [r for r in rows if r.year_released and r.year_released >= 2025]
-    print(f"[FRP TAT DEBUG] Rows with year_released >= 2025: {len(released_2025)}")
-    for r in released_2025[:5]:
-        print(f"  → received={r.month_num_received}/{r.year_received}, released={r.month_num_released}/{r.year_released}, timeline={r.timeline_days}, apps={r.total_applications}")
-
     return [
         {
             # Received
