@@ -68,15 +68,17 @@ def _wd_diff(start_col, end_col):
 
 # ── 1. Available Years ────────────────────────────────────────
 def get_analytics_available_years(db: Session) -> list:
+    date_col = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
+    year_col = func.year(date_col)
     rows = (
-        db.query(
-            func.year(func.str_to_date(
-                func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d"
-            )).label("yr")
-        )
+        db.query(year_col.label("yr"))
         .filter(
             MainDB.DB_DATE_RELEASED.isnot(None),
             MainDB.DB_DATE_RELEASED != "",
+            MainDB.DB_DATE_RELEASED != "N/A",
+            date_col.isnot(None),
+            year_col >= 2000,
+            year_col <= 2100,
         )
         .distinct()
         .all()
@@ -133,6 +135,10 @@ def get_analytics_trend(
         .filter(
             MainDB.DB_DATE_RELEASED.isnot(None),
             MainDB.DB_DATE_RELEASED != "",
+            MainDB.DB_DATE_RELEASED != "N/A",
+            date_col.isnot(None),
+            func.year(date_col) >= 2000,
+            func.year(date_col) <= 2100,
         )
         .with_entities(
             group_expr,
@@ -206,11 +212,11 @@ def get_analytics_by_classification(
 
 # ── 5. Year-by-Year Summary ───────────────────────────────────
 def get_analytics_year_summary(db: Session) -> list:
+    date_col = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
+    year_col = func.year(date_col)
     rows = (
         db.query(
-            func.year(func.str_to_date(
-                func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d"
-            )).label("yr"),
+            year_col.label("yr"),
             func.count(MainDB.DB_ID).label("total"),
             _cpr_case().label("cpr"),
             _lod_case().label("lod"),
@@ -220,6 +226,10 @@ def get_analytics_year_summary(db: Session) -> list:
         .filter(
             MainDB.DB_DATE_RELEASED.isnot(None),
             MainDB.DB_DATE_RELEASED != "",
+            MainDB.DB_DATE_RELEASED != "N/A",
+            date_col.isnot(None),
+            year_col >= 2000,
+            year_col <= 2100,
         )
         .group_by("yr")
         .order_by("yr")
