@@ -82,7 +82,7 @@ def get_analytics_available_years(db: Session) -> list:
         .all()
     )
     years = sorted({r.yr for r in rows if r.yr})
-    return ["All"] + years
+    return ["All"] + [str(y) for y in years]
 
 
 # ── 2. Stat Cards Summary ─────────────────────────────────────
@@ -103,14 +103,14 @@ def get_analytics_summary(
         )
         .one()
     )
-    total = row.total or 0
-    cpr   = row.cpr   or 0
+    total = int(row.total or 0)
+    cpr   = int(row.cpr   or 0)
     return {
         "total":         total,
         "cpr":           cpr,
-        "lod":           row.lod        or 0,
-        "on_process":    row.on_process or 0,
-        "completed":     row.completed  or 0,
+        "lod":           int(row.lod        or 0),
+        "on_process":    int(row.on_process or 0),
+        "completed":     int(row.completed  or 0),
         "approval_rate": round(cpr / total * 100, 1) if total else 0.0,
     }
 
@@ -148,16 +148,16 @@ def get_analytics_trend(
     result = []
     for r in rows:
         if year == "All":
-            label, sort_key = r.grp, r.grp
+            label, sort_key = str(r.grp), r.grp
         else:
-            label    = MONTH_ABBR.get(int(r.grp), r.grp)
+            label    = MONTH_ABBR.get(int(r.grp), str(r.grp))
             sort_key = int(r.grp)
         result.append({
             "label":      label,
-            "cpr":        r.cpr        or 0,
-            "lod":        r.lod        or 0,
-            "on_process": r.on_process or 0,
-            "completed":  r.completed  or 0,
+            "cpr":        int(r.cpr        or 0),
+            "lod":        int(r.lod        or 0),
+            "on_process": int(r.on_process or 0),
+            "completed":  int(r.completed  or 0),
             "_s":         sort_key,
         })
 
@@ -190,13 +190,13 @@ def get_analytics_by_classification(
     )
     result = []
     for r in rows:
-        count = r.count or 0
-        cpr   = r.cpr   or 0
+        count = int(r.count or 0)
+        cpr   = int(r.cpr   or 0)
         result.append({
             "type":  r.rx,
             "count": count,
             "cpr":   cpr,
-            "lod":   r.lod or 0,
+            "lod":   int(r.lod or 0),
             "rate":  round(cpr / count * 100, 1) if count else 0.0,
         })
     return result
@@ -225,15 +225,15 @@ def get_analytics_year_summary(db: Session) -> list:
     )
     result = []
     for r in rows:
-        total = r.total or 0
-        cpr   = r.cpr   or 0
+        total = int(r.total or 0)
+        cpr   = int(r.cpr   or 0)
         result.append({
-            "year":       r.yr,
+            "year":       str(r.yr),
             "total":      total,
             "cpr":        cpr,
-            "lod":        r.lod        or 0,
-            "on_process": r.on_process or 0,
-            "completed":  r.completed  or 0,
+            "lod":        int(r.lod        or 0),
+            "on_process": int(r.on_process or 0),
+            "completed":  int(r.completed  or 0),
             "rate":       round(cpr / total * 100, 1) if total else 0.0,
         })
     return result
@@ -268,15 +268,15 @@ def get_analytics_top_drugs(
     )
     result = []
     for r in rows:
-        total = r.total or 0
-        cpr   = r.cpr   or 0
+        total = int(r.total or 0)
+        cpr   = int(r.cpr   or 0)
         result.append({
             "name":    r.name,
             "generic": r.generic or "",
             "rx":      r.rx      or "",
             "total":   total,
             "cpr":     cpr,
-            "lod":     r.lod or 0,
+            "lod":     int(r.lod or 0),
             "rate":    round(cpr / total * 100, 1) if total else 0.0,
         })
     return result
@@ -320,10 +320,10 @@ def get_analytics_top_countries(
     return [
         {
             "country":    r.country,
-            "count":      r.count      or 0,
-            "cpr":        r.cpr        or 0,
-            "lod":        r.lod        or 0,
-            "on_process": r.on_process or 0,
+            "count":      int(r.count      or 0),
+            "cpr":        int(r.cpr        or 0),
+            "lod":        int(r.lod        or 0),
+            "on_process": int(r.on_process or 0),
         }
         for r in rows
     ]
