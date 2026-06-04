@@ -13,6 +13,7 @@ from app.schemas.monitoring import (
     TaskStatusBreakdown,
     ReleaseListResponse,
     OverviewSummaryResponse,
+    CprTrendResponse,
 )
 from app.crud import monitoring as crud_monitoring
 from app.models.group import Group
@@ -210,3 +211,33 @@ def get_overview_summary(
     db: Session = Depends(get_db),
 ):
     return crud_monitoring.get_overview_summary(db)
+
+
+# -----------------------------
+# CPR Trend (Received & Released)
+# -----------------------------
+@router.get(
+    "/cpr-trend",
+    response_model=CprTrendResponse,
+    summary="Monthly trend of received and released CPR drug products",
+)
+def get_cpr_trend(
+    year: Optional[int] = Query(None, description="Filter by year (e.g. 2025)"),
+    country_type: Optional[str] = Query(
+        None,
+        description="Country column to filter: manufacturer|trader|repacker|importer|distributor",
+    ),
+    country: Optional[str] = Query(None, description="Specific country value to filter on"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Returns monthly received vs released counts for CPR drug products.
+    Optionally filter by year and country (based on chosen country type).
+    """
+    return crud_monitoring.get_cpr_trend(
+        db=db,
+        year=year,
+        country_type=country_type,
+        country=country,
+    )
