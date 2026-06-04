@@ -119,3 +119,4 @@ class CprTrendItem(BaseModel):
 class CprTrendResponse(BaseModel):
     data: List[CprTrendItem]
     countries: List[str]  # unique country values for the chosen country_type
+    doc_types: List[str]  # unique DB_TYPE_DOC_RELEASED values for dropdown

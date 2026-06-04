@@ -365,25 +365,32 @@ def get_cpr_trend(
     year: Optional[int] = None,
     country_type: Optional[str] = None,
     country: Optional[str] = None,
+    doc_type: Optional[str] = None,
 ) -> dict:
     """
-    Returns monthly counts of received and released CPR drug products.
+    Returns monthly counts of received and released drug product applications.
+    - Received: all records with a valid DB_DATE_RECEIVED_CENT
+    - Released: records with a valid DB_DATE_RELEASED
     Filters:
-      - year: restrict to a specific year
+      - year: restrict to a specific year (based on DB_DATE_RECEIVED_CENT for received,
+              DB_DATE_RELEASED for released)
       - country_type: one of manufacturer|trader|repacker|importer|distributor
       - country: specific country value to filter on (requires country_type)
+      - doc_type: filter by DB_TYPE_DOC_RELEASED value (applies to both queries)
     """
-
-    # -- Base query: only records where DB_TYPE_DOC_RELEASED contains 'CPR'
-    base_filter = MainDB.DB_TYPE_DOC_RELEASED.ilike("%CPR%")
 
     # -- Country filter
     country_col = _COUNTRY_COLUMN_MAP.get(country_type) if country_type else None
-    country_filter = []
+    country_filters = []
     if country_col is not None and country:
-        country_filter.append(country_col == country)
+        country_filters.append(country_col == country)
 
-    # -- RECEIVED: group by month extracted from DB_DATE_RECEIVED_CENT (format YYYY-MM-DD)
+    # -- Doc type filter (optional)
+    doc_type_filters = []
+    if doc_type:
+        doc_type_filters.append(MainDB.DB_TYPE_DOC_RELEASED == doc_type)
+
+    # -- RECEIVED: ALL records with a valid DB_DATE_RECEIVED_CENT
     received_q = (
         db.query(
             func.date_format(
@@ -392,7 +399,6 @@ def get_cpr_trend(
             func.count(MainDB.DB_ID).label("cnt"),
         )
         .filter(
-            base_filter,
             MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
             MainDB.DB_DATE_RECEIVED_CENT != "",
             MainDB.DB_DATE_RECEIVED_CENT != "N/A",
@@ -402,12 +408,14 @@ def get_cpr_trend(
         received_q = received_q.filter(
             func.year(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) == year
         )
-    for f in country_filter:
+    for f in country_filters:
+        received_q = received_q.filter(f)
+    for f in doc_type_filters:
         received_q = received_q.filter(f)
 
     received_q = received_q.group_by("period").all()
 
-    # -- RELEASED: group by month extracted from DB_DATE_RELEASED (format YYYY-MM-DD)
+    # -- RELEASED: records with a valid DB_DATE_RELEASED
     released_q = (
         db.query(
             func.date_format(
@@ -416,7 +424,6 @@ def get_cpr_trend(
             func.count(MainDB.DB_ID).label("cnt"),
         )
         .filter(
-            base_filter,
             MainDB.DB_DATE_RELEASED.isnot(None),
             MainDB.DB_DATE_RELEASED != "",
             MainDB.DB_DATE_RELEASED != "N/A",
@@ -426,7 +433,9 @@ def get_cpr_trend(
         released_q = released_q.filter(
             func.year(func.str_to_date(MainDB.DB_DATE_RELEASED, "%Y-%m-%d")) == year
         )
-    for f in country_filter:
+    for f in country_filters:
+        released_q = released_q.filter(f)
+    for f in doc_type_filters:
         released_q = released_q.filter(f)
 
     released_q = released_q.group_by("period").all()
@@ -465,4 +474,17 @@ def get_cpr_trend(
         )
         countries = [r[0] for r in country_rows]
 
-    return {"data": data, "countries": countries}
+    # -- Get unique doc types for the dropdown
+    doc_type_rows = (
+        db.query(MainDB.DB_TYPE_DOC_RELEASED)
+        .filter(
+            MainDB.DB_TYPE_DOC_RELEASED.isnot(None),
+            MainDB.DB_TYPE_DOC_RELEASED != "",
+        )
+        .distinct()
+        .order_by(MainDB.DB_TYPE_DOC_RELEASED)
+        .all()
+    )
+    doc_types = [r[0] for r in doc_type_rows]
+
+    return {"data": data, "countries": countries, "doc_types": doc_types}
