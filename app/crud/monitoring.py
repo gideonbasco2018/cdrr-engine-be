@@ -347,3 +347,122 @@ def get_overview_summary(db: Session) -> dict:
         "on_process": on_process,
         "lod_released": lod_released,
     }
+
+
+# ── CPR Trend (Received & Released) ───────────────────────────────────────────
+# Valid country column mapping
+_COUNTRY_COLUMN_MAP = {
+    "manufacturer": MainDB.DB_PROD_MANU_COUNTRY,
+    "trader": MainDB.DB_PROD_TRADER_COUNTRY,
+    "repacker": MainDB.DB_PROD_REPACKER_COUNTRY,
+    "importer": MainDB.DB_PROD_IMPORTER_COUNTRY,
+    "distributor": MainDB.DB_PROD_DISTRI_COUNTRY,
+}
+
+
+def get_cpr_trend(
+    db: Session,
+    year: Optional[int] = None,
+    country_type: Optional[str] = None,
+    country: Optional[str] = None,
+) -> dict:
+    """
+    Returns monthly counts of received and released CPR drug products.
+    Filters:
+      - year: restrict to a specific year
+      - country_type: one of manufacturer|trader|repacker|importer|distributor
+      - country: specific country value to filter on (requires country_type)
+    """
+
+    # -- Base query: only records where DB_TYPE_DOC_RELEASED contains 'CPR'
+    base_filter = MainDB.DB_TYPE_DOC_RELEASED.ilike("%CPR%")
+
+    # -- Country filter
+    country_col = _COUNTRY_COLUMN_MAP.get(country_type) if country_type else None
+    country_filter = []
+    if country_col is not None and country:
+        country_filter.append(country_col == country)
+
+    # -- RECEIVED: group by month extracted from DB_DATE_RECEIVED_CENT (format YYYY-MM-DD)
+    received_q = (
+        db.query(
+            func.date_format(
+                func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"), "%Y-%m"
+            ).label("period"),
+            func.count(MainDB.DB_ID).label("cnt"),
+        )
+        .filter(
+            base_filter,
+            MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
+            MainDB.DB_DATE_RECEIVED_CENT != "",
+            MainDB.DB_DATE_RECEIVED_CENT != "N/A",
+        )
+    )
+    if year:
+        received_q = received_q.filter(
+            func.year(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) == year
+        )
+    for f in country_filter:
+        received_q = received_q.filter(f)
+
+    received_q = received_q.group_by("period").all()
+
+    # -- RELEASED: group by month extracted from DB_DATE_RELEASED (format YYYY-MM-DD)
+    released_q = (
+        db.query(
+            func.date_format(
+                func.str_to_date(MainDB.DB_DATE_RELEASED, "%Y-%m-%d"), "%Y-%m"
+            ).label("period"),
+            func.count(MainDB.DB_ID).label("cnt"),
+        )
+        .filter(
+            base_filter,
+            MainDB.DB_DATE_RELEASED.isnot(None),
+            MainDB.DB_DATE_RELEASED != "",
+            MainDB.DB_DATE_RELEASED != "N/A",
+        )
+    )
+    if year:
+        released_q = released_q.filter(
+            func.year(func.str_to_date(MainDB.DB_DATE_RELEASED, "%Y-%m-%d")) == year
+        )
+    for f in country_filter:
+        released_q = released_q.filter(f)
+
+    released_q = released_q.group_by("period").all()
+
+    # -- Merge into a dict by period
+    trend_map = {}
+    for period, cnt in received_q:
+        if period:
+            trend_map.setdefault(period, {"received_count": 0, "released_count": 0})
+            trend_map[period]["received_count"] = int(cnt)
+
+    for period, cnt in released_q:
+        if period:
+            trend_map.setdefault(period, {"received_count": 0, "released_count": 0})
+            trend_map[period]["released_count"] = int(cnt)
+
+    # Sort by period ascending
+    sorted_periods = sorted(trend_map.keys())
+    data = [
+        {"period": p, **trend_map[p]}
+        for p in sorted_periods
+    ]
+
+    # -- Get unique countries for the selected country_type
+    countries = []
+    if country_col is not None:
+        country_rows = (
+            db.query(country_col)
+            .filter(
+                country_col.isnot(None),
+                country_col != "",
+            )
+            .distinct()
+            .order_by(country_col)
+            .all()
+        )
+        countries = [r[0] for r in country_rows]
+
+    return {"data": data, "countries": countries}

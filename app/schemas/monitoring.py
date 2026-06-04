@@ -107,3 +107,15 @@ class DtnDateRangeFilter(BaseModel):
         ),
         example="20261231",
     )
+
+
+# ── CPR Trend (Received & Released) ───────────────────────────────────────────
+class CprTrendItem(BaseModel):
+    period: str  # e.g. "2025-01", "2025-02"
+    received_count: int = 0
+    released_count: int = 0
+
+
+class CprTrendResponse(BaseModel):
+    data: List[CprTrendItem]
+    countries: List[str]  # unique country values for the chosen country_type
