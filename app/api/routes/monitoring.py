@@ -228,16 +228,18 @@ def get_cpr_trend(
         description="Country column to filter: manufacturer|trader|repacker|importer|distributor",
     ),
     country: Optional[str] = Query(None, description="Specific country value to filter on"),
+    doc_type: Optional[str] = Query(None, description="Filter by document type released (exact match)"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
     """
     Returns monthly received vs released counts for CPR drug products.
-    Optionally filter by year and country (based on chosen country type).
+    Optionally filter by year, country (based on chosen country type), and document type.
     """
     return crud_monitoring.get_cpr_trend(
         db=db,
         year=year,
         country_type=country_type,
         country=country,
+        doc_type=doc_type,
     )

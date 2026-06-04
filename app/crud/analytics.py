@@ -4,7 +4,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy import case, func, Float, Integer, literal, or_
 from app.models.main_db import MainDB
 
-MONTHS_ORDER = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+
+MONTH_ABBR = {
+    1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr",
+    5: "May", 6: "Jun", 7: "Jul", 8: "Aug",
+    9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec",
+}
 
 def _base_query(db, year="All", month="All", prescription="All"):
     q = db.query(MainDB)
@@ -324,26 +329,22 @@ def get_analytics_top_countries(
     ]
 
 
-# ── 8. FRP & CRP — TAT Trend (per month, grouped by timeline) ────────────────
-
-MONTH_ABBR = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-]
 
 def get_analytics_frp_tat_trend(
     db: Session,
     year: str = "All",
     month: str = "All",
 ) -> list:
-    month_col = func.month(MainDB.DB_DATE_RECEIVED_CENT)
-    year_col  = func.year(MainDB.DB_DATE_RECEIVED_CENT)
-
-    tat_days = _wd_diff(
-        MainDB.DB_DATE_RECEIVED_CENT,
-        MainDB.DB_DATE_RELEASED,
+    clean_received = func.str_to_date(
+        func.left(MainDB.DB_DATE_RECEIVED_CENT, 10), "%Y-%m-%d"
     )
+    clean_released = func.str_to_date(
+        func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d"
+    )
+    month_col = func.month(clean_received)
+    year_col  = func.year(clean_received)
 
+    tat_days = _wd_diff(clean_received, clean_released)
     query = (
         db.query(
             year_col.label("year"),
@@ -381,7 +382,7 @@ def get_analytics_frp_tat_trend(
 
     return [
         {
-            "month":                f"{MONTH_ABBR[row.month_num - 1]} {row.year}",
+            "month":                f"{MONTH_ABBR.get(row.month_num, str(row.month_num))} {row.year}",
             "year":                 row.year,
             "month_num":            row.month_num,
             "timeline_days":        row.timeline_days,
@@ -407,8 +408,8 @@ def get_analytics_frp_tat_outliers(
     """
 
     tat_days = _wd_diff(
-        MainDB.DB_DATE_RECEIVED_CENT,
-        MainDB.DB_DATE_RELEASED,
+        func.str_to_date(func.left(MainDB.DB_DATE_RECEIVED_CENT, 10), "%Y-%m-%d"),
+        func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d"),
     )
 
     rows = (
@@ -427,7 +428,7 @@ def get_analytics_frp_tat_outliers(
             MainDB.DB_DATE_RELEASED.isnot(None),
             MainDB.DB_DATE_RELEASED != "",
             MainDB.DB_TRASH.is_(None),
-            MainDB.DB_APP_STATUS == "COMPLETED",
+            func.upper(MainDB.DB_APP_STATUS) == "COMPLETED",
             or_(
                 tat_days < 0,
                 tat_days > extreme_threshold,
