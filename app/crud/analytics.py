@@ -413,13 +413,15 @@ def get_analytics_frp_tat_trend(
             "year_released":        row.year_released,
             "month_num_released":   row.month_num_released,
             "timeline_days":        row.timeline_days,
-            "type_of_doc_released": row.type_of_doc_released,  # ← DAGDAG
+            "type_of_doc_released": row.type_of_doc_released,
             "total_applications":   row.total_applications,
             "avg_tat_days":         round(row.avg_tat_days, 2) if row.avg_tat_days is not None else None,
             "min_tat_days":         row.min_tat_days,
             "max_tat_days":         row.max_tat_days,
         }
         for row in rows
+        if row.year_received and row.month_num_received
+        and row.year_released and row.month_num_released
     ]
 
 # ── 9. FRP & CRP — TAT Outliers ──────────────────────────────────────────────
