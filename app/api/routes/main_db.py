@@ -1278,11 +1278,113 @@ async def export_filtered_records(
         ]
 
         # ── Header row with styling ──
+        from openpyxl.cell import WriteOnlyCell
+        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.utils import get_column_letter
+
         header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
         header_font = Font(bold=True, color="FFFFFF", size=10)
         header_align = Alignment(horizontal="center", vertical="center")
 
-        from openpyxl.cell import WriteOnlyCell
+        # ── Set ALL column widths BEFORE appending rows (required for write_only) ──
+        FIXED_WIDTHS = {
+            1: 18,   # Processing Type
+            2: 22,   # DTN
+            3: 15,   # Category
+            4: 35,   # Applicant Company
+            5: 40,   # Address
+            6: 30,   # Email Address
+            7: 15,   # TIN
+            8: 18,   # Contact No.
+            9: 18,   # LTO No.
+            10: 15,  # Validity
+            11: 30,  # Brand Name
+            12: 30,  # Generic Name
+            13: 20,  # Dosage Strength
+            14: 30,  # Dosage Form and Route
+            15: 22,  # Classification
+            16: 20,  # Essential Drug List
+            17: 25,  # Pharmacologic Category
+            18: 30,  # Manufacturer
+            19: 40,  # Manufacturer Address
+            20: 15,  # Manufacturer TIN
+            21: 20,  # Manufacturer LTO No.
+            22: 20,  # Manufacturer Country
+            23: 30,  # Trader
+            24: 40,  # Trader Address
+            25: 15,  # Trader TIN
+            26: 20,  # Trader LTO No.
+            27: 20,  # Trader Country
+            28: 30,  # Repacker
+            29: 40,  # Repacker Address
+            30: 15,  # Repacker TIN
+            31: 20,  # Repacker LTO No.
+            32: 20,  # Repacker Country
+            33: 30,  # Importer
+            34: 40,  # Importer Address
+            35: 15,  # Importer TIN
+            36: 20,  # Importer LTO No.
+            37: 20,  # Importer Country
+            38: 30,  # Distributor
+            39: 40,  # Distributor Address
+            40: 15,  # Distributor TIN
+            41: 20,  # Distributor LTO No.
+            42: 20,  # Distributor Country
+            43: 20,  # Shelf Life
+            44: 25,  # Storage Condition
+            45: 25,  # Packaging
+            46: 20,  # Suggested Retail Price
+            47: 22,  # Registration Number
+            48: 20,  # Application Type
+            49: 25,  # Mother Application Type
+            50: 20,  # Old RSN/ Other DTN
+            51: 15,  # Amendment 1
+            52: 15,  # Amendment 2
+            53: 15,  # Amendment 3
+            54: 20,  # Product Category
+            55: 20,  # Certification
+            56: 12,  # Fee
+            57: 12,  # LRF
+            58: 12,  # SURC
+            59: 12,  # Total
+            60: 18,  # OR No.
+            61: 18,  # Date Issued
+            62: 35,  # Date Received FDAC
+            63: 35,  # Date Received CDRR
+            64: 12,  # MO
+            65: 12,  # FILE COPY
+            66: 18,  # SECPA No.
+            67: 18,  # Expiry Date
+            68: 18,  # Issued On
+            69: 45,  # Remarks 1
+            70: 20,  # Date of Remarks
+            71: 15,  # Class
+            72: 25,  # Date Released
+            73: 25,  # Type of Document Released
+            74: 35,  # Attachment Released
+            75: 40,  # CPR Condition
+            76: 30,  # CPR Cond Remarks
+            77: 35,  # CPR Cond Additional Remarks
+            78: 20,  # App Status
+            79: 30,  # App Remarks
+            80: 18,  # Timeline (Days)
+            81: 25,  # Evaluator
+            82: 22,  # Evaluator Decision
+            83: 30,  # Evaluator Remarks
+            84: 20,  # Date Eval End
+            85: 25,  # Decker
+            86: 22,  # Decker Decision
+            87: 30,  # Decker Remarks
+            88: 20,  # Date Decked End
+            89: 25,  # Checker
+            90: 22,  # Checker Decision
+            91: 20,  # Date Checker End
+        }
+        for col_idx in range(1, len(HEADERS) + 1):
+            width = FIXED_WIDTHS.get(col_idx, 20)
+            ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+        # ── Header row ──
         header_cells = []
         for h in HEADERS:
             c = WriteOnlyCell(ws, value=h)
@@ -1291,32 +1393,6 @@ async def export_filtered_records(
             c.alignment = header_align
             header_cells.append(c)
         ws.append(header_cells)
-
-        # ── Set fixed column widths (no loop needed) ──
-        FIXED_WIDTHS = {
-            1: 18,   # Processing Type
-            2: 20,   # DTN
-            3: 15,   # Category
-            4: 35,   # Applicant Company
-            5: 40,   # Address
-            6: 30,   # Email
-            7: 15,   # TIN
-            8: 18,   # Contact No
-            9: 18,   # LTO No
-            10: 15,  # Validity
-            11: 30,  # Brand Name
-            12: 30,  # Generic Name
-            13: 20,  # Dosage Strength
-            14: 30,  # Dosage Form
-            15: 20,  # Classification
-        }
-        for col_idx, width in FIXED_WIDTHS.items():
-            ws.column_dimensions[get_column_letter(col_idx)].width = width
-        # Default width for remaining columns
-        for col_idx in range(len(HEADERS) + 1):
-            letter = get_column_letter(col_idx) if col_idx > 0 else None
-            if letter and col_idx not in FIXED_WIDTHS:
-                ws.column_dimensions[letter].width = 20
 
         # ── Data rows — alternate row color ──
         even_fill = PatternFill(start_color="EBF3FB", end_color="EBF3FB", fill_type="solid")
@@ -1327,7 +1403,7 @@ async def export_filtered_records(
 
             values = [
                 record.DB_PROCESSING_TYPE,
-                record.DB_DTN,
+                str(record.DB_DTN) if record.DB_DTN else None, 
                 record.DB_EST_CAT,
                 record.DB_EST_LTO_COMP,
                 record.DB_EST_LTO_ADD,
@@ -1421,11 +1497,14 @@ async def export_filtered_records(
 
             is_even = (row_idx % 2 == 0)
             row_cells = []
-            for val in values:
+            for col_idx, val in enumerate(values, start=1):
                 c = WriteOnlyCell(ws, value=val)
                 c.alignment = data_align
                 if is_even:
                     c.fill = even_fill
+                # ✅ DTN column (col 2) — force text format
+                if col_idx == 2 and val is not None:
+                    c.number_format = '@'
                 row_cells.append(c)
             ws.append(row_cells)
 
