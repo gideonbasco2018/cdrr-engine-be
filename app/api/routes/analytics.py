@@ -16,7 +16,8 @@ from app.schemas.analytics import (
     AnalyticsTopCountriesResponse,
     AnalyticsAvailableYearsResponse,
     AnalyticsFRPTATResponse,
-    AnalyticsFRPTATOutlierResponse
+    AnalyticsFRPTATOutlierResponse,
+    CountryYearTrendResponse,
 )
 from app.crud import analytics as crud_analytics
 
@@ -130,3 +131,17 @@ def get_frp_tat_outliers(
     return crud_analytics.get_analytics_frp_tat_outliers(
         db, extreme_threshold=extreme_threshold
     )
+
+
+@router.get("/country-year-trend", response_model=CountryYearTrendResponse)
+def get_country_year_trend(
+    country: str = Query(..., description="Country name"),
+    entity_type: str = Query("mfr", description="mfr|trader|importer|distributor|repacker"),
+    prescription: str = Query("All"),
+    db: Session = Depends(get_db),
+):
+    """Year-by-year released count + CPR for a specific country (used for hover tooltip)."""
+    data = crud_analytics.get_country_year_trend(
+        db, country=country, entity_type=entity_type, prescription=prescription
+    )
+    return {"country": country, "entity_type": entity_type, "data": data}

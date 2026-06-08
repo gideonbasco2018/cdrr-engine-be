@@ -481,6 +481,8 @@ def get_processing_types(
 def get_app_types(
     status: Optional[str] = Query(None, description="Filter by decking status: 'not_decked' or 'decked'"),
     processing_type: Optional[str] = Query(None, description="Filter by processing type"),
+    prescription: Optional[str] = Query(None, description="Filter by prescription/classification"),
+    app_status: Optional[str] = Query(None, description="Filter by app status"),
     db: Session = Depends(get_db)
 ):
     """Get unique DB_APP_TYPE values with counts"""
@@ -506,6 +508,18 @@ def get_app_types(
         )
 
     query = _apply_processing_type_filter(query, processing_type)
+
+    if prescription is not None:
+        if prescription == "__EMPTY__" or prescription == "":
+            query = query.filter(or_(MainDB.DB_PROD_CLASS_PRESCRIP.is_(None), MainDB.DB_PROD_CLASS_PRESCRIP == ""))
+        else:
+            query = query.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
+
+    if app_status is not None:
+        if app_status == "__EMPTY__" or app_status == "":
+            query = query.filter(or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == ""))
+        else:
+            query = query.filter(MainDB.DB_APP_STATUS == app_status)
 
     results_with_type = query.filter(
         MainDB.DB_APP_TYPE.isnot(None),
@@ -534,6 +548,18 @@ def get_app_types(
 
     query_no_type = _apply_processing_type_filter(query_no_type, processing_type)
 
+    if prescription is not None:
+        if prescription == "__EMPTY__" or prescription == "":
+            query_no_type = query_no_type.filter(or_(MainDB.DB_PROD_CLASS_PRESCRIP.is_(None), MainDB.DB_PROD_CLASS_PRESCRIP == ""))
+        else:
+            query_no_type = query_no_type.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
+
+    if app_status is not None:
+        if app_status == "__EMPTY__" or app_status == "":
+            query_no_type = query_no_type.filter(or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == ""))
+        else:
+            query_no_type = query_no_type.filter(MainDB.DB_APP_STATUS == app_status)
+
     no_type_count = query_no_type.filter(
         or_(
             MainDB.DB_APP_TYPE.is_(None),
@@ -557,6 +583,7 @@ def get_prescription_types(
     status: Optional[str] = Query(None, description="Filter by decking status: 'not_decked' or 'decked'"),
     app_type: Optional[str] = Query(None, description="Filter by application type"),
     processing_type: Optional[str] = Query(None, description="Filter by processing type"),
+    app_status: Optional[str] = Query(None, description="Filter by app status"),
     db: Session = Depends(get_db)
 ):
     """Get unique DB_PROD_CLASS_PRESCRIP values with counts"""
@@ -590,6 +617,12 @@ def get_prescription_types(
             query = query.filter(MainDB.DB_APP_TYPE == app_type)
 
     query = _apply_processing_type_filter(query, processing_type)
+
+    if app_status is not None:
+        if app_status == "__EMPTY__" or app_status == "":
+            query = query.filter(or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == ""))
+        else:
+            query = query.filter(MainDB.DB_APP_STATUS == app_status)
 
     results_with_type = query.filter(
         MainDB.DB_PROD_CLASS_PRESCRIP.isnot(None),
@@ -625,6 +658,12 @@ def get_prescription_types(
             query_no_type = query_no_type.filter(MainDB.DB_APP_TYPE == app_type)
 
     query_no_type = _apply_processing_type_filter(query_no_type, processing_type)
+
+    if app_status is not None:
+        if app_status == "__EMPTY__" or app_status == "":
+            query_no_type = query_no_type.filter(or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == ""))
+        else:
+            query_no_type = query_no_type.filter(MainDB.DB_APP_STATUS == app_status)
 
     no_type_count = query_no_type.filter(
         or_(
