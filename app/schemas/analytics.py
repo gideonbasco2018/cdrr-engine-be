@@ -72,6 +72,17 @@ class AnalyticsTopCountriesResponse(BaseModel):
     data: List[AnalyticsCountryItem]
 
 
+class CountryYearTrendItem(BaseModel):
+    year: str
+    count: int
+    cpr: int
+
+class CountryYearTrendResponse(BaseModel):
+    country: str
+    entity_type: str
+    data: List[CountryYearTrendItem]
+
+
 class AnalyticsAvailableYearsResponse(BaseModel):
     years: List[str]
 

@@ -341,6 +341,57 @@ def get_analytics_top_countries(
     ]
 
 
+# ── 7b. Country Year Trend ────────────────────────────────────
+def get_country_year_trend(
+    db: Session,
+    country: str,
+    entity_type: str = "mfr",
+    prescription: str = "All",
+) -> list:
+    """Returns year-by-year released counts (total + CPR) for a specific country."""
+    field_name = ENTITY_FIELD_MAP.get(entity_type, "DB_PROD_MANU_COUNTRY")
+    field = getattr(MainDB, field_name)
+
+    date_col = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
+    year_col = func.year(date_col)
+
+    rows = (
+        db.query(
+            year_col.label("yr"),
+            func.count(MainDB.DB_ID).label("count"),
+            _cpr_case().label("cpr"),
+        )
+        .filter(
+            field == country,
+            MainDB.DB_DATE_RELEASED.isnot(None),
+            MainDB.DB_DATE_RELEASED != "",
+            MainDB.DB_DATE_RELEASED != "N/A",
+            date_col.isnot(None),
+            year_col >= 2000,
+            year_col <= 2100,
+        )
+    )
+
+    if prescription != "All":
+        rows = rows.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
+
+    rows = (
+        rows.group_by("yr")
+        .order_by("yr")
+        .all()
+    )
+
+    return [
+        {
+            "year":  str(r.yr),
+            "count": int(r.count or 0),
+            "cpr":   int(r.cpr   or 0),
+        }
+        for r in rows
+        if r.yr
+    ]
+
+
 
 def get_analytics_frp_tat_trend(
     db: Session,
