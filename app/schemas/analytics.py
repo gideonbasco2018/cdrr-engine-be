@@ -1,8 +1,7 @@
 # app/schemas/analytics.py
 
 from pydantic import BaseModel
-from typing import Optional, List
-
+from typing import Optional, List, Dict
 
 class AnalyticsSummaryResponse(BaseModel):
     total: int
@@ -27,13 +26,11 @@ class AnalyticsTrendResponse(BaseModel):
 class AnalyticsClassificationItem(BaseModel):
     type: str
     count: int
-    cpr: int
-    lod: int
-    rate: float
+    by_doc_type: Dict[str, int] = {}
 
 class AnalyticsClassificationResponse(BaseModel):
     data: List[AnalyticsClassificationItem]
-
+    doc_types: List[str] = []
 
 class AnalyticsYearItem(BaseModel):
     year: str

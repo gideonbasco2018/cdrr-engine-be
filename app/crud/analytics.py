@@ -47,15 +47,6 @@ def _completed_case():
     return func.sum(case((MainDB.DB_APP_STATUS.ilike("COMPLETED"), 1), else_=0))
 
 def _wd_diff(start_col, end_col):
-    """
-    Working days (Mon–Fri) between two MySQL date columns.
-
-    Uses the lookup-table formula:
-        5 * FLOOR(n / 7) + SUBSTR(lut, WEEKDAY(start)*7 + WEEKDAY(end) + 1, 1)
-
-    MySQL WEEKDAY(): 0 = Monday … 6 = Sunday.
-    Does NOT account for public holidays.
-    """
     _LUT = literal("0123444401234443012345440123456601234566")
     n    = func.datediff(end_col, start_col)
     w1   = func.weekday(start_col)
@@ -180,6 +171,27 @@ def get_analytics_by_classification(
     month: str = "All",
     prescription: str = "All",
 ) -> list:
+    # Step 1: get all distinct doc types dynamically
+    doc_types = (
+        db.query(MainDB.DB_TYPE_DOC_RELEASED)
+        .filter(
+            MainDB.DB_TYPE_DOC_RELEASED.isnot(None),
+            MainDB.DB_TYPE_DOC_RELEASED != "",
+        )
+        .distinct()
+        .all()
+    )
+    doc_types = [r[0] for r in doc_types if r[0]]
+
+    # Step 2: build dynamic SUM(CASE WHEN ...) per doc type
+    dynamic_cols = [
+        func.sum(
+            case((MainDB.DB_TYPE_DOC_RELEASED == dt, 1), else_=0)
+        ).label(dt)
+        for dt in doc_types
+    ]
+
+    # Step 3: run the main query
     rows = (
         _base_query(db, year, month, prescription)
         .filter(
@@ -187,28 +199,27 @@ def get_analytics_by_classification(
             MainDB.DB_PROD_CLASS_PRESCRIP != "",
         )
         .with_entities(
-            MainDB.DB_PROD_CLASS_PRESCRIP.label("rx"),
+            MainDB.DB_PROD_CLASS_PRESCRIP.label("type"),
             func.count(MainDB.DB_ID).label("count"),
-            _cpr_case().label("cpr"),
-            _lod_case().label("lod"),
+            *dynamic_cols,
         )
         .group_by(MainDB.DB_PROD_CLASS_PRESCRIP)
         .order_by(func.count(MainDB.DB_ID).desc())
         .all()
     )
+
     result = []
     for r in rows:
-        count = int(r.count or 0)
-        cpr   = int(r.cpr   or 0)
-        result.append({
-            "type":  r.rx,
-            "count": count,
-            "cpr":   cpr,
-            "lod":   int(r.lod or 0),
-            "rate":  round(cpr / count * 100, 1) if count else 0.0,
-        })
-    return result
+        entry = {
+            "type":  r.type,
+            "count": int(r.count or 0),
+            "by_doc_type": {
+                dt: int(getattr(r, dt) or 0) for dt in doc_types
+            },
+        }
+        result.append(entry)
 
+    return result, doc_types 
 
 # ── 5. Year-by-Year Summary ───────────────────────────────────
 def get_analytics_year_summary(db: Session) -> list:
@@ -275,7 +286,7 @@ def get_analytics_top_drugs(
         )
         .group_by(MainDB.DB_PROD_BR_NAME)
         .order_by(func.count(MainDB.DB_ID).desc())
-        .limit(limit)
+        # no .limit() — all results returned, frontend paginates
         .all()
     )
     result = []
@@ -326,7 +337,7 @@ def get_analytics_top_countries(
         )
         .group_by(field)
         .order_by(func.count(MainDB.DB_ID).desc())
-        .limit(limit)
+        # no .limit() — all results returned, frontend paginates
         .all()
     )
     return [
@@ -348,7 +359,6 @@ def get_country_year_trend(
     entity_type: str = "mfr",
     prescription: str = "All",
 ) -> list:
-    """Returns year-by-year released counts (total + CPR + LOD + on_process) for a specific country."""
     field_name = ENTITY_FIELD_MAP.get(entity_type, "DB_PROD_MANU_COUNTRY")
     field = getattr(MainDB, field_name)
 
@@ -396,7 +406,7 @@ def get_country_year_trend(
     ]
 
 
-
+# ── 8. FRP TAT Trend ─────────────────────────────────────────
 def get_analytics_frp_tat_trend(
     db: Session,
     year: str = "All",
@@ -421,7 +431,7 @@ def get_analytics_frp_tat_trend(
             year_col_released.label("year_released"),
             month_col_released.label("month_num_released"),
             MainDB.DB_TIMELINE_CITIZEN_CHARTER.label("timeline_days"),
-            MainDB.DB_TYPE_DOC_RELEASED.label("type_of_doc_released"),  # ← DAGDAG
+            MainDB.DB_TYPE_DOC_RELEASED.label("type_of_doc_released"),
             func.count(MainDB.DB_ID).label("total_applications"),
             func.avg(tat_days).cast(Float).label("avg_tat_days"),
             func.min(tat_days).cast(Integer).label("min_tat_days"),
@@ -437,7 +447,6 @@ def get_analytics_frp_tat_trend(
             MainDB.DB_DATE_RELEASED != "N/A",
             MainDB.DB_TRASH.is_(None),
             func.upper(MainDB.DB_APP_STATUS) == "COMPLETED",
-            # Ensure str_to_date actually parses successfully (not NULL)
             clean_received.isnot(None),
             clean_released.isnot(None),
         )
@@ -471,11 +480,9 @@ def get_analytics_frp_tat_trend(
 
     return [
         {
-            # Received
             "month":                f"{MONTH_ABBR.get(row.month_num_received, str(row.month_num_received))} {row.year_received}",
             "year":                 row.year_received,
             "month_num":            row.month_num_received,
-            # Released
             "month_released":       f"{MONTH_ABBR.get(row.month_num_released, str(row.month_num_released))} {row.year_released}",
             "year_released":        row.year_released,
             "month_num_released":   row.month_num_released,
@@ -491,18 +498,12 @@ def get_analytics_frp_tat_trend(
         and row.year_released and row.month_num_released
     ]
 
-# ── 9. FRP & CRP — TAT Outliers ──────────────────────────────────────────────
 
+# ── 9. FRP & CRP — TAT Outliers ──────────────────────────────
 def get_analytics_frp_tat_outliers(
     db: Session,
     extreme_threshold: int = 365,
 ) -> dict:
-    """
-    Returns FRP and CRP records with:
-    - Negative TAT  (released before received — data-entry error)
-    - Extreme TAT   (working days > extreme_threshold)
-    """
-
     tat_days = _wd_diff(
         func.str_to_date(func.left(MainDB.DB_DATE_RECEIVED_CENT, 10), "%Y-%m-%d"),
         func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d"),
@@ -530,7 +531,7 @@ def get_analytics_frp_tat_outliers(
                 tat_days > extreme_threshold,
             ),
         )
-        .order_by(tat_days)   # negative first, then extreme
+        .order_by(tat_days)
         .all()
     )
 
@@ -542,9 +543,9 @@ def get_analytics_frp_tat_outliers(
                 from datetime import datetime
                 d = datetime.strptime(str(row.DB_DATE_RECEIVED_CENT), "%Y-%m-%d")
                 m, y = d.month, d.year
-                if m in [7, 8, 9]:     quarter = f"Sep {y}"
+                if m in [7, 8, 9]:      quarter = f"Sep {y}"
                 elif m in [10, 11, 12]: quarter = f"Dec {y}"
-                elif m in [1, 2, 3]:   quarter = f"Mar {y}"
+                elif m in [1, 2, 3]:    quarter = f"Mar {y}"
                 else:                   quarter = f"Jun {y}"
             except Exception:
                 pass
