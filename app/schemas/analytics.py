@@ -76,6 +76,8 @@ class CountryYearTrendItem(BaseModel):
     year: str
     count: int
     cpr: int
+    lod: int = 0
+    on_process: int = 0
 
 class CountryYearTrendResponse(BaseModel):
     country: str

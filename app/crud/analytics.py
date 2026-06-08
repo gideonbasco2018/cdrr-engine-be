@@ -348,7 +348,7 @@ def get_country_year_trend(
     entity_type: str = "mfr",
     prescription: str = "All",
 ) -> list:
-    """Returns year-by-year released counts (total + CPR) for a specific country."""
+    """Returns year-by-year released counts (total + CPR + LOD + on_process) for a specific country."""
     field_name = ENTITY_FIELD_MAP.get(entity_type, "DB_PROD_MANU_COUNTRY")
     field = getattr(MainDB, field_name)
 
@@ -360,6 +360,8 @@ def get_country_year_trend(
             year_col.label("yr"),
             func.count(MainDB.DB_ID).label("count"),
             _cpr_case().label("cpr"),
+            _lod_case().label("lod"),
+            _on_process_case().label("on_process"),
         )
         .filter(
             field == country,
@@ -383,9 +385,11 @@ def get_country_year_trend(
 
     return [
         {
-            "year":  str(r.yr),
-            "count": int(r.count or 0),
-            "cpr":   int(r.cpr   or 0),
+            "year":       str(r.yr),
+            "count":      int(r.count      or 0),
+            "cpr":        int(r.cpr        or 0),
+            "lod":        int(r.lod        or 0),
+            "on_process": int(r.on_process or 0),
         }
         for r in rows
         if r.yr
