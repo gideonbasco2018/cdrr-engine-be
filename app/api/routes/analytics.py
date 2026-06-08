@@ -1,4 +1,3 @@
-
 # app/api/routes/analytics.py
 
 from fastapi import APIRouter, Depends, Query
@@ -62,8 +61,10 @@ def get_by_classification(
     prescription: str = Query("All"),
     db: Session = Depends(get_db),
 ):
-    data = crud_analytics.get_analytics_by_classification(db, year=year, month=month, prescription=prescription)
-    return {"data": data}
+    data, doc_types = crud_analytics.get_analytics_by_classification(
+        db, year=year, month=month, prescription=prescription
+    )
+    return {"data": data, "doc_types": doc_types}
 
 
 @router.get("/year-summary", response_model=AnalyticsYearSummaryResponse)
@@ -77,11 +78,12 @@ def get_top_drugs(
     year: str = Query("All"),
     month: str = Query("All"),
     prescription: str = Query("All"),
-    limit: int = Query(8, ge=1, le=50),
+    limit: int = Query(8, ge=1),  # no upper cap
     db: Session = Depends(get_db),
 ):
     data = crud_analytics.get_analytics_top_drugs(db, year=year, month=month, prescription=prescription, limit=limit)
     return {"data": data}
+
 
 @router.get("/top-countries", response_model=AnalyticsTopCountriesResponse)
 def get_top_countries(
@@ -89,7 +91,7 @@ def get_top_countries(
     year: str = Query("All"),
     month: str = Query("All"),
     prescription: str = Query("All"),
-    limit: int = Query(10, ge=1, le=50),
+    limit: int = Query(10, ge=1),  # no upper cap
     db: Session = Depends(get_db),
 ):
     data = crud_analytics.get_analytics_top_countries(
@@ -105,29 +107,15 @@ def get_frp_tat_trend(
     month: str = Query("All"),
     db: Session = Depends(get_db),
 ):
-    """
-    Returns the TAT trend for FRP and CRP applications grouped by quarter.
-    
-    Filters:
-    - year: e.g. "2025", "2026", or "All"
-    - month: e.g. "1" to "12", or "All"
-    """
     data = crud_analytics.get_analytics_frp_tat_trend(db, year=year, month=month)
     return {"data": data}
+
 
 @router.get("/frp-tat-outliers", response_model=AnalyticsFRPTATOutlierResponse)
 def get_frp_tat_outliers(
     extreme_threshold: int = Query(365, ge=1),
     db: Session = Depends(get_db),
 ):
-    """
-    Returns suspicious FRP & CRP records:
-    - negative_tat: released before received (data entry error)
-    - extreme_tat:  TAT exceeds threshold in days (default 365)
-
-    Adjust extreme_threshold query param as needed.
-    e.g. /frp-tat-outliers?extreme_threshold=180
-    """
     return crud_analytics.get_analytics_frp_tat_outliers(
         db, extreme_threshold=extreme_threshold
     )
@@ -140,7 +128,6 @@ def get_country_year_trend(
     prescription: str = Query("All"),
     db: Session = Depends(get_db),
 ):
-    """Year-by-year released count + CPR for a specific country (used for hover tooltip)."""
     data = crud_analytics.get_country_year_trend(
         db, country=country, entity_type=entity_type, prescription=prescription
     )
