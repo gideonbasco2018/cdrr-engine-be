@@ -28,6 +28,7 @@ from app.api.routes import (
     lead_assignment,
     cpr_correction,
     doc_type_released,
+    pdf_rename,
 )
 api_router = APIRouter()
 
@@ -55,5 +56,6 @@ api_router.include_router(closed_tasks.router)
 api_router.include_router(lead_assignment.router)
 api_router.include_router(cpr_correction.router)
 api_router.include_router(doc_type_released.router)
+api_router.include_router(pdf_rename.router)
 
  
