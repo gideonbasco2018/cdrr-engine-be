@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     libenchant-2-dev \
     enchant-2 \
+    tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy and install Python dependencies

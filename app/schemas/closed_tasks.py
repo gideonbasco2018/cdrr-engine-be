@@ -16,7 +16,34 @@ class ClosedTaskBase(BaseModel):
     )
     remarks: Optional[str] = Field(
         None,
-        description="Additional closing remarks (optional)",
+        description="Additional closing remarks — pure user input lang, walang CPR notes dito",
+    )
+    date_released: Optional[datetime] = Field(
+        None,
+        description="Date the document was released",
+    )
+    type_doc_released: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Type of document released (e.g. CPR, LOD, Certificate...)",
+    )
+
+    # ── CPR Verification Portal audit ────────────────────────────────
+    cpr_api_enabled: Optional[bool] = Field(
+        None,
+        description="True = API was ON, False = API was OFF, None = not a CPR doc",
+    )
+    cpr_insert_success: Optional[bool] = Field(
+        None,
+        description="True = inserted OK, False = insert failed, None = not attempted",
+    )
+    cpr_insert_error: Optional[str] = Field(
+        None,
+        description="Error message kung nag-fail ang CPR insert",
+    )
+    cpr_skipped_by_user: bool = Field(
+        False,
+        description="True kung sinadyang i-OFF ng user ang CPR API toggle bago mag-close",
     )
 
 
@@ -30,7 +57,6 @@ class ClosedTaskCreate(ClosedTaskBase):
         None,
         description="ID of the IN PROGRESS application_log row (for audit trail)",
     )
-    # Who closed the task — filled from the current logged-in user on the route layer
     closed_by_user_id: int = Field(
         ...,
         description="User ID of the person who performed the close action",
@@ -50,14 +76,22 @@ class ClosedTaskCreate(ClosedTaskBase):
 class ClosedTaskBulkCreate(BaseModel):
     main_db_ids: List[int] = Field(
         ...,
-        min_items=1,
+        min_length=1,
         description="List of main_db IDs to close in one operation",
     )
     reason_for_closing: str = Field(..., max_length=255)
     remarks: Optional[str] = Field(None)
+    date_released: Optional[datetime] = Field(None)
+    type_doc_released: Optional[str] = Field(None, max_length=100)
     closed_by_user_id: int = Field(...)
     closed_by_user_name: str = Field(..., max_length=255)
     closed_at: Optional[datetime] = Field(None)
+
+    # ── CPR Verification Portal audit ────────────────────────────────
+    cpr_api_enabled: Optional[bool] = Field(None)
+    cpr_insert_success: Optional[bool] = Field(None)
+    cpr_insert_error: Optional[str] = Field(None)
+    cpr_skipped_by_user: bool = Field(False)
 
 
 # ── RESPONSE  (what the API returns) ─────────────────────────────────
