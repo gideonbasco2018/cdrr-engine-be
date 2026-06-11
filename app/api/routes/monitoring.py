@@ -14,8 +14,11 @@ from app.schemas.monitoring import (
     ReleaseListResponse,
     OverviewSummaryResponse,
     CprTrendResponse,
+    ProcessingTrendResponse,
+    ProcessingBreakdownResponse,
+    SummaryResponse,
 )
-from app.crud import monitoring as crud_monitoring
+from app.crud import monitoring as crud_monitoring  
 from app.models.group import Group
 
 router = APIRouter(
@@ -78,13 +81,6 @@ def get_all_records(
     app_step: Optional[str] = Query(
         None, description="e.g. Decking, Checking, Quality Evaluation"
     ),
-    # ── DTN date range ────────────────────────────────────────────────────────
-    # Both params are 8-digit strings (YYYYMMDD) built by the frontend.
-    # The frontend pads omitted month → 01/12 and day → 01/31 automatically,
-    # so a year-only range of 2023→2026 arrives as:
-    #   dtn_date_from=20230101  dtn_date_to=20261231
-    #
-    # The CRUD validates that each value is exactly 8 digits before filtering.
     dtn_date_from: Optional[str] = Query(
         None,
         description=(
@@ -105,7 +101,6 @@ def get_all_records(
         min_length=8,
         max_length=8,
     ),
-    # ─────────────────────────────────────────────────────────────────────────
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
@@ -134,6 +129,7 @@ def get_groups(
 ):
     groups = db.query(Group).order_by(Group.name).all()
     return [{"id": g.id, "name": g.name} for g in groups]
+
 
 # -----------------------------
 # SEAN Release endpoints
@@ -198,6 +194,7 @@ def get_doc_types(
     values = crud_monitoring.get_release_doc_types(db)
     return {"doc_types": values}
 
+
 # -----------------------------
 # Overview KPI Summary
 # -----------------------------
@@ -206,7 +203,7 @@ def get_doc_types(
     response_model=OverviewSummaryResponse,
     summary="KPI counts for Overview cards",
 )
-def get_overview_summary(
+def overview_summary_endpoint(          # ← renamed: was get_overview_summary
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
@@ -221,7 +218,7 @@ def get_overview_summary(
     response_model=CprTrendResponse,
     summary="Monthly trend of received and released CPR drug products",
 )
-def get_cpr_trend(
+def cpr_trend_endpoint(                 # ← renamed: was get_cpr_trend
     year: Optional[int] = Query(None, description="Filter by year (e.g. 2025)"),
     country_type: Optional[str] = Query(
         None,
@@ -242,4 +239,131 @@ def get_cpr_trend(
         country_type=country_type,
         country=country,
         doc_type=doc_type,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Processing Trend  — monthly / yearly received vs released line chart
+# ---------------------------------------------------------------------------
+@router.get(
+    "/processing-trend",
+    response_model=ProcessingTrendResponse,
+    summary="Monthly or yearly received vs released counts with categorical filters",
+)
+def processing_trend_endpoint(
+    group_by: str = Query(
+        "month",
+        regex="^(month|year)$",
+    ),
+    year: Optional[int] = Query(None, description="Restrict to a single year, e.g. 2025"),
+    date_from: Optional[str] = Query(        
+        None,
+        description="Lower bound on DB_DATE_RECEIVED_CENT (YYYY-MM-DD)",
+    ),
+    date_to: Optional[str] = Query(         
+        None,
+        description="Upper bound on DB_DATE_RECEIVED_CENT (YYYY-MM-DD)",
+    ),
+    doc_type: Optional[str] = Query(None),
+    processing_type: Optional[str] = Query(None),
+    entry_type: Optional[str] = Query(None),
+    app_status: Optional[str] = Query(None),
+    app_type: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    return crud_monitoring.get_processing_trend(
+        db=db,
+        year=year,
+        date_from=date_from,       
+        date_to=date_to,           
+        doc_type=doc_type,
+        processing_type=processing_type,
+        entry_type=entry_type,
+        app_status=app_status,
+        app_type=app_type,
+        group_by=group_by,
+    )
+
+# ---------------------------------------------------------------------------
+# Processing Breakdown  — count grouped by one categorical dimension
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/processing-breakdown",
+    response_model=ProcessingBreakdownResponse,
+    summary="Record counts grouped by a single categorical dimension (pie / bar)",
+)
+def processing_breakdown_endpoint(      # ← renamed: was get_processing_breakdown
+    dimension: str = Query(
+        "doc_type",
+        regex="^(doc_type|processing_type|entry_type|app_status|app_type)$",
+        description=(
+            "Column to group by: "
+            "doc_type | processing_type | entry_type | app_status | app_type"
+        ),
+    ),
+    year: Optional[int] = Query(None, description="Restrict to a single year"),
+    date_from: Optional[str] = Query(
+        None,
+        description="Lower bound on DB_DATE_RECEIVED_CENT (YYYY-MM-DD)",
+    ),
+    date_to: Optional[str] = Query(
+        None,
+        description="Upper bound on DB_DATE_RECEIVED_CENT (YYYY-MM-DD)",
+    ),
+    doc_type: Optional[str] = Query(None, description="Filter by DB_TYPE_DOC_RELEASED"),
+    processing_type: Optional[str] = Query(None, description="Filter by DB_PROCESSING_TYPE"),
+    entry_type: Optional[str] = Query(None, description="Filter by DB_ENTRY_TYPE"),
+    app_status: Optional[str] = Query(None, description="Filter by DB_APP_STATUS"),
+    app_type: Optional[str] = Query(None, description="Filter by DB_APP_TYPE"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Groups MainDB records by one categorical column and returns a sorted list
+    of `{ label, count }` pairs — ready to feed a pie or horizontal bar chart.
+
+    The same five filter dropdowns are returned alongside the data.
+    """
+    return crud_monitoring.get_processing_breakdown(
+        db=db,
+        dimension=dimension,
+        year=year,
+        doc_type=doc_type,
+        processing_type=processing_type,
+        entry_type=entry_type,
+        app_status=app_status,
+        app_type=app_type,
+        date_from=date_from,
+        date_to=date_to,
+    )
+
+@router.get(
+    "/summary",
+    response_model=SummaryResponse,
+    summary="Carry over / received / processed / pending per app type",
+)
+def summary_endpoint(
+    date_from: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    date_to: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    year: Optional[int] = Query(None),
+    doc_type: Optional[str] = Query(None),
+    processing_type: Optional[str] = Query(None),
+    entry_type: Optional[str] = Query(None),
+    app_status: Optional[str] = Query(None),
+    app_type: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    return crud_monitoring.get_summary(
+        db=db,
+        date_from=date_from,
+        date_to=date_to,
+        year=year,
+        doc_type=doc_type,
+        processing_type=processing_type,
+        entry_type=entry_type,
+        app_status=app_status,
+        app_type=app_type,
     )
