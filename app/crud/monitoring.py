@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, case, and_, or_, asc, desc
+from sqlalchemy import func, case, and_, or_, asc, desc, distinct
 from typing import Optional
 from datetime import datetime, date
 
@@ -488,3 +488,408 @@ def get_cpr_trend(
     doc_types = [r[0] for r in doc_type_rows]
 
     return {"data": data, "countries": countries, "doc_types": doc_types}
+
+
+def _build_processing_filters(
+    query,
+    year: Optional[int],
+    doc_type: Optional[str],
+    processing_type: Optional[str],
+    entry_type: Optional[str],
+    app_status: Optional[str],
+    app_type: Optional[str],
+    date_col,          # the SQLAlchemy column used for the year filter
+):
+    """Apply all optional filters to a query; return the modified query."""
+    if year:
+        query = query.filter(
+            func.year(func.str_to_date(date_col, "%Y-%m-%d")) == year
+        )
+    if doc_type:
+        query = query.filter(MainDB.DB_TYPE_DOC_RELEASED == doc_type)
+    if processing_type:
+        query = query.filter(MainDB.DB_PROCESSING_TYPE == processing_type)
+    if entry_type:
+        query = query.filter(MainDB.DB_ENTRY_TYPE == entry_type)
+    if app_status:
+        query = query.filter(MainDB.DB_APP_STATUS == app_status)
+    if app_type:
+        query = query.filter(MainDB.DB_APP_TYPE == app_type)
+    return query
+ 
+ 
+def _get_distinct_values(db: Session, column) -> list:
+    rows = (
+        db.query(column)
+        .filter(column.isnot(None), column != "")
+        .distinct()
+        .order_by(column)
+        .all()
+    )
+    return [r[0] for r in rows]
+ 
+ 
+# ---------------------------------------------------------------------------
+# Processing Trend  — monthly received vs released counts
+# ---------------------------------------------------------------------------
+
+def get_processing_trend(
+    db: Session,
+    year: Optional[int] = None,
+    date_from: Optional[str] = None,   # ← NEW (YYYY-MM-DD)
+    date_to: Optional[str] = None,     # ← NEW (YYYY-MM-DD)
+    doc_type: Optional[str] = None,
+    processing_type: Optional[str] = None,
+    entry_type: Optional[str] = None,
+    app_status: Optional[str] = None,
+    app_type: Optional[str] = None,
+    group_by: str = "month",
+) -> dict:
+    fmt = "%Y-%m" if group_by != "year" else "%Y"
+
+    # ── RECEIVED ──────────────────────────────────────────────────────────
+    received_q = db.query(
+        func.date_format(
+            func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"), fmt
+        ).label("period"),
+        func.count(MainDB.DB_ID).label("cnt"),
+    ).filter(
+        MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
+        MainDB.DB_DATE_RECEIVED_CENT != "",
+        MainDB.DB_DATE_RECEIVED_CENT != "N/A",
+    )
+    received_q = _build_processing_filters(
+        received_q, year, doc_type, processing_type,
+        entry_type, app_status, app_type,
+        date_col=MainDB.DB_DATE_RECEIVED_CENT,
+    )
+    # ← NEW: explicit date range on received
+    if date_from:
+        received_q = received_q.filter(
+            func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"))
+            >= date_from
+        )
+    if date_to:
+        received_q = received_q.filter(
+            func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"))
+            <= date_to
+        )
+    received_rows = received_q.group_by("period").all()
+
+    # ── RELEASED ──────────────────────────────────────────────────────────
+    released_q = db.query(
+        func.date_format(
+            func.str_to_date(MainDB.DB_DATE_RELEASED, "%Y-%m-%d"), fmt
+        ).label("period"),
+        func.count(MainDB.DB_ID).label("cnt"),
+    ).filter(
+        MainDB.DB_DATE_RELEASED.isnot(None),
+        MainDB.DB_DATE_RELEASED != "",
+        MainDB.DB_DATE_RELEASED != "N/A",
+    )
+    released_q = _build_processing_filters(
+        released_q, year, doc_type, processing_type,
+        entry_type, app_status, app_type,
+        date_col=MainDB.DB_DATE_RELEASED,
+    )
+    # ← NEW: explicit date range on released
+    if date_from:
+        released_q = released_q.filter(
+            func.date(func.str_to_date(MainDB.DB_DATE_RELEASED, "%Y-%m-%d"))
+            >= date_from
+        )
+    if date_to:
+        released_q = released_q.filter(
+            func.date(func.str_to_date(MainDB.DB_DATE_RELEASED, "%Y-%m-%d"))
+            <= date_to
+        )
+    released_rows = released_q.group_by("period").all()
+
+    # ── Merge (unchanged) ─────────────────────────────────────────────────
+    trend_map: dict[str, dict] = {}
+    for period, cnt in received_rows:
+        if period:
+            trend_map.setdefault(period, {"received_count": 0, "released_count": 0})
+            trend_map[period]["received_count"] = int(cnt)
+    for period, cnt in released_rows:
+        if period:
+            trend_map.setdefault(period, {"received_count": 0, "released_count": 0})
+            trend_map[period]["released_count"] = int(cnt)
+
+    data = [
+        {"period": p, **trend_map[p]}
+        for p in sorted(trend_map.keys())
+    ]
+
+    return {
+        "data": data,
+        **_dropdown_options(db),
+    }
+ 
+ 
+# ---------------------------------------------------------------------------
+# Processing Breakdown  — count by one categorical dimension
+# ---------------------------------------------------------------------------
+ 
+_DIMENSION_MAP = {
+    "doc_type":       MainDB.DB_TYPE_DOC_RELEASED,
+    "processing_type": MainDB.DB_PROCESSING_TYPE,
+    "entry_type":     MainDB.DB_ENTRY_TYPE,
+    "app_status":     MainDB.DB_APP_STATUS,
+    "app_type":       MainDB.DB_APP_TYPE,
+}
+ 
+ 
+def get_processing_breakdown(
+    db: Session,
+    dimension: str = "doc_type",
+    year: Optional[int] = None,
+    doc_type: Optional[str] = None,
+    processing_type: Optional[str] = None,
+    entry_type: Optional[str] = None,
+    app_status: Optional[str] = None,
+    app_type: Optional[str] = None,
+    date_from: Optional[str] = None,   # YYYY-MM-DD
+    date_to: Optional[str] = None,     # YYYY-MM-DD
+) -> dict:
+    """
+    Groups all matching MainDB records by *dimension* and returns counts.
+    Useful for pie / bar breakdown charts.
+    """
+    col = _DIMENSION_MAP.get(dimension, MainDB.DB_TYPE_DOC_RELEASED)
+ 
+    query = db.query(
+        func.coalesce(col, "(None)").label("label"),
+        func.count(MainDB.DB_ID).label("count"),
+    )
+
+    # Apply shared filters (use DB_DATE_RECEIVED_CENT for the year axis)
+    query = _build_processing_filters(
+        query, year, doc_type, processing_type,
+        entry_type, app_status, app_type,
+        date_col=MainDB.DB_DATE_RECEIVED_CENT,
+    )
+ 
+    # Optional explicit date range on DB_DATE_RECEIVED_CENT
+    if date_from:
+        query = query.filter(
+            func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"))
+            >= date_from
+        )
+    if date_to:
+        query = query.filter(
+            func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"))
+            <= date_to
+        )
+ 
+    rows = query.group_by(col).order_by(func.count(MainDB.DB_ID).desc()).all()
+ 
+    data = [{"label": r[0] or "—", "count": int(r[1])} for r in rows]
+ 
+    return {
+        "dimension": dimension,
+        "data": data,
+        **_dropdown_options(db),
+    }
+ 
+ 
+# ---------------------------------------------------------------------------
+# Shared: populate dropdown option lists
+# ---------------------------------------------------------------------------
+ 
+def _dropdown_options(db: Session) -> dict:
+    return {
+        "doc_types":       _get_distinct_values(db, MainDB.DB_TYPE_DOC_RELEASED),
+        "processing_types": _get_distinct_values(db, MainDB.DB_PROCESSING_TYPE),
+        "entry_types":     _get_distinct_values(db, MainDB.DB_ENTRY_TYPE),
+        "app_statuses":    _get_distinct_values(db, MainDB.DB_APP_STATUS),
+        "app_types":       _get_distinct_values(db, MainDB.DB_APP_TYPE),
+    }
+ 
+
+# ---------------------------------------------------------------------------
+# Summary — carry over / received / processed / pending per app type
+# ---------------------------------------------------------------------------
+
+def get_summary(
+    db: Session,
+    date_from: Optional[str] = None,   # YYYY-MM-DD  (start of period)
+    date_to: Optional[str] = None,     # YYYY-MM-DD  (end of period)
+    year: Optional[int] = None,
+    doc_type: Optional[str] = None,
+    processing_type: Optional[str] = None,
+    entry_type: Optional[str] = None,
+    app_status: Optional[str] = None,
+    app_type: Optional[str] = None,
+) -> dict:
+    """
+    Table 1 — per app_type breakdown:
+      - carry_over  : received BEFORE date_from and not yet released by date_from
+      - received    : received within [date_from, date_to]
+      - processed   : released within [date_from, date_to]
+      - total_pending: carry_over + received - processed
+
+    Table 2 — overall DB_APP_STATUS counts (unfiltered by date, 
+               but filtered by categorical params).
+    """
+
+    def _apply_cat_filters(q):
+        if year:
+            q = q.filter(
+                func.year(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) == year
+            )
+        if doc_type:
+            q = q.filter(MainDB.DB_TYPE_DOC_RELEASED == doc_type)
+        if processing_type:
+            q = q.filter(MainDB.DB_PROCESSING_TYPE == processing_type)
+        if entry_type:
+            q = q.filter(MainDB.DB_ENTRY_TYPE == entry_type)
+        if app_status:
+            q = q.filter(MainDB.DB_APP_STATUS == app_status)
+        if app_type:
+            q = q.filter(MainDB.DB_APP_TYPE == app_type)
+        return q
+
+    # ── Carry over: received before date_from, not yet released by date_from ──
+    carry_q = db.query(
+        func.coalesce(MainDB.DB_APP_TYPE, "Unknown").label("app_type"),
+        func.count(MainDB.DB_ID).label("cnt"),
+    ).filter(
+        MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
+        MainDB.DB_DATE_RECEIVED_CENT != "",
+        MainDB.DB_DATE_RECEIVED_CENT != "N/A",
+    )
+    if date_from:
+        carry_q = carry_q.filter(
+            func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"))
+            < date_from
+        )
+        # Not yet released by date_from
+        carry_q = carry_q.filter(
+            or_(
+                MainDB.DB_DATE_RELEASED.is_(None),
+                MainDB.DB_DATE_RELEASED == "",
+                MainDB.DB_DATE_RELEASED == "N/A",
+                func.date(func.str_to_date(MainDB.DB_DATE_RELEASED, "%Y-%m-%d"))
+                >= date_from,
+            )
+        )
+    carry_q = _apply_cat_filters(carry_q)
+    carry_rows = carry_q.group_by("app_type").all()
+
+    # ── Received: within [date_from, date_to] ─────────────────────────────────
+    recv_q = db.query(
+        func.coalesce(MainDB.DB_APP_TYPE, "Unknown").label("app_type"),
+        func.count(MainDB.DB_ID).label("cnt"),
+    ).filter(
+        MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
+        MainDB.DB_DATE_RECEIVED_CENT != "",
+        MainDB.DB_DATE_RECEIVED_CENT != "N/A",
+    )
+    if date_from:
+        recv_q = recv_q.filter(
+            func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"))
+            >= date_from
+        )
+    if date_to:
+        recv_q = recv_q.filter(
+            func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"))
+            <= date_to
+        )
+    recv_q = _apply_cat_filters(recv_q)
+    recv_rows = recv_q.group_by("app_type").all()
+
+    # ── Processed (released): within [date_from, date_to] ────────────────────
+    proc_q = db.query(
+        func.coalesce(MainDB.DB_APP_TYPE, "Unknown").label("app_type"),
+        func.count(MainDB.DB_ID).label("cnt"),
+    ).filter(
+        MainDB.DB_DATE_RELEASED.isnot(None),
+        MainDB.DB_DATE_RELEASED != "",
+        MainDB.DB_DATE_RELEASED != "N/A",
+    )
+    if date_from:
+        proc_q = proc_q.filter(
+            func.date(func.str_to_date(MainDB.DB_DATE_RELEASED, "%Y-%m-%d"))
+            >= date_from
+        )
+    if date_to:
+        proc_q = proc_q.filter(
+            func.date(func.str_to_date(MainDB.DB_DATE_RELEASED, "%Y-%m-%d"))
+            <= date_to
+        )
+    proc_q = _apply_cat_filters(proc_q)
+    proc_rows = proc_q.group_by("app_type").all()
+
+    # ── Merge into summary map ────────────────────────────────────────────────
+    summary: dict[str, dict] = {}
+
+    for at, cnt in carry_rows:
+        summary.setdefault(at, {"carry_over": 0, "received": 0, "processed": 0})
+        summary[at]["carry_over"] = int(cnt)
+
+    for at, cnt in recv_rows:
+        summary.setdefault(at, {"carry_over": 0, "received": 0, "processed": 0})
+        summary[at]["received"] = int(cnt)
+
+    for at, cnt in proc_rows:
+        summary.setdefault(at, {"carry_over": 0, "received": 0, "processed": 0})
+        summary[at]["processed"] = int(cnt)
+
+    rows = [
+        {
+            "app_type": at,
+            "carry_over": v["carry_over"],
+            "received": v["received"],
+            "processed": v["processed"],
+            "total_pending": v["carry_over"] + v["received"] - v["processed"],
+        }
+        for at, v in sorted(summary.items())
+    ]
+
+    # ── Table 2 — overall DB_APP_STATUS counts ────────────────────────────────
+    status_q = db.query(
+        func.coalesce(MainDB.DB_APP_STATUS, "Unknown").label("status"),
+        func.count(MainDB.DB_ID).label("cnt"),
+    )
+    status_q = _apply_cat_filters(status_q)
+    status_rows = (
+        status_q
+        .filter(
+            MainDB.DB_APP_STATUS.isnot(None),
+            MainDB.DB_APP_STATUS != "",
+        )
+        .group_by("status")
+        .order_by(func.count(MainDB.DB_ID).desc())
+        .all()
+    )
+
+    overall_status = [
+        {
+            "label": r[0],
+            "count": int(r[1]),
+            "highlight": False,
+            "right_align": False,
+        }
+        for r in status_rows
+    ]
+
+    # Build period label
+    if date_from and date_to:
+        period_label = f"{date_from}  →  {date_to}"
+    elif date_from:
+        period_label = f"From {date_from}"
+    elif date_to:
+        period_label = f"Until {date_to}"
+    elif year:
+        period_label = f"Year {year}"
+    else:
+        period_label = "All Records"
+
+    return {
+        "period_label": period_label,
+        "date_from": date_from,
+        "date_to": date_to,
+        "rows": rows,
+        "overall_status": overall_status,
+    }
