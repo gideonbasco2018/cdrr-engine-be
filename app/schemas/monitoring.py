@@ -49,8 +49,14 @@ class AllRecordsResponse(BaseModel):
     total_pages: int
     data: List[RecordItem]
 
+<<<<<<< Updated upstream
 # -----------------------------
 # Release record response
+=======
+
+# -----------------------------
+# SEAN Release record response
+>>>>>>> Stashed changes
 # -----------------------------
 class ReleaseRecord(BaseModel):
     DB_ID: int
@@ -62,7 +68,6 @@ class ReleaseRecord(BaseModel):
     DB_APP_STATUS: Optional[str] = None
     DB_TYPE_DOC_RELEASED: Optional[str] = None
     DB_DATE_RELEASED: Optional[str] = None
-
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -73,6 +78,10 @@ class ReleaseListResponse(BaseModel):
     total_pages: int
     data: List[ReleaseRecord]
 
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 # -----------------------------
 # Overview KPI Summary
 # -----------------------------
@@ -83,41 +92,34 @@ class OverviewSummaryResponse(BaseModel):
     lod_released: int
 
 
-# ── DTN date range filter schema (used internally / for OpenAPI docs) ──────────
-# Both fields are 8-digit strings (YYYYMMDD).  The frontend always sends full
-# 8-digit values by padding omitted month/day (From → 01/01, To → 12/31).
+# ── DTN date range filter schema ───────────────────────────────────────────────
 class DtnDateRangeFilter(BaseModel):
     dtn_date_from: Optional[str] = Field(
         None,
         min_length=8,
         max_length=8,
-        description=(
-            "Lower bound for DTN date range.  Must be YYYYMMDD (8 digits). "
-            "Filters records where LEFT(dtn, 8) >= dtn_date_from."
-        ),
+        description="Lower bound for DTN date range. Must be YYYYMMDD (8 digits).",
         example="20230101",
     )
     dtn_date_to: Optional[str] = Field(
         None,
         min_length=8,
         max_length=8,
-        description=(
-            "Upper bound for DTN date range.  Must be YYYYMMDD (8 digits). "
-            "Filters records where LEFT(dtn, 8) <= dtn_date_to."
-        ),
+        description="Upper bound for DTN date range. Must be YYYYMMDD (8 digits).",
         example="20261231",
     )
 
 
 # ── CPR Trend (Received & Released) ───────────────────────────────────────────
 class CprTrendItem(BaseModel):
-    period: str  # e.g. "2025-01", "2025-02"
+    period: str
     received_count: int = 0
     released_count: int = 0
 
 
 class CprTrendResponse(BaseModel):
     data: List[CprTrendItem]
+<<<<<<< Updated upstream
     countries: List[str]  # unique country values for the chosen country_type
     doc_types: List[str]  # unique DB_TYPE_DOC_RELEASED values for dropdown
 
@@ -188,3 +190,7 @@ class SummaryResponse(BaseModel):
     date_to: Optional[str] = None
     rows: List[SummaryRow]
     overall_status: List[SummaryStatusRow]
+=======
+    countries: List[str]
+    doc_types: List[str]
+>>>>>>> Stashed changes

@@ -33,7 +33,11 @@ from app.api.routes import (
     lead_assignment,
     cpr_correction,
     doc_type_released,
+<<<<<<< Updated upstream
     pdf_rename,
+=======
+    frp_monitoring,
+>>>>>>> Stashed changes
 )
 
 # ── Scheduler setup ───────────────────────────────────────────────────
@@ -120,7 +124,11 @@ app.include_router(closed_tasks.router)
 app.include_router(lead_assignment.router) 
 app.include_router(cpr_correction.router) 
 app.include_router(doc_type_released.router)
+<<<<<<< Updated upstream
 app.include_router(pdf_rename.router)
+=======
+app.include_router(frp_monitoring.router)
+>>>>>>> Stashed changes
 
 
 @app.get("/")

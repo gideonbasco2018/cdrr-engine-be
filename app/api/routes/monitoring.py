@@ -198,8 +198,7 @@ def get_doc_types(
 # -----------------------------
 # Overview KPI Summary
 # -----------------------------
-@router.get(
-    "/overview-summary",
+@router.get("/overview-summary",
     response_model=OverviewSummaryResponse,
     summary="KPI counts for Overview cards",
 )
@@ -208,6 +207,8 @@ def overview_summary_endpoint(          # ← renamed: was get_overview_summary
     db: Session = Depends(get_db),
 ):
     return crud_monitoring.get_overview_summary(db)
+
+
 
 
 # -----------------------------

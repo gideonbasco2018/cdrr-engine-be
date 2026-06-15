@@ -2,18 +2,14 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, case, and_, or_, asc, desc, distinct
 from typing import Optional
 from datetime import datetime, date
-
 from app.models.main_db import MainDB
 from app.models.application_logs import ApplicationLogs
 from app.models.user import User
 from app.models.user_groups import UserGroup
-
 import math
-
 
 # Excluded action types across both queries
 EXCLUDED_ACTION_TYPES = ("REROUTE", "REASSIGNMENT")
-
 
 def _exclude_action_types(query):
     """Helper: exclude REROUTE & REASSIGNMENT but keep NULL action_types."""
@@ -24,7 +20,6 @@ def _exclude_action_types(query):
         )
     )
 
-
 # ── Tasks per User ─────────────────────────────────────────────────────────────
 def get_users_task_summary(db: Session, group_id: Optional[int] = None) -> list:
     task_counts = (
@@ -32,29 +27,21 @@ def get_users_task_summary(db: Session, group_id: Optional[int] = None) -> list:
             db.query(
                 ApplicationLogs.user_id,
                 func.count().label("total"),
-                func.sum(
-                    case(
-                        (
-                            and_(
-                                func.upper(ApplicationLogs.application_status) == "COMPLETED",
-                                or_(
-                                    ApplicationLogs.action_type.is_(None),
-                                    func.upper(ApplicationLogs.action_type).notin_(EXCLUDED_ACTION_TYPES),
-                                ),
-                            ),
-                            1,
+                func.sum(case(
+                    (and_(
+                        func.upper(ApplicationLogs.application_status) == "COMPLETED",
+                        or_(
+                            ApplicationLogs.action_type.is_(None),
+                            func.upper(ApplicationLogs.action_type).notin_(EXCLUDED_ACTION_TYPES),
                         ),
-                        else_=0,
-                    )
-                ).label("completed"),
-                func.sum(
-                    case(
-                        (func.upper(ApplicationLogs.application_status) == "IN PROGRESS", 1),
-                        else_=0,
-                    )
-                ).label("in_progress"),
-            )
-            .filter(ApplicationLogs.user_id.isnot(None))
+                    ), 1),
+                    else_=0,
+                )).label("completed"),
+                func.sum(case(
+                    (func.upper(ApplicationLogs.application_status) == "IN PROGRESS", 1),
+                    else_=0,
+                )).label("in_progress"),
+            ).filter(ApplicationLogs.user_id.isnot(None))
         )
         .group_by(ApplicationLogs.user_id)
         .subquery()
@@ -94,67 +81,29 @@ def get_all_records(
     application_status: Optional[str] = None,
     dtn: Optional[str] = None,
     app_step: Optional[str] = None,
-    # ── DTN date range ────────────────────────────────────────────────────────
-    # Both are 8-digit strings produced by the frontend (YYYYMMDD).
-    # The frontend pads omitted month/day with 01/01 (from) or 12/31 (to),
-    # so the backend only needs to compare LEFT(DB_DTN, 8) against them.
-    #
-    # Example ranges:
-    #   2023-only          → dtn_date_from="20230101"  dtn_date_to="20231231"
-    #   2023-05 only       → dtn_date_from="20230501"  dtn_date_to="20230531"
-    #   2023-05-06 only    → dtn_date_from="20230506"  dtn_date_to="20230506"
-    #   2023 → 2026        → dtn_date_from="20230101"  dtn_date_to="20261231"
     dtn_date_from: Optional[str] = None,
     dtn_date_to: Optional[str] = None,
 ) -> dict:
-
     query = _exclude_action_types(
-        db.query(ApplicationLogs, MainDB)
-        .join(MainDB, MainDB.DB_ID == ApplicationLogs.main_db_id)
+        db.query(ApplicationLogs, MainDB).join(MainDB, MainDB.DB_ID == ApplicationLogs.main_db_id)
     )
 
     if user_id:
         query = query.filter(ApplicationLogs.user_id == user_id)
-
     if application_status:
-        query = query.filter(
-            func.upper(ApplicationLogs.application_status) == application_status.upper()
-        )
-
+        query = query.filter(func.upper(ApplicationLogs.application_status) == application_status.upper())
     if dtn:
         query = query.filter(MainDB.DB_DTN.like(f"%{dtn}%"))
-
     if app_step:
-        query = query.filter(
-            func.upper(ApplicationLogs.application_step) == app_step.upper()
-        )
-
+        query = query.filter(func.upper(ApplicationLogs.application_step) == app_step.upper())
     if date_from:
-        query = query.filter(
-            func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) >= date_from
-        )
-
+        query = query.filter(func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) >= date_from)
     if date_to:
-        query = query.filter(
-            func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) <= date_to
-        )
-
-    # ── DTN date range filter ─────────────────────────────────────────────────
-    # Extract the first 8 characters of DB_DTN (which encodes YYYYMMDD) and
-    # compare them as a string range.  Works because the format is zero-padded
-    # and lexicographic order matches chronological order.
-    #
-    #   LEFT(DB_DTN, 8) >= '20230101'  AND  LEFT(DB_DTN, 8) <= '20261231'
-    #
-    # We validate that each prefix is exactly 8 digits before using it so that
-    # a malformed value from the client is silently ignored rather than causing
-    # an unexpected result.
+        query = query.filter(func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) <= date_to)
     if dtn_date_from and len(dtn_date_from) == 8 and dtn_date_from.isdigit():
         query = query.filter(func.left(MainDB.DB_DTN, 8) >= dtn_date_from)
-
     if dtn_date_to and len(dtn_date_to) == 8 and dtn_date_to.isdigit():
         query = query.filter(func.left(MainDB.DB_DTN, 8) <= dtn_date_to)
-    # ─────────────────────────────────────────────────────────────────────────
 
     sort_map = {
         "date": func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"),
@@ -165,9 +114,7 @@ def get_all_records(
         "step": ApplicationLogs.application_step,
     }
     sort_column = sort_map.get(sort_col, sort_map["date"])
-    query = query.order_by(
-        sort_column.desc() if sort_dir == "desc" else sort_column.asc()
-    )
+    query = query.order_by(sort_column.desc() if sort_dir == "desc" else sort_column.asc())
 
     total = query.count()
     total_pages = max(1, -(-total // page_size))
@@ -196,19 +143,17 @@ def get_all_records(
             if brand and generic
             else brand or generic or "—"
         )
-        data.append(
-            {
-                "id": main.DB_ID,
-                "dtn": str(main.DB_DTN) if main.DB_DTN else None,
-                "user_name": log.user_name,
-                "drug_name": drug_name,
-                "date_received_cent": main.DB_DATE_RECEIVED_CENT,
-                "timeline": _timeline(log, main),
-                "app_step": log.application_step,
-                "app_status": log.application_status,
-                "prescription": main.DB_PROD_CLASS_PRESCRIP,
-            }
-        )
+        data.append({
+            "id": main.DB_ID,
+            "dtn": str(main.DB_DTN) if main.DB_DTN else None,
+            "user_name": log.user_name,
+            "drug_name": drug_name,
+            "date_received_cent": main.DB_DATE_RECEIVED_CENT,
+            "timeline": _timeline(log, main),
+            "app_step": log.application_step,
+            "app_status": log.application_status,
+            "prescription": main.DB_PROD_CLASS_PRESCRIP,
+        })
 
     return {
         "total": total,
@@ -217,6 +162,8 @@ def get_all_records(
         "total_pages": total_pages,
         "data": data,
     }
+
+
 # -----------------------------
 # SEAN Release queries
 # -----------------------------
@@ -245,31 +192,25 @@ def get_release_records(
     )
 
     if search:
-        query = query.filter(
-            or_(
-                MainDB.DB_APP_STATUS.ilike(f"%{search}%"),
-                MainDB.DB_TYPE_DOC_RELEASED.ilike(f"%{search}%"),
-                MainDB.DB_DATE_RELEASED.ilike(f"%{search}%"),
-                MainDB.DB_SECPA_EXP_DATE.ilike(f"%{search}%"),
-                MainDB.DB_SECPA_ISSUED_ON.ilike(f"%{search}%"),
-                MainDB.DB_PROD_BR_NAME.ilike(f"%{search}%"),
-                MainDB.DB_PROD_GEN_NAME.ilike(f"%{search}%"),
-            )
-        )
+        query = query.filter(or_(
+            MainDB.DB_APP_STATUS.ilike(f"%{search}%"),
+            MainDB.DB_TYPE_DOC_RELEASED.ilike(f"%{search}%"),
+            MainDB.DB_DATE_RELEASED.ilike(f"%{search}%"),
+            MainDB.DB_SECPA_EXP_DATE.ilike(f"%{search}%"),
+            MainDB.DB_SECPA_ISSUED_ON.ilike(f"%{search}%"),
+            MainDB.DB_PROD_BR_NAME.ilike(f"%{search}%"),
+            MainDB.DB_PROD_GEN_NAME.ilike(f"%{search}%"),
+        ))
 
     if app_status:
         if app_status == "__EMPTY__":
-            query = query.filter(
-                or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "")
-            )
+            query = query.filter(or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == ""))
         else:
             query = query.filter(MainDB.DB_APP_STATUS == app_status)
 
     if type_doc_released:
         if type_doc_released == "__EMPTY__":
-            query = query.filter(
-                or_(MainDB.DB_TYPE_DOC_RELEASED.is_(None), MainDB.DB_TYPE_DOC_RELEASED == "")
-            )
+            query = query.filter(or_(MainDB.DB_TYPE_DOC_RELEASED.is_(None), MainDB.DB_TYPE_DOC_RELEASED == ""))
         else:
             query = query.filter(MainDB.DB_TYPE_DOC_RELEASED == type_doc_released)
 
@@ -319,14 +260,25 @@ def get_release_doc_types(db: Session):
     )
     return [r[0] for r in results]
 
+
 # -----------------------------
 # SEAN 2 Overview KPI Summary
 # -----------------------------
 def get_overview_summary(db: Session) -> dict:
+    from calendar import monthrange
+    from datetime import datetime
+    now = datetime.now()
+    month_start = now.strftime("%Y-%m-01")
+    month_end   = now.strftime(f"%Y-%m-{monthrange(now.year, now.month)[1]:02d}")
+
     total = db.query(func.count(MainDB.DB_ID)).scalar() or 0
 
     cpr_released = db.query(func.count(MainDB.DB_ID)).filter(
         MainDB.DB_TYPE_DOC_RELEASED.ilike("%CPR%")
+    ).scalar() or 0
+
+    lod_released = db.query(func.count(MainDB.DB_ID)).filter(
+        MainDB.DB_TYPE_DOC_RELEASED.ilike("%LOD%")
     ).scalar() or 0
 
     on_process = db.query(func.count(MainDB.DB_ID)).filter(
@@ -337,8 +289,16 @@ def get_overview_summary(db: Session) -> dict:
         )
     ).scalar() or 0
 
-    lod_released = db.query(func.count(MainDB.DB_ID)).filter(
-        MainDB.DB_TYPE_DOC_RELEASED.ilike("%LOD%")
+    released_this_month = db.query(func.count(MainDB.DB_ID)).filter(
+        MainDB.DB_DATE_RELEASED >= month_start,
+        MainDB.DB_DATE_RELEASED <= month_end,
+        MainDB.DB_DATE_RELEASED.isnot(None),
+        MainDB.DB_DATE_RELEASED != "",
+        MainDB.DB_DATE_RELEASED != "N/A",
+    ).scalar() or 0
+
+    pending = db.query(func.count(MainDB.DB_ID)).filter(
+        or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "")
     ).scalar() or 0
 
     return {
@@ -346,19 +306,21 @@ def get_overview_summary(db: Session) -> dict:
         "cpr_released": cpr_released,
         "on_process": on_process,
         "lod_released": lod_released,
+        "released_this_month": released_this_month,
+        "pending": pending,
+        "overdue": 0,
+        "avg_tat_days": None,
     }
 
 
 # ── CPR Trend (Received & Released) ───────────────────────────────────────────
-# Valid country column mapping
 _COUNTRY_COLUMN_MAP = {
     "manufacturer": MainDB.DB_PROD_MANU_COUNTRY,
-    "trader": MainDB.DB_PROD_TRADER_COUNTRY,
-    "repacker": MainDB.DB_PROD_REPACKER_COUNTRY,
-    "importer": MainDB.DB_PROD_IMPORTER_COUNTRY,
-    "distributor": MainDB.DB_PROD_DISTRI_COUNTRY,
+    "trader":       MainDB.DB_PROD_TRADER_COUNTRY,
+    "repacker":     MainDB.DB_PROD_REPACKER_COUNTRY,
+    "importer":     MainDB.DB_PROD_IMPORTER_COUNTRY,
+    "distributor":  MainDB.DB_PROD_DISTRI_COUNTRY,
 }
-
 
 def get_cpr_trend(
     db: Session,
@@ -367,35 +329,18 @@ def get_cpr_trend(
     country: Optional[str] = None,
     doc_type: Optional[str] = None,
 ) -> dict:
-    """
-    Returns monthly counts of received and released drug product applications.
-    - Received: all records with a valid DB_DATE_RECEIVED_CENT
-    - Released: records with a valid DB_DATE_RELEASED
-    Filters:
-      - year: restrict to a specific year (based on DB_DATE_RECEIVED_CENT for received,
-              DB_DATE_RELEASED for released)
-      - country_type: one of manufacturer|trader|repacker|importer|distributor
-      - country: specific country value to filter on (requires country_type)
-      - doc_type: filter by DB_TYPE_DOC_RELEASED value (applies to both queries)
-    """
-
-    # -- Country filter
     country_col = _COUNTRY_COLUMN_MAP.get(country_type) if country_type else None
     country_filters = []
     if country_col is not None and country:
         country_filters.append(country_col == country)
 
-    # -- Doc type filter (optional)
     doc_type_filters = []
     if doc_type:
         doc_type_filters.append(MainDB.DB_TYPE_DOC_RELEASED == doc_type)
 
-    # -- RECEIVED: ALL records with a valid DB_DATE_RECEIVED_CENT
     received_q = (
         db.query(
-            func.date_format(
-                func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"), "%Y-%m"
-            ).label("period"),
+            func.date_format(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"), "%Y-%m").label("period"),
             func.count(MainDB.DB_ID).label("cnt"),
         )
         .filter(
@@ -405,22 +350,16 @@ def get_cpr_trend(
         )
     )
     if year:
-        received_q = received_q.filter(
-            func.year(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) == year
-        )
+        received_q = received_q.filter(func.year(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) == year)
     for f in country_filters:
         received_q = received_q.filter(f)
     for f in doc_type_filters:
         received_q = received_q.filter(f)
-
     received_q = received_q.group_by("period").all()
 
-    # -- RELEASED: records with a valid DB_DATE_RELEASED
     released_q = (
         db.query(
-            func.date_format(
-                func.str_to_date(MainDB.DB_DATE_RELEASED, "%Y-%m-%d"), "%Y-%m"
-            ).label("period"),
+            func.date_format(func.str_to_date(MainDB.DB_DATE_RELEASED, "%Y-%m-%d"), "%Y-%m").label("period"),
             func.count(MainDB.DB_ID).label("cnt"),
         )
         .filter(
@@ -430,57 +369,40 @@ def get_cpr_trend(
         )
     )
     if year:
-        released_q = released_q.filter(
-            func.year(func.str_to_date(MainDB.DB_DATE_RELEASED, "%Y-%m-%d")) == year
-        )
+        released_q = released_q.filter(func.year(func.str_to_date(MainDB.DB_DATE_RELEASED, "%Y-%m-%d")) == year)
     for f in country_filters:
         released_q = released_q.filter(f)
     for f in doc_type_filters:
         released_q = released_q.filter(f)
-
     released_q = released_q.group_by("period").all()
 
-    # -- Merge into a dict by period
     trend_map = {}
     for period, cnt in received_q:
         if period:
             trend_map.setdefault(period, {"received_count": 0, "released_count": 0})
             trend_map[period]["received_count"] = int(cnt)
-
     for period, cnt in released_q:
         if period:
             trend_map.setdefault(period, {"received_count": 0, "released_count": 0})
             trend_map[period]["released_count"] = int(cnt)
 
-    # Sort by period ascending
     sorted_periods = sorted(trend_map.keys())
-    data = [
-        {"period": p, **trend_map[p]}
-        for p in sorted_periods
-    ]
+    data = [{"period": p, **trend_map[p]} for p in sorted_periods]
 
-    # -- Get unique countries for the selected country_type
     countries = []
     if country_col is not None:
         country_rows = (
             db.query(country_col)
-            .filter(
-                country_col.isnot(None),
-                country_col != "",
-            )
+            .filter(country_col.isnot(None), country_col != "")
             .distinct()
             .order_by(country_col)
             .all()
         )
         countries = [r[0] for r in country_rows]
 
-    # -- Get unique doc types for the dropdown
     doc_type_rows = (
         db.query(MainDB.DB_TYPE_DOC_RELEASED)
-        .filter(
-            MainDB.DB_TYPE_DOC_RELEASED.isnot(None),
-            MainDB.DB_TYPE_DOC_RELEASED != "",
-        )
+        .filter(MainDB.DB_TYPE_DOC_RELEASED.isnot(None), MainDB.DB_TYPE_DOC_RELEASED != "")
         .distinct()
         .order_by(MainDB.DB_TYPE_DOC_RELEASED)
         .all()
@@ -488,6 +410,7 @@ def get_cpr_trend(
     doc_types = [r[0] for r in doc_type_rows]
 
     return {"data": data, "countries": countries, "doc_types": doc_types}
+<<<<<<< Updated upstream
 
 
 def _build_processing_filters(
@@ -893,3 +816,5 @@ def get_summary(
         "rows": rows,
         "overall_status": overall_status,
     }
+=======
+>>>>>>> Stashed changes
