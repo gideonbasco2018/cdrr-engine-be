@@ -15,6 +15,7 @@ from app.crud.workflow_tasks import (
     get_logs_by_thread,
     mark_log_as_read,
     mark_logs_as_received,
+    get_task_count_for_user,
 )
 from app.schemas.workflow_tasks import (
     LogWithMainDBListResponse,
@@ -195,3 +196,16 @@ def get_thread_history(
         "total_pages": total_pages,
         "data": logs,
     }
+
+@router.get("/my-task-count")
+def get_my_task_count(
+    application_status: Optional[str] = Query("IN PROGRESS"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    count = get_task_count_for_user(
+        db=db,
+        user_id=current_user.id,
+        application_status=application_status,
+    )
+    return {"count": count}
