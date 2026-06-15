@@ -188,3 +188,14 @@ class SummaryResponse(BaseModel):
     date_to: Optional[str] = None
     rows: List[SummaryRow]
     overall_status: List[SummaryStatusRow]
+
+# ── Application Status Overview ────────────────────────────────────────────────
+
+class ApplicationStatusStepCount(BaseModel):
+    step: str
+    count: int
+
+
+class ApplicationStatusOverviewResponse(BaseModel):
+    total_in_progress: int
+    data: List[ApplicationStatusStepCount]
