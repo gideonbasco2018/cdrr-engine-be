@@ -410,8 +410,6 @@ def get_cpr_trend(
     doc_types = [r[0] for r in doc_type_rows]
 
     return {"data": data, "countries": countries, "doc_types": doc_types}
-<<<<<<< Updated upstream
-
 
 def _build_processing_filters(
     query,
@@ -816,5 +814,76 @@ def get_summary(
         "rows": rows,
         "overall_status": overall_status,
     }
-=======
->>>>>>> Stashed changes
+
+def get_application_status_overview(
+    db: Session,
+    user_id: Optional[int] = None,
+    group_id: Optional[int] = None,
+    year: Optional[int] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    doc_type: Optional[str] = None,
+    processing_type: Optional[str] = None,
+    entry_type: Optional[str] = None,
+    app_status: Optional[str] = None,
+    app_type: Optional[str] = None,
+) -> dict:
+    query = (
+        db.query(
+            func.coalesce(ApplicationLogs.application_step, "Unknown").label("step"),
+            func.count(ApplicationLogs.id).label("count"),
+        )
+        .join(MainDB, MainDB.DB_ID == ApplicationLogs.main_db_id)
+        .filter(
+            func.upper(ApplicationLogs.application_status) == "IN PROGRESS",
+            ApplicationLogs.del_last_index == 1,
+            ApplicationLogs.del_thread == "Open",
+        )
+    )
+
+    if user_id:
+        query = query.filter(ApplicationLogs.user_id == user_id)
+
+    if group_id:
+        query = (
+            query.join(User, User.id == ApplicationLogs.user_id)
+            .join(UserGroup, UserGroup.user_id == User.id)
+            .filter(UserGroup.group_id == group_id)
+        )
+
+    if year:
+        query = query.filter(
+            func.year(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) == year
+        )
+    if date_from:
+        query = query.filter(
+            func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) >= date_from
+        )
+    if date_to:
+        query = query.filter(
+            func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) <= date_to
+        )
+    if doc_type:
+        query = query.filter(MainDB.DB_TYPE_DOC_RELEASED == doc_type)
+    if processing_type:
+        query = query.filter(MainDB.DB_PROCESSING_TYPE == processing_type)
+    if entry_type:
+        query = query.filter(MainDB.DB_ENTRY_TYPE == entry_type)
+    if app_status:
+        query = query.filter(MainDB.DB_APP_STATUS == app_status)
+    if app_type:
+        query = query.filter(MainDB.DB_APP_TYPE == app_type)
+
+    rows = (
+        query
+        .group_by(ApplicationLogs.application_step)
+        .order_by(func.count(ApplicationLogs.id).desc())
+        .all()
+    )
+
+    total = sum(r[1] for r in rows)
+
+    return {
+        "total_in_progress": total,
+        "data": [{"step": r[0], "count": int(r[1])} for r in rows],
+    }

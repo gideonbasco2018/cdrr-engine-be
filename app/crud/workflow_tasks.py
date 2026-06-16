@@ -300,3 +300,28 @@ def mark_logs_as_received(
         for log in updated:
             db.refresh(log)
     return updated, len(updated), skipped
+
+def get_task_count_for_user(
+    db: Session,
+    user_id: int,
+    application_status: Optional[str] = "IN PROGRESS",
+) -> int:
+    """
+    Returns the count of active tasks assigned to a specific user.
+    Equivalent to:
+      SELECT count(*) FROM application_logs
+      WHERE application_status='IN PROGRESS'
+        AND del_last_index='1'
+        AND del_thread='Open'
+        AND user_id=<user_id>
+    """
+    count = (
+        db.query(func.count(ApplicationLogs.id))
+        .filter(ApplicationLogs.user_id == user_id)
+        .filter(ApplicationLogs.application_status == application_status)
+        .filter(ApplicationLogs.del_last_index == "1")
+        .filter(ApplicationLogs.del_thread == "Open")
+        .scalar()
+    )
+
+    return count or 0

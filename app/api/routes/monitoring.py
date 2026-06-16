@@ -17,6 +17,7 @@ from app.schemas.monitoring import (
     ProcessingTrendResponse,
     ProcessingBreakdownResponse,
     SummaryResponse,
+    ApplicationStatusOverviewResponse,
 )
 from app.crud import monitoring as crud_monitoring  
 from app.models.group import Group
@@ -362,6 +363,40 @@ def summary_endpoint(
         date_from=date_from,
         date_to=date_to,
         year=year,
+        doc_type=doc_type,
+        processing_type=processing_type,
+        entry_type=entry_type,
+        app_status=app_status,
+        app_type=app_type,
+    )
+
+
+@router.get(
+    "/application-status",
+    response_model=ApplicationStatusOverviewResponse,
+    summary="IN PROGRESS application count grouped by step",
+)
+def application_status_overview_endpoint(
+    user_id: Optional[int] = Query(None),
+    group_id: Optional[int] = Query(None),
+    year: Optional[int] = Query(None),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    doc_type: Optional[str] = Query(None),
+    processing_type: Optional[str] = Query(None),
+    entry_type: Optional[str] = Query(None),
+    app_status: Optional[str] = Query(None),
+    app_type: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    return crud_monitoring.get_application_status_overview(
+        db=db,
+        user_id=user_id,
+        group_id=group_id,
+        year=year,
+        date_from=date_from,
+        date_to=date_to,
         doc_type=doc_type,
         processing_type=processing_type,
         entry_type=entry_type,

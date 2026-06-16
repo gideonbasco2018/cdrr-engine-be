@@ -139,7 +139,8 @@ class FRPApplicationItem(BaseModel):
     repacker_country: Optional[str] = None
     uploaded_by: Optional[str] = None
     upload_date: Optional[str] = None
-
+    timeline: Optional[int] = None
+    days_elapsed: Optional[int] = None
 
 class FRPApplicationsListResponse(BaseModel):
     total: int

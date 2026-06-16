@@ -49,14 +49,8 @@ class AllRecordsResponse(BaseModel):
     total_pages: int
     data: List[RecordItem]
 
-<<<<<<< Updated upstream
 # -----------------------------
 # Release record response
-=======
-
-# -----------------------------
-# SEAN Release record response
->>>>>>> Stashed changes
 # -----------------------------
 class ReleaseRecord(BaseModel):
     DB_ID: int
@@ -78,10 +72,6 @@ class ReleaseListResponse(BaseModel):
     total_pages: int
     data: List[ReleaseRecord]
 
-<<<<<<< Updated upstream
-=======
-
->>>>>>> Stashed changes
 # -----------------------------
 # Overview KPI Summary
 # -----------------------------
@@ -119,7 +109,6 @@ class CprTrendItem(BaseModel):
 
 class CprTrendResponse(BaseModel):
     data: List[CprTrendItem]
-<<<<<<< Updated upstream
     countries: List[str]  # unique country values for the chosen country_type
     doc_types: List[str]  # unique DB_TYPE_DOC_RELEASED values for dropdown
 
@@ -190,7 +179,14 @@ class SummaryResponse(BaseModel):
     date_to: Optional[str] = None
     rows: List[SummaryRow]
     overall_status: List[SummaryStatusRow]
-=======
-    countries: List[str]
-    doc_types: List[str]
->>>>>>> Stashed changes
+
+# ── Application Status Overview ────────────────────────────────────────────────
+
+class ApplicationStatusStepCount(BaseModel):
+    step: str
+    count: int
+
+
+class ApplicationStatusOverviewResponse(BaseModel):
+    total_in_progress: int
+    data: List[ApplicationStatusStepCount]

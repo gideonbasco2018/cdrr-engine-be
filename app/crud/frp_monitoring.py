@@ -14,6 +14,65 @@ FRP_TYPE = "FRP and CRP"
 def _frp_query(db: Session):
     return db.query(MainDB).filter(MainDB.DB_PROCESSING_TYPE == FRP_TYPE)
 
+def _compute_overdue_ids(db: Session) -> list:
+    """
+    Returns list of DB_ID values that are overdue.
+    Overdue = elapsed days > DB_TIMELINE_CITIZEN_CHARTER, where:
+      - elapsed = (DB_DATE_RELEASED - DB_DATE_RECEIVED_CENT)  if already released
+      - elapsed = (today - DB_DATE_RECEIVED_CENT)             if still on-process
+    """
+    rows = db.query(
+        MainDB.DB_ID,
+        MainDB.DB_DATE_RECEIVED_CENT,
+        MainDB.DB_DATE_RELEASED,
+        MainDB.DB_TIMELINE_CITIZEN_CHARTER,
+    ).filter(
+        MainDB.DB_PROCESSING_TYPE == FRP_TYPE,
+        MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
+        MainDB.DB_DATE_RECEIVED_CENT != "",
+        MainDB.DB_DATE_RECEIVED_CENT != "N/A",
+        MainDB.DB_TIMELINE_CITIZEN_CHARTER.isnot(None),
+        MainDB.DB_TIMELINE_CITIZEN_CHARTER != "",
+    ).all()
+
+    today = datetime.now()
+    overdue_ids = []
+
+    for row in rows:
+        try:
+            received = datetime.strptime(str(row.DB_DATE_RECEIVED_CENT)[:10], "%Y-%m-%d")
+        except Exception:
+            continue
+
+        try:
+            charter_days = int(float(row.DB_TIMELINE_CITIZEN_CHARTER))
+        except (TypeError, ValueError):
+            continue
+
+        released_raw = row.DB_DATE_RELEASED
+        if released_raw and str(released_raw).strip() not in ("", "N/A"):
+            try:
+                end = datetime.strptime(str(released_raw)[:10], "%Y-%m-%d")
+            except Exception:
+                continue
+        else:
+            end = today  # still on-process → compare against today
+
+        elapsed_days = (end - received).days
+        if elapsed_days > charter_days:
+            overdue_ids.append(row.DB_ID)
+
+    return overdue_ids
+
+
+def get_overdue_ids(db: Session) -> list:
+    return _compute_overdue_ids(db)
+
+
+def get_overdue_count(db: Session) -> int:
+    return len(_compute_overdue_ids(db))
+
+
 
 def get_kpi_summary(db: Session) -> dict:
     now = datetime.now()
@@ -90,6 +149,8 @@ def get_kpi_summary(db: Session) -> dict:
 
     avg_tat_days = round(avg_total_days / avg_count, 1) if avg_count > 0 else None
 
+    overdue = get_overdue_count(db)
+
     return {
         "total_applications":  total,
         "cpr_released":        cpr_released,
@@ -97,7 +158,7 @@ def get_kpi_summary(db: Session) -> dict:
         "on_process":          on_process,
         "released_this_month": released_this_month,
         "pending":             pending,
-        "overdue":             0,
+        "overdue":             get_overdue_count(db),
         "avg_tat_days":        avg_tat_days,
     }
 
@@ -631,7 +692,8 @@ def get_applications_list(
         ).subquery()
         query = query.filter(MainDB.DB_ID.in_(pending_ids_subq))
     elif filter_type == "overdue":
-        query = query.filter(MainDB.DB_ID == -1)  # placeholder
+        overdue_ids = get_overdue_ids(db)
+        query = query.filter(MainDB.DB_ID.in_(overdue_ids) if overdue_ids else MainDB.DB_ID == -1)
 
     # ── Period filter ─────────────────────────────────────────────────────────
     if period:
@@ -757,6 +819,24 @@ def get_applications_list(
             "repacker_country": r.DB_PROD_REPACKER_COUNTRY,
             "uploaded_by":      r.DB_USER_UPLOADER,
             "upload_date":      str(r.DB_DATE_EXCEL_UPLOAD) if r.DB_DATE_EXCEL_UPLOAD else None,
+            "timeline":  (
+                int(float(r.DB_TIMELINE_CITIZEN_CHARTER))
+                if r.DB_TIMELINE_CITIZEN_CHARTER
+                and str(r.DB_TIMELINE_CITIZEN_CHARTER).strip() not in ("", "N/A")
+                else None
+            ),
+            "days_elapsed": (
+                (
+                    (
+                        datetime.strptime(str(r.DB_DATE_RELEASED)[:10], "%Y-%m-%d")
+                        if r.DB_DATE_RELEASED and str(r.DB_DATE_RELEASED).strip() not in ("", "N/A")
+                        else datetime.now()
+                    ) - datetime.strptime(str(r.DB_DATE_RECEIVED_CENT)[:10], "%Y-%m-%d")
+                ).days
+                if r.DB_DATE_RECEIVED_CENT
+                and str(r.DB_DATE_RECEIVED_CENT).strip() not in ("", "N/A")
+                else None
+            ),
         }
         for r in rows
     ]
