@@ -34,6 +34,7 @@ from app.api.routes import (
     cpr_correction,
     doc_type_released,
     pdf_rename,
+    frp_monitoring,
 )
 
 # ── Scheduler setup ───────────────────────────────────────────────────
@@ -121,7 +122,7 @@ app.include_router(lead_assignment.router)
 app.include_router(cpr_correction.router) 
 app.include_router(doc_type_released.router)
 app.include_router(pdf_rename.router)
-
+app.include_router(frp_monitoring.router)
 
 @app.get("/")
 def root():
