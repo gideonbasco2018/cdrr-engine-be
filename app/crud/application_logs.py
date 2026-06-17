@@ -170,6 +170,8 @@ def create(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
         reroute_target_step     = log_in.reroute_target_step,
         reroute_reason          = log_in.reroute_reason,
         reroute_remarks         = log_in.reroute_remarks,
+        is_starred              = log_in.is_starred or 0,
+        starred_at              = log_in.starred_at,
     )
 
     db.add(db_log)
@@ -211,6 +213,9 @@ def create_bulk(db: Session, logs_in: List[ApplicationLogCreate]) -> List[Applic
                 is_received             = log_in.is_received or 0,
                 received_at             = log_in.received_at,
                 received_by             = log_in.received_by,
+                # ── Starred fields —
+                is_starred              = log_in.is_starred or 0,
+                starred_at              = log_in.starred_at,
             )
             db.add(db_log)
             db_logs.append(db_log)
@@ -566,3 +571,16 @@ def reroute(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
     _notify_assigned_user(db, new_log, dtn)
 
     return new_log
+
+def toggle_star(db: Session, log_id: int, star: bool) -> Optional[ApplicationLogs]:
+    """Toggle is_starred on a specific application log."""
+    db_log = get_by_id(db, log_id)
+    if not db_log:
+        return None
+
+    db_log.is_starred = 1 if star else 0
+    db_log.starred_at = _now_pht() if star else None
+
+    db.commit()
+    db.refresh(db_log)
+    return db_log

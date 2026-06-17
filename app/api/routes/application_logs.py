@@ -21,7 +21,7 @@ from app.models.application_logs import ApplicationLogs
 
 import app.crud.notification as crud_notif
 from app.schemas.notification import NotificationCreate
-
+from app.crud.application_logs import toggle_star
 router = APIRouter(
     prefix="/api/application-logs",
     tags=["Application Logs"]
@@ -347,26 +347,7 @@ def reassign_application(
             detail=f"Failed to process re-assignment: {str(e)}"
         )
 
-# ══════════════════════════════════════════════════════════════════════
-#  Re-route endpoint
-#  POST /api/application-logs/re-route
-# ══════════════════════════════════════════════════════════════════════
-# @router.post("/re-route", response_model=ApplicationLogResponse, status_code=status.HTTP_201_CREATED)
-# def reroute_application(
-#     log_in: ApplicationLogCreate,
-#     current_user: User = Depends(get_current_active_user),
-#     db: Session = Depends(get_db)
-# ):
-#     try:
-#         log = crud_logs.reroute(db, log_in=log_in)
-#         return log
-#     except Exception as e:
-#         raise HTTPException(
-#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#             detail=f"Failed to process re-route: {str(e)}"
-#         )
 
-# app/api/routes/application_logs.py
 @router.post("/re-route", response_model=ApplicationLogResponse, status_code=status.HTTP_201_CREATED)
 def reroute_application(
     log_in: ApplicationLogCreate,
@@ -397,3 +378,19 @@ def reroute_application(
         return log
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@router.patch("/{log_id}/star", response_model=ApplicationLogResponse)
+def star_application_log(
+    log_id: int,
+    starred: bool = Query(..., description="true = star, false = unstar"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Toggle starred state of an application log."""
+    log = toggle_star(db, log_id=log_id, star=starred)
+    if not log:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Application log with id {log_id} not found",
+        )
+    return log

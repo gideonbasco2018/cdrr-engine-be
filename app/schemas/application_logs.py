@@ -53,7 +53,9 @@ class ApplicationLogBase(BaseModel):
     reroute_target_step: Optional[str] = Field(None, max_length=255, description="Target step selected from dropdown e.g. 'Checking'")
     reroute_reason: Optional[str] = Field(None, max_length=255, description="Reason for re-route from dropdown")
     reroute_remarks: Optional[str] = Field(None, description="Additional remarks for re-route")
-
+    # ── Starred tracking ───────────────────────────────────────────────
+    is_starred: Optional[int] = Field(None, description="0 = not starred, 1 = starred")
+    starred_at: Optional[datetime] = Field(None)
 
 
 class ApplicationLogCreate(ApplicationLogBase):
@@ -67,7 +69,9 @@ class ApplicationLogUpdate(ApplicationLogBase):
 class ApplicationLogResponse(ApplicationLogBase):
     id: int
     main_db_id: int
-    is_received: int = 0  # default value para hindi mag-error kung null
+    is_received: int = 0
+    is_starred: int = 0          
+    starred_at: Optional[datetime] = None  
     created_at: datetime
     updated_at: datetime
 
