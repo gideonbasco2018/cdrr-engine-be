@@ -83,6 +83,8 @@ class ApplicationLogs(Base):
     reroute_target_step = Column(String(255), nullable=True)
     reroute_reason = Column(String(255), nullable=True)
     reroute_remarks = Column(Text, nullable=True)
+    is_starred = Column(SmallInteger, nullable=False, default=0)
+    starred_at = Column(DateTime, nullable=True)
 
     def __repr__(self):
         return (

@@ -195,6 +195,10 @@ class LogWithMainDBResponse(BaseModel):
     received_at: Optional[datetime] = None
     received_by: Optional[str] = None
 
+    # ── Starred tracking ──          
+    is_starred: int = 0
+    starred_at: Optional[datetime] = None
+
     # Joined MainDB info
     main_db: Optional[MainDBBrief] = None
 
