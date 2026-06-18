@@ -42,3 +42,4 @@ pdfplumber
 Pillow
 pymupdf
 pytesseract
+pyzbar
