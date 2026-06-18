@@ -152,6 +152,7 @@ class FRPApplicationsListResponse(BaseModel):
 
 # ── Filter Options (advanced filter dropdowns) ────────────────────────────────
 class FRPFilterOptionsResponse(BaseModel):
+    app_statuses: List[str]
     est_cats: List[str] = []
     doc_types: List[str] = []
     app_types: List[str] = []

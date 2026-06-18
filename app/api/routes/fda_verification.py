@@ -1,9 +1,10 @@
 # app/api/routes/fda_verification.py
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 import pandas as pd
 import io
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, List
 
 from app.core.deps import get_current_active_user
@@ -453,6 +454,56 @@ async def verify_registration(registration_number: str):
         )
 
 
+class FdaVerificationUpdateRequest(BaseModel):
+    id: Optional[int] = None
+    is_canceled: Optional[str] = None
+    canceled_by: Optional[str] = None
+    issuance_date: Optional[date] = None
+    expiry_date: Optional[date] = None
+    date_created: Optional[datetime] = None
+    date_modified: Optional[datetime] = None
+    registration_number: Optional[str] = None
+    reference_number: Optional[str] = None
+
+
+# ==================== UPDATE REGISTRATION STATUS (NEW) ====================
+@router.put("/update-registration/{registration_id}")
+async def update_registration_verification(
+    registration_id: int,
+    update_data: FdaVerificationUpdateRequest
+):
+    """
+    Updates a registration record by its primary key (id).
+    All 9 fields below are optional — send only what changed:
+    id, is_canceled, canceled_by, issuance_date, expiry_date,
+    date_created, date_modified, registration_number, reference_number.
+    """
+    try:
+        result = crud.update_registration_status(
+            registration_id,
+            update_data.model_dump(exclude_unset=True)
+        )
+
+        if not result['success']:
+            raise HTTPException(
+                status_code=404 if result['error'] == "Registration not found" else 400,
+                detail=result['error']
+            )
+
+        return {
+            "status": "success",
+            "message": result['message']
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update registration: {str(e)}"
+        )
+
+
 # ==================== UPDATE DRUG ====================
 @router.put("/drugs/{drug_id}")
 async def update_drug(drug_id: int, update_data: dict):
@@ -542,7 +593,6 @@ async def restore_drug(drug_id: int):
             detail=f"Failed to restore drug: {str(e)}"
         )
     
-from pydantic import BaseModel
 
 class BulkFromDTNsRequest(BaseModel):
     dtn_list: List[int]

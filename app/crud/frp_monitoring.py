@@ -615,6 +615,7 @@ def get_filter_options(db: Session) -> dict:
         return [r[0] for r in rows if r[0] and str(r[0]).strip()]
 
     return {
+        "app_statuses":           distinct_col(MainDB.DB_APP_STATUS),
         "est_cats":               distinct_col(MainDB.DB_EST_CAT),
         "doc_types":              distinct_col(MainDB.DB_TYPE_DOC_RELEASED),
         "app_types":              distinct_col(MainDB.DB_APP_TYPE),
@@ -641,6 +642,7 @@ def get_applications_list(
     page: int = 1,
     page_size: int = 100,
     # ── general advanced ──────────────────────────────────────────────────
+    app_status: Optional[str] = None,
     est_cat: Optional[str] = None,
     app_type: Optional[str] = None,
     lto_company: Optional[str] = None,
@@ -731,6 +733,8 @@ def get_applications_list(
             )
 
     # ── General advanced filters ──────────────────────────────────────────────
+    if app_status:
+        query = query.filter(MainDB.DB_APP_STATUS == app_status)
     if est_cat:
         query = query.filter(MainDB.DB_EST_CAT == est_cat)
     if app_type:

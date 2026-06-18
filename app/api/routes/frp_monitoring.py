@@ -152,6 +152,7 @@ def get_applications_list(
     page:      int = Query(1,   ge=1),
     page_size: int = Query(100, ge=1, le=500),
     # ── general advanced ──────────────────────────────────────────────────
+    app_status:         Optional[str] = Query(None, description="e.g. ON-PROCESS|COMPLETED|DISAPPROVED|RELEASED"),
     est_cat:            Optional[str] = Query(None),
     app_type:           Optional[str] = Query(None),
     lto_company:        Optional[str] = Query(None),
@@ -189,6 +190,7 @@ def get_applications_list(
         period_type=period_type,
         page=page,
         page_size=page_size,
+        app_status=app_status,
         est_cat=est_cat,
         app_type=app_type,
         lto_company=lto_company,
