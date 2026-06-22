@@ -14,7 +14,6 @@ class FRPKpiSummaryResponse(BaseModel):
     released_this_month: int
     pending: int
     overdue: int
-    avg_tat_days: Optional[float] = None
 
 
 # ── Status Distribution ───────────────────────────────────────────────────────
@@ -152,6 +151,7 @@ class FRPApplicationsListResponse(BaseModel):
 
 # ── Filter Options (advanced filter dropdowns) ────────────────────────────────
 class FRPFilterOptionsResponse(BaseModel):
+    app_statuses: List[str]
     est_cats: List[str] = []
     doc_types: List[str] = []
     app_types: List[str] = []

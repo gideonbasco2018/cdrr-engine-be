@@ -402,6 +402,64 @@ def verify_registration(registration_number: str) -> Dict[str, Any]:
         engine.dispose()
 
 
+# ==================== VERIFY REGISTRATION STATUS (NEW) ====================
+def update_registration_status(registration_id: int, update_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Updates a registration record by its primary key (id).
+    Allowed fields: reference_number, registration_number, is_canceled,
+    canceled_by, issuance_date, expiry_date, date_created.
+    date_modified is refreshed automatically on every update.
+    All fields are optional — only the ones sent get updated.
+    """
+    engine = get_fda_db_engine()
+
+    ALLOWED_FIELDS = {
+        'reference_number', 'registration_number', 'is_canceled',
+        'canceled_by', 'issuance_date', 'expiry_date', 'date_created',
+    }
+
+    try:
+        with engine.connect() as connection:
+            check_query = text("""
+                SELECT id FROM fda_drug_registrations
+                WHERE id = :registration_id
+            """)
+            result = connection.execute(check_query, {'registration_id': registration_id})
+
+            if not result.fetchone():
+                return {"success": False, "error": "Registration not found"}
+
+            set_clauses = []
+            params = {'registration_id': registration_id}
+
+            for key, value in update_data.items():
+                if key in ALLOWED_FIELDS and value is not None:
+                    set_clauses.append(f"{key} = :{key}")
+                    params[key] = value
+
+            if not set_clauses:
+                return {"success": False, "error": "No valid fields to update"}
+
+            set_clauses.append("date_modified = NOW()")
+
+            update_query = text(f"""
+                UPDATE fda_drug_registrations
+                SET {', '.join(set_clauses)}
+                WHERE id = :registration_id
+            """)
+
+            connection.execute(update_query, params)
+            connection.commit()
+
+            return {"success": True, "message": "Registration updated successfully"}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+    finally:
+        engine.dispose()
+
+
 # ==================== UPDATE ====================
 def update_drug(drug_id: int, update_data: Dict[str, Any]) -> Dict[str, Any]:
     """
