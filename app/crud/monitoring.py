@@ -653,9 +653,13 @@ def get_summary(
     Table 2 — overall DB_APP_STATUS counts (unfiltered by date, 
                but filtered by categorical params).
     """
+    if not date_from and year:
+        date_from = f"{year}-01-01"
+    if not date_to and year:
+        date_to = f"{year}-12-31"
 
-    def _apply_cat_filters(q):
-        if year:
+    def _apply_cat_filters(q, skip_year=False):
+        if year and not skip_year:
             q = q.filter(
                 func.year(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) == year
             )
@@ -687,15 +691,15 @@ def get_summary(
         )
         # Not yet released by date_from
         carry_q = carry_q.filter(
-            or_(
-                MainDB.DB_DATE_RELEASED.is_(None),
-                MainDB.DB_DATE_RELEASED == "",
-                MainDB.DB_DATE_RELEASED == "N/A",
-                func.date(func.str_to_date(MainDB.DB_DATE_RELEASED, "%Y-%m-%d"))
-                >= date_from,
-            )
+        or_(
+            MainDB.DB_DATE_RELEASED.is_(None),
+            MainDB.DB_DATE_RELEASED == "",
+            MainDB.DB_DATE_RELEASED == "N/A",
         )
-    carry_q = _apply_cat_filters(carry_q)
+    ).filter(
+        func.upper(MainDB.DB_APP_STATUS) == "ON-PROCESS"
+    )
+    carry_q = _apply_cat_filters(carry_q, skip_year=True)
     carry_rows = carry_q.group_by("app_type").all()
 
     # ── Received: within [date_from, date_to] ─────────────────────────────────
@@ -835,9 +839,9 @@ def get_application_status_overview(
         )
         .join(MainDB, MainDB.DB_ID == ApplicationLogs.main_db_id)
         .filter(
-            func.upper(ApplicationLogs.application_status) == "IN PROGRESS",
             ApplicationLogs.del_last_index == 1,
             ApplicationLogs.del_thread == "Open",
+            func.upper(MainDB.DB_APP_STATUS) == "ON-PROCESS",
         )
     )
 
@@ -851,18 +855,38 @@ def get_application_status_overview(
             .filter(UserGroup.group_id == group_id)
         )
 
-    if year:
+    if date_from and date_to:
         query = query.filter(
-            func.year(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) == year
+            or_(
+                and_(
+                    func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) < date_from,
+                    or_(
+                        MainDB.DB_DATE_RELEASED.is_(None),
+                        MainDB.DB_DATE_RELEASED == "",
+                        MainDB.DB_DATE_RELEASED == "N/A",
+                    )
+                ),
+                and_(
+                    func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) >= date_from,
+                    func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) <= date_to,
+                )
+            )
         )
-    if date_from:
+    elif year:
         query = query.filter(
-            func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) >= date_from
+            or_(
+                and_(
+                    func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) < f"{year}-01-01",
+                    or_(
+                        MainDB.DB_DATE_RELEASED.is_(None),
+                        MainDB.DB_DATE_RELEASED == "",
+                        MainDB.DB_DATE_RELEASED == "N/A",
+                    )
+                ),
+                func.year(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) == year,
+            )
         )
-    if date_to:
-        query = query.filter(
-            func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")) <= date_to
-        )
+
     if doc_type:
         query = query.filter(MainDB.DB_TYPE_DOC_RELEASED == doc_type)
     if processing_type:
@@ -882,6 +906,8 @@ def get_application_status_overview(
     )
 
     total = sum(r[1] for r in rows)
+
+
 
     return {
         "total_in_progress": total,
