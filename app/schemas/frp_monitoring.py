@@ -14,7 +14,6 @@ class FRPKpiSummaryResponse(BaseModel):
     released_this_month: int
     pending: int
     overdue: int
-    avg_tat_days: Optional[float] = None
 
 
 # ── Status Distribution ───────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 # app/crud/frp_monitoring.py
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_, desc
+from sqlalchemy import func, and_, or_, desc, Float
 from typing import Optional
 from datetime import datetime
 from calendar import monthrange
@@ -14,17 +14,16 @@ FRP_TYPE = "FRP and CRP"
 def _frp_query(db: Session):
     return db.query(MainDB).filter(MainDB.DB_PROCESSING_TYPE == FRP_TYPE)
 
+# ✅ AFTER — on-process only, always compare against today
 def _compute_overdue_ids(db: Session) -> list:
     """
-    Returns list of DB_ID values that are overdue.
-    Overdue = elapsed days > DB_TIMELINE_CITIZEN_CHARTER, where:
-      - elapsed = (DB_DATE_RELEASED - DB_DATE_RECEIVED_CENT)  if already released
-      - elapsed = (today - DB_DATE_RECEIVED_CENT)             if still on-process
+    Returns DB_ID values that are overdue.
+    Overdue = on-process apps where (today - DB_DATE_RECEIVED_CENT) > DB_TIMELINE_CITIZEN_CHARTER.
+    Completed / Disapproved / Released apps are intentionally excluded.
     """
     rows = db.query(
         MainDB.DB_ID,
         MainDB.DB_DATE_RECEIVED_CENT,
-        MainDB.DB_DATE_RELEASED,
         MainDB.DB_TIMELINE_CITIZEN_CHARTER,
     ).filter(
         MainDB.DB_PROCESSING_TYPE == FRP_TYPE,
@@ -33,6 +32,8 @@ def _compute_overdue_ids(db: Session) -> list:
         MainDB.DB_DATE_RECEIVED_CENT != "N/A",
         MainDB.DB_TIMELINE_CITIZEN_CHARTER.isnot(None),
         MainDB.DB_TIMELINE_CITIZEN_CHARTER != "",
+        # ✅ KEY CHANGE: exclude finished apps — only on-process
+        func.upper(MainDB.DB_APP_STATUS).notin_(["COMPLETED", "DISAPPROVED", "RELEASED"]),
     ).all()
 
     today = datetime.now()
@@ -49,16 +50,8 @@ def _compute_overdue_ids(db: Session) -> list:
         except (TypeError, ValueError):
             continue
 
-        released_raw = row.DB_DATE_RELEASED
-        if released_raw and str(released_raw).strip() not in ("", "N/A"):
-            try:
-                end = datetime.strptime(str(released_raw)[:10], "%Y-%m-%d")
-            except Exception:
-                continue
-        else:
-            end = today  # still on-process → compare against today
-
-        elapsed_days = (end - received).days
+        # ✅ KEY CHANGE: always use today — no released date branch needed
+        elapsed_days = (today - received).days
         if elapsed_days > charter_days:
             overdue_ids.append(row.DB_ID)
 
@@ -787,12 +780,24 @@ def get_applications_list(
         query = query.filter(MainDB.DB_PROD_REPACKER_COUNTRY == repacker_country)
 
     total = query.count()
-    rows  = (
-        query.order_by(desc(MainDB.DB_DATE_EXCEL_UPLOAD))
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-        .all()
-    )
+    if filter_type == "overdue":
+        over_by_expr = (
+            func.datediff(func.now(), func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"))
+            - func.cast(MainDB.DB_TIMELINE_CITIZEN_CHARTER, Float)
+        )
+        rows = (
+            query.order_by(desc(over_by_expr))
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
+    else:
+        rows = (
+            query.order_by(desc(MainDB.DB_DATE_EXCEL_UPLOAD))
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all()
+        )
 
     data = [
         {
