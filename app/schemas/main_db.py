@@ -208,6 +208,8 @@ class MainDBBase(BaseModel):
     DB_DECISION_AUTHORITY: Optional[str] = None
     DB_DECISION_SIGNED_DATE: Optional[date] = None
 
+    DB_ENTRY_TYPE: Optional[str] = None
+    
     # ✅ FIX: Convert empty string to None for all Optional[int] fields
     @field_validator('DB_DTN', 'DB_IS_IN_PM', 'DB_TIMELINE_CITIZEN_CHARTER', mode='before')
     @classmethod
