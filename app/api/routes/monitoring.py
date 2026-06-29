@@ -69,7 +69,7 @@ def get_users_tasks(
 @router.get("/all-records", response_model=AllRecordsResponse)
 def get_all_records(
     page: int = Query(1, ge=1),
-    page_size: int = Query(12, ge=1, le=100),
+    page_size: int = Query(12, ge=1, le=1000),
     user_id: Optional[int] = Query(None),
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),

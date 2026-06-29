@@ -31,6 +31,7 @@ class RecordItem(BaseModel):
     id: int
     dtn: Optional[str] = None
     user_name: Optional[str] = None
+    full_name: Optional[str] = None   
     drug_name: Optional[str] = None
     date_received_cent: Optional[str] = None
     timeline: Optional[str] = None
