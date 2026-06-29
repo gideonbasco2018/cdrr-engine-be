@@ -85,7 +85,9 @@ def get_all_records(
     dtn_date_to: Optional[str] = None,
 ) -> dict:
     query = _exclude_action_types(
-        db.query(ApplicationLogs, MainDB).join(MainDB, MainDB.DB_ID == ApplicationLogs.main_db_id)
+        db.query(ApplicationLogs, MainDB, User)
+        .join(MainDB, MainDB.DB_ID == ApplicationLogs.main_db_id)
+        .outerjoin(User, User.id == ApplicationLogs.user_id)
     )
 
     if user_id:
@@ -119,7 +121,7 @@ def get_all_records(
     total = query.count()
     total_pages = max(1, -(-total // page_size))
     rows = query.offset((page - 1) * page_size).limit(page_size).all()
-
+    
     def _timeline(log: ApplicationLogs, main: MainDB) -> str:
         try:
             received = datetime.strptime(main.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")
@@ -135,7 +137,7 @@ def get_all_records(
             return "N/A"
 
     data = []
-    for log, main in rows:
+    for log, main, user in rows:
         brand   = main.DB_PROD_BR_NAME  or ""
         generic = main.DB_PROD_GEN_NAME or ""
         drug_name = (
@@ -143,10 +145,15 @@ def get_all_records(
             if brand and generic
             else brand or generic or "—"
         )
+        full_name = (
+            f"{user.first_name} {user.surname}".strip()
+            if user else None
+        )
         data.append({
             "id": main.DB_ID,
             "dtn": str(main.DB_DTN) if main.DB_DTN else None,
             "user_name": log.user_name,
+            "full_name": full_name,           # ← NEW
             "drug_name": drug_name,
             "date_received_cent": main.DB_DATE_RECEIVED_CENT,
             "timeline": _timeline(log, main),
