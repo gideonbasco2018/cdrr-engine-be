@@ -170,6 +170,7 @@ class MainDB(Base):
         Index("ix_an_importer_country",    "DB_PROD_IMPORTER_COUNTRY",mysql_length=100),
         Index("ix_an_distri_country",      "DB_PROD_DISTRI_COUNTRY",  mysql_length=100),
         Index("ix_an_repacker_country",    "DB_PROD_REPACKER_COUNTRY",mysql_length=100),
+        Index("ix_an_reg_no",              "DB_REG_NO",               mysql_length=191),
     )
 
     
@@ -190,4 +191,10 @@ class MainDB(Base):
         "ApplicationLogs",
         back_populates="main_db",
         cascade="all, delete-orphan"
+    )
+
+    application_documents = relationship(
+        "ApplicationDocument",
+        back_populates="main_db",
+        cascade="all, delete-orphan",
     )

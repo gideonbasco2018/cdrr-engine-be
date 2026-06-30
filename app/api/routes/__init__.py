@@ -30,6 +30,8 @@ from app.api.routes import (
     doc_type_released,
     pdf_rename,
     frp_monitoring,
+    application_document,
+    duplicate_record,
 )
 api_router = APIRouter()
 
@@ -59,5 +61,7 @@ api_router.include_router(cpr_correction.router)
 api_router.include_router(doc_type_released.router)
 api_router.include_router(pdf_rename.router)
 api_router.include_router(frp_monitoring.router)
+api_router.include_router(application_document.router)
+api_router.include_router(duplicate_record.router)
 
  
