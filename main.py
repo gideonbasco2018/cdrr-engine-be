@@ -35,6 +35,8 @@ from app.api.routes import (
     doc_type_released,
     pdf_rename,
     frp_monitoring,
+    application_document,
+    duplicate_record,
 )
 
 # ── Scheduler setup ───────────────────────────────────────────────────
@@ -123,6 +125,10 @@ app.include_router(cpr_correction.router)
 app.include_router(doc_type_released.router)
 app.include_router(pdf_rename.router)
 app.include_router(frp_monitoring.router)
+app.include_router(application_document.router)
+app.include_router(duplicate_record.router)
+
+
 
 @app.get("/")
 def root():

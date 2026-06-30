@@ -12,7 +12,7 @@ from app.models.bulk_upload_history_records import BulkUploadHistoryRecord
 from app.models.bulk_upload_history import BulkUploadHistory
 from app.models.closed_tasks import ClosedTask
 from app.models.lead_assignment import LeadAssignment
-
+from app.models.application_document import ApplicationDocument 
 
 
 
@@ -33,7 +33,8 @@ __all__ = [
     "BulkUploadHistoryRecord",
     "BulkUploadHistory",
     "ClosedTask",
-    "LeadAssignment"
+    "LeadAssignment",
+    "ApplicationDocument"
 
 
 ]

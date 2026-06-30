@@ -49,3 +49,5 @@ logs/
 .pytest_cache/
 .coverage
 htmlcov/
+
+service_account.json
