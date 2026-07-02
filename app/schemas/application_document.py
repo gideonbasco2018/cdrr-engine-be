@@ -9,6 +9,7 @@ class ApplicationDocumentBase(BaseModel):
     main_db_id:        int
     db_entry_type:     str
     db_dtn:            str
+    doc_category:      Optional[str] = None
     drive_file_id:     str
     drive_file_url:    str
     drive_folder_id:   Optional[str] = None
@@ -49,3 +50,16 @@ class UploadDocumentResponse(BaseModel):
 
 class DeleteDocumentResponse(BaseModel):
     message: str
+
+class BatchUploadResult(BaseModel):
+    filename: str
+    success: bool
+    document: Optional[UploadDocumentResponse] = None
+    error: Optional[str] = None
+
+
+class BatchUploadResponse(BaseModel):
+    total: int
+    succeeded: int
+    failed: int
+    results: list[BatchUploadResult]

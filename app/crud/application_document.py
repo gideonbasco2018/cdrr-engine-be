@@ -66,14 +66,21 @@ def get_existing_folder_id(
     db: Session,
     db_entry_type: str,
     db_dtn: str,
+    doc_category: Optional[str] = None,
 ) -> Optional[str]:
-    """Kunin yung drive_folder_id kung may existing document na sa
-    parehong db_entry_type + db_dtn, para hindi na mag-search/create ulit sa Drive."""
-    doc = (
+    """Kunin yung drive_folder_id kung meron nang existing document na
+    parehong db_entry_type + db_dtn + doc_category, para hindi na mag-search/create ulit."""
+    q = (
         db.query(ApplicationDocument)
         .filter(ApplicationDocument.db_entry_type == db_entry_type)
         .filter(ApplicationDocument.db_dtn == db_dtn)
         .filter(ApplicationDocument.drive_folder_id.isnot(None))
-        .first()
     )
+
+    if doc_category and doc_category.strip():
+        q = q.filter(ApplicationDocument.doc_category == doc_category.strip())
+    else:
+        q = q.filter(ApplicationDocument.doc_category.is_(None))
+
+    doc = q.first()
     return doc.drive_folder_id if doc else None

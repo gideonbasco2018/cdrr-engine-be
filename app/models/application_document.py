@@ -46,6 +46,8 @@ class ApplicationDocument(Base):
     # Entry classification (para sa folder structure sa Drive)
     db_entry_type = Column(String(255), nullable=False, index=True)
     db_dtn        = Column(String(255), nullable=False, index=True)
+    # Optional na sub-classification ng file (hal. "Product Files", "Generated Docs")
+    doc_category = Column(String(255), nullable=True, index=True)
 
     # Relationship
     main_db = relationship("MainDB", back_populates="application_documents")
