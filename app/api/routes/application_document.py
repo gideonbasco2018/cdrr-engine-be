@@ -13,7 +13,12 @@ from app.schemas.application_document import (
     DeleteDocumentResponse,
     UploadDocumentResponse,
 )
-from app.services.google_drive import delete_file_from_drive, upload_file_to_drive
+
+from app.services.google_drive import (
+    delete_file_from_drive,
+    get_or_create_application_folder,
+    upload_file_to_drive,
+)
 
 router = APIRouter(
     prefix="/api/application-documents",
@@ -40,13 +45,14 @@ ALLOWED_MIME_TYPES = {
 @router.post("/upload", response_model=UploadDocumentResponse, status_code=201)
 async def upload_document(
     main_db_id: int = Form(...),
+    db_entry_type: str = Form(...),
+    db_dtn: str = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Upload a supporting document to Google Drive and record it in the DB."""
 
-    # ── Validate mime type ──────────────────────────────────────────
     if file.content_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=415,
@@ -54,20 +60,28 @@ async def upload_document(
                    f"Accepted: PDF, JPG, PNG, GIF, WEBP, DOC, DOCX, XLS, XLSX.",
         )
 
-    # ── Read & size-check ───────────────────────────────────────────
     file_bytes = await file.read()
     if len(file_bytes) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail="File exceeds the 5 MB limit.",
-        )
+        raise HTTPException(status_code=413, detail="File exceeds the 5 MB limit.")
 
-    # ── Upload to Google Drive ──────────────────────────────────────
+    # ── Get or create yung nested folder: db_entry_type / db_dtn ────
+    folder_id = crud_doc.get_existing_folder_id(db, db_entry_type, db_dtn)
+    if not folder_id:
+        try:
+            folder_id = get_or_create_application_folder(db_entry_type, db_dtn)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to prepare Drive folder: {exc}",
+            )
+
+    # ── Upload to Google Drive ───────────────────────────────────────
     try:
         drive_result = upload_file_to_drive(
             file_bytes=file_bytes,
             filename=file.filename,
             mime_type=file.content_type,
+            folder_id=folder_id,
         )
     except Exception as exc:
         raise HTTPException(
@@ -75,14 +89,15 @@ async def upload_document(
             detail=f"Google Drive upload failed: {exc}",
         )
 
-    # ── Persist record ──────────────────────────────────────────────
     from app.schemas.application_document import ApplicationDocumentCreate
 
     payload = ApplicationDocumentCreate(
         main_db_id=main_db_id,
+        db_entry_type=db_entry_type,
+        db_dtn=db_dtn,
         drive_file_id=drive_result["file_id"],
         drive_file_url=drive_result["file_url"],
-        drive_folder_id=drive_result.get("folder_id"),
+        drive_folder_id=drive_result.get("folder_id") or folder_id,
         original_filename=file.filename,
         mime_type=file.content_type,
         file_size_bytes=len(file_bytes),

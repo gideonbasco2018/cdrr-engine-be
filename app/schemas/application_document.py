@@ -7,13 +7,14 @@ from datetime import datetime
 
 class ApplicationDocumentBase(BaseModel):
     main_db_id:        int
+    db_entry_type:     str
+    db_dtn:            str
     drive_file_id:     str
     drive_file_url:    str
     drive_folder_id:   Optional[str] = None
     original_filename: str
     mime_type:         Optional[str] = None
     file_size_bytes:   Optional[int] = None
-
 
 class ApplicationDocumentCreate(ApplicationDocumentBase):
     uploaded_by_user_id:   Optional[int] = None

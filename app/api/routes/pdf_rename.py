@@ -324,14 +324,9 @@ def _process_one(args: tuple) -> dict:
         "status": "renamed" if dtn else "dtn_not_found",
     }
 
+
 @router.post("/rename-pdfs/preview")
 async def rename_pdfs_preview(files: List[UploadFile] = File(...)):
-    """
-    Preview DTN extraction results for a batch of PDFs without renaming
-    or zipping them. Useful for the frontend to show a confirmation
-    table (original name, detected DTN, status) before committing to
-    the actual rename/download.
-    """
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
 
@@ -353,13 +348,6 @@ async def rename_pdfs_preview(files: List[UploadFile] = File(...)):
 
 @router.post("/rename-pdfs")
 async def rename_pdfs(files: List[UploadFile] = File(...)):
-    """
-    Extract the DTN from each uploaded PDF and return them all as a
-    single ZIP file, with each PDF renamed to `{dtn}.pdf` (or left
-    with its original name if no DTN could be detected). A base64
-    JSON summary of per-file results is also returned in the
-    X-Rename-Summary response header.
-    """
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded.")
 
@@ -391,13 +379,6 @@ async def rename_pdfs(files: List[UploadFile] = File(...)):
 
 @router.post("/rename-pdfs/debug")
 async def debug_pdf(file: UploadFile = File(...)):
-    """
-    Diagnostic endpoint for a single PDF. Runs every extraction stage
-    (native text, barcode area crop, pyzbar decode, barcode-area OCR,
-    full-page OCR) independently and returns all intermediate outputs
-    plus the final detected DTN, so extraction issues can be traced
-    stage by stage.
-    """
     pdf_bytes = await file.read()
     native_text = ""
     barcode_area_text = ""
@@ -441,3 +422,40 @@ async def debug_pdf(file: UploadFile = File(...)):
         "pyzbar_available": PYZBAR_AVAILABLE,
         "ocr_available": PYMUPDF_AVAILABLE and TESSERACT_AVAILABLE,
     }
+
+
+@router.post("/rename-pdfs/stream")
+async def rename_pdfs_stream(files: List[UploadFile] = File(...)):
+    """SSE endpoint — streams one JSON event per file as it finishes processing."""
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded.")
+
+    file_data = [(f.filename or "unknown.pdf", await f.read()) for f in files]
+    total = len(file_data)
+
+    async def generate():
+        loop = asyncio.get_event_loop()
+        # Send total count first so frontend knows how many to expect
+        yield f"data: {json.dumps({'type': 'start', 'total': total})}\n\n"
+
+        for i, args in enumerate(file_data):
+            # Run blocking extract_dtn in thread pool so we don't block event loop
+            result = await loop.run_in_executor(executor, _process_one, args)
+            payload = {
+                "type": "result",
+                "index": i,
+                "total": total,
+                **result,
+            }
+            yield f"data: {json.dumps(payload)}\n\n"
+
+        yield f"data: {json.dumps({'type': 'done', 'total': total})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
