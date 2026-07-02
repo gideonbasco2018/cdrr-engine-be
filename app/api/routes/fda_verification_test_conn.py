@@ -1,4 +1,5 @@
 # app/api/routes/fda_eservices.py
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -12,7 +13,7 @@ load_dotenv()
 router = APIRouter(
     prefix="/api/fda",
     tags=["FDA - Database Connection"],
-    dependencies=[Depends(get_current_active_user)]  # 🔐 LOGIN REQUIRED BY DEFAULT
+    dependencies=[Depends(get_current_active_user)] 
 )
 
 # Get the FDA eServices database URL from environment

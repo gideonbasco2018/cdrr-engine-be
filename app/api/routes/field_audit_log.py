@@ -21,7 +21,7 @@ router = APIRouter(
 
 
 # ---------------------------------------------------------------
-# POST — I-save ang lahat ng changes sa isang submit
+# POST — Save all changes from a single submit
 # ---------------------------------------------------------------
 @router.post("/", response_model=dict, status_code=status.HTTP_201_CREATED)
 def create_field_audit_logs(
@@ -29,6 +29,13 @@ def create_field_audit_logs(
     db:           Session = Depends(get_db),
     current_user          = Depends(get_current_active_user),
 ):
+    """
+    Save a batch of field-level changes as a single audit session.
+
+    All changes submitted together share one session ID, so they can
+    later be retrieved and displayed as one grouped edit event.
+    Rejects the request if no changes are provided.
+    """
     if not payload.changes:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -43,7 +50,7 @@ def create_field_audit_logs(
 
 
 # ---------------------------------------------------------------
-# GET — Audit history ng isang record (grouped by session)
+# GET — Audit history of a record (grouped by session)
 # ---------------------------------------------------------------
 @router.get("/{main_db_id}", response_model=List[AuditSession])
 def get_audit_history(
@@ -51,11 +58,17 @@ def get_audit_history(
     db:          Session = Depends(get_db),
     current_user         = Depends(get_current_active_user),
 ):
+    """
+    Get the full edit history for a specific record, grouped by session.
+
+    Each session represents one submit event and contains all field
+    changes made together at that time.
+    """
     return crud_audit.get_audit_history_by_record(db=db, main_db_id=main_db_id)
 
 
 # ---------------------------------------------------------------
-# GET — Lahat ng edits ng isang user
+# GET — All edits made by a specific user
 # ---------------------------------------------------------------
 @router.get("/by-user/{username}", response_model=List[FieldAuditLogResponse])
 def get_audit_by_user(
@@ -64,6 +77,10 @@ def get_audit_by_user(
     db:          Session = Depends(get_db),
     current_user         = Depends(get_current_active_user),
 ):
+    """
+    Get the most recent field audit log entries made by a specific user,
+    across all records. Limited to `limit` entries (default 50).
+    """
     return crud_audit.get_audit_logs_by_user(db=db, username=username, limit=limit)
 
 
@@ -76,11 +93,15 @@ def get_audit_by_session(
     db:          Session = Depends(get_db),
     current_user         = Depends(get_current_active_user),
 ):
+    """
+    Get all individual field changes that belong to a single audit
+    session, identified by its session ID.
+    """
     return crud_audit.get_audit_logs_by_session(db=db, session_id=session_id)
 
 
 # ---------------------------------------------------------------
-# GET — Count ng edits ng isang record (para sa badge sa UI)
+# GET — Edit count for a record (used for the UI badge)
 # ---------------------------------------------------------------
 @router.get("/count/{main_db_id}", response_model=dict)
 def get_audit_count(
@@ -88,5 +109,9 @@ def get_audit_count(
     db:          Session = Depends(get_db),
     current_user         = Depends(get_current_active_user),
 ):
+    """
+    Get the total number of field-level changes recorded for a record.
+    Used to display an edit-count badge in the UI.
+    """
     count = crud_audit.get_audit_count_by_record(db=db, main_db_id=main_db_id)
     return {"main_db_id": main_db_id, "total_changes": count}

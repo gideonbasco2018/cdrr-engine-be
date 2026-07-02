@@ -1,8 +1,5 @@
 # app/api/routes/closed_tasks.py
-"""
-Closed Tasks Routes
-Permanently close workflow tasks — this action cannot be undone.
-"""
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from typing import List

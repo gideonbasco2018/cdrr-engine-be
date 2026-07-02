@@ -1,22 +1,29 @@
+# app/api/routes/doc_type_released.py
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+
 from typing import Optional
 
-from app.db.session import get_db  # ✅ fixed import
-from app.core.deps import get_current_active_user  # add if auth is needed
-
+from app.core.database import get_db
+from app.core.deps import get_current_active_user
+from app.crud.doc_type_released import get_doc_type_released_rows
 from app.schemas.doc_type_released import (
     DocTypeReleasedResponse,
     YearSummaryResponse,
 )
 
 router = APIRouter(
-    prefix="/api/doc-type-released",  # consistent with other routes
+    prefix="/api/doc-type-released",
     tags=["Document Type Released"],
-    dependencies=[Depends(get_current_active_user)],  # add if auth is needed
+    dependencies=[Depends(get_current_active_user)],
 )
 
+
+# ─────────────────────────────────────────────
+# GET /api/doc-type-released/
+# Yearly breakdown of released documents per doc type
+# ─────────────────────────────────────────────
 
 @router.get("/", response_model=DocTypeReleasedResponse)
 def get_doc_type_released(
@@ -25,38 +32,24 @@ def get_doc_type_released(
     year_from: Optional[int] = Query(None, description="Start year"),
     year_to: Optional[int] = Query(None, description="End year"),
 ):
-    filters = [
-        "DB_TYPE_DOC_RELEASED IS NOT NULL",
-        "DB_TYPE_DOC_RELEASED != ''",
-        "DB_DATE_RECEIVED_CENT IS NOT NULL",
-        "DB_DATE_RECEIVED_CENT != ''",
-    ]
-    params: dict = {}
+    """
+    Get yearly summary of released documents grouped by doc type.
 
-    if app_type:
-        filters.append("DB_APP_TYPE = :app_type")
-        params["app_type"] = app_type
-    if year_from:
-        filters.append("YEAR(STR_TO_DATE(DB_DATE_RECEIVED_CENT, '%Y-%m-%d')) >= :year_from")
-        params["year_from"] = year_from
-    if year_to:
-        filters.append("YEAR(STR_TO_DATE(DB_DATE_RECEIVED_CENT, '%Y-%m-%d')) <= :year_to")
-        params["year_to"] = year_to
+    Returns a list of unique doc types (for dynamic table columns) plus
+    a per-year breakdown showing total released, count per doc type,
+    and CPR release rate.
 
-    where = "WHERE " + " AND ".join(filters)
+    Optional filters:
+    - app_type: restrict to a specific DB_APP_TYPE
+    - year_from / year_to: restrict to a year range (inclusive)
 
-    sql = text(f"""
-        SELECT
-            YEAR(STR_TO_DATE(DB_DATE_RECEIVED_CENT, '%Y-%m-%d')) AS year,
-            DB_TYPE_DOC_RELEASED                            AS doc_type,
-            COUNT(*)                                        AS total
-        FROM main_db
-        {where}
-        GROUP BY year, doc_type
-        ORDER BY year ASC, doc_type ASC
-    """)
+    Rows with missing/blank doc type or unparseable DB_DATE_RECEIVED_CENT
+    are excluded from the aggregation.
+    """
+    rows = get_doc_type_released_rows(
+        db=db, app_type=app_type, year_from=year_from, year_to=year_to
+    )
 
-    rows = db.execute(sql, params).fetchall()
     doc_types = sorted({r.doc_type for r in rows if r.doc_type})
 
     year_map: dict = {}

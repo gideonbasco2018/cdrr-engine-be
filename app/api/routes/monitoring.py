@@ -1,3 +1,5 @@
+# app/api/routes/monitoring.py
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -105,6 +107,13 @@ def get_all_records(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """
+    Get a paginated, sortable list of all task records across users.
+
+    Supports filtering by user, date range, application status,
+    partial DTN search, application step, and a DTN-embedded date
+    range (based on the first 8 digits of DB_DTN).
+    """
     result = crud_monitoring.get_all_records(
         db=db,
         page=page,
@@ -128,12 +137,13 @@ def get_groups(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """Get all groups, ordered by name, for use in filter dropdowns."""
     groups = db.query(Group).order_by(Group.name).all()
     return [{"id": g.id, "name": g.name} for g in groups]
 
 
 # -----------------------------
-# SEAN Release endpoints
+# Release endpoints
 # -----------------------------
 @router.get(
     "/release",
@@ -155,6 +165,13 @@ def get_release(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """
+    Get a paginated, sortable list of release records from MainDB.
+
+    Supports free-text search plus filters on application status,
+    document type released, release date range, and SECPA expiry
+    date range.
+    """
     result = crud_monitoring.get_release_records(
         db=db,
         page=page,
@@ -180,6 +197,7 @@ def get_app_status_types(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """Get the distinct set of application status values, for filter dropdowns."""
     values = crud_monitoring.get_release_app_statuses(db)
     return {"app_status_types": values}
 
@@ -192,6 +210,7 @@ def get_doc_types(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """Get the distinct set of document type released values, for filter dropdowns."""
     values = crud_monitoring.get_release_doc_types(db)
     return {"doc_types": values}
 
@@ -207,6 +226,7 @@ def overview_summary_endpoint(          # ← renamed: was get_overview_summary
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """Get the KPI counts displayed on the Monitoring Overview cards."""
     return crud_monitoring.get_overview_summary(db)
 
 
@@ -274,6 +294,14 @@ def processing_trend_endpoint(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """
+    Get received vs released counts over time, grouped by month or year.
+
+    Supports restricting to a single year, a custom date range on
+    DB_DATE_RECEIVED_CENT, and the same set of categorical filters
+    (doc type, processing type, entry type, app status, app type)
+    used by the processing breakdown endpoint.
+    """
     return crud_monitoring.get_processing_trend(
         db=db,
         year=year,
@@ -358,6 +386,11 @@ def summary_endpoint(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """
+    Get carry over, received, processed, and pending counts broken
+    down per application type, within the given date range and
+    optional categorical filters.
+    """
     return crud_monitoring.get_summary(
         db=db,
         date_from=date_from,
@@ -390,6 +423,12 @@ def application_status_overview_endpoint(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """
+    Get the count of IN PROGRESS applications grouped by workflow step,
+    optionally filtered by user, group, year, date range, and the
+    standard categorical filters (doc type, processing type, entry
+    type, app status, app type).
+    """
     return crud_monitoring.get_application_status_overview(
         db=db,
         user_id=user_id,

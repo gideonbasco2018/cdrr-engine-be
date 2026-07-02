@@ -1,8 +1,5 @@
-"""
-Authentication Routes - COMPLETE
-Login, registration, and user management endpoints
-UPDATED: Supports many-to-many user-groups safely + Password Reset
-"""
+# app/api/routes/auth.py
+
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm

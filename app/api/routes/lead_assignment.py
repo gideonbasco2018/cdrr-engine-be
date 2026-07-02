@@ -15,12 +15,14 @@ from app.crud.lead_assignment import (
     create_lead_assignment,
     update_lead_assignment,
     delete_lead_assignment,
+    batch_create_lead_assignments,
 )
 from app.schemas.lead_assignment import (
     LeadAssignmentCreate,
     LeadAssignmentUpdate,
     LeadAssignmentResponse,
     LeadAssignmentListResponse,
+    LeadAssignmentBatchCreate,
 )
 
 router = APIRouter(
@@ -40,6 +42,12 @@ def list_lead_assignments(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """
+    Get a paginated list of lead assignments.
+
+    Supports filtering by lead user, member user, lead role
+    ("Checker" or "Supervisor"), and active status.
+    """
     skip = (page - 1) * page_size
     data, total = get_all_lead_assignments(
         db=db,
@@ -66,6 +74,7 @@ def get_lead_assignment(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """Get a single lead assignment by its ID."""
     assignment = get_lead_assignment_by_id(db, assignment_id)
     if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found")
@@ -78,6 +87,7 @@ def create_assignment(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """Create a new lead assignment, recorded under the current user."""
     return create_lead_assignment(
         db=db,
         payload=payload,
@@ -92,6 +102,7 @@ def update_assignment(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """Update an existing lead assignment by its ID."""
     assignment = update_lead_assignment(db, assignment_id, payload)
     if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found")
@@ -104,14 +115,11 @@ def delete_assignment(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """Delete a lead assignment by its ID."""
     deleted = delete_lead_assignment(db, assignment_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Assignment not found")
-    
-# app/routers/lead_assignment.py — dagdag lang ito
 
-from app.schemas.lead_assignment import LeadAssignmentBatchCreate
-from app.crud.lead_assignment     import batch_create_lead_assignments
 
 @router.post("/batch", response_model=List[LeadAssignmentResponse], status_code=201)
 def batch_create_assignments(
@@ -119,9 +127,12 @@ def batch_create_assignments(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """
+    Create multiple lead assignments in a single request, all recorded
+    under the current user as the assigner.
+    """
     return batch_create_lead_assignments(
         db=db,
         payload=payload,
         assigned_by_user_id=current_user.id,
     )
-    
