@@ -119,9 +119,17 @@ def _find_or_create_child_folder(service, parent_id: str, folder_name: str, driv
     )
     return folder["id"]
 
-def get_or_create_application_folder(db_entry_type: str, db_dtn: str) -> str:
+def get_or_create_application_folder(
+    db_entry_type: str,
+    db_dtn: str,
+    doc_category: Optional[str] = None,
+) -> str:
+    """
+    Gumawa (o hanapin) ng nested folder: ROOT / db_entry_type / db_dtn / [doc_category]
+    Returns yung folder_id ng pinaka-loob na folder.
+    """
     service = _build_service()
-    root_folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")  # ito na yung Shared Drive ID
+    root_folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
     if not root_folder_id:
         raise RuntimeError("GOOGLE_DRIVE_FOLDER_ID is not configured in .env")
 
@@ -134,5 +142,12 @@ def get_or_create_application_folder(db_entry_type: str, db_dtn: str) -> str:
     dtn_folder_id = _find_or_create_child_folder(
         service, entry_type_folder_id, db_dtn, drive_id=root_folder_id
     )
+
+    # ── Optional na sub-folder ────────────────────────────────────
+    if doc_category and doc_category.strip():
+        category_folder_id = _find_or_create_child_folder(
+            service, dtn_folder_id, doc_category.strip(), drive_id=root_folder_id
+        )
+        return category_folder_id
 
     return dtn_folder_id
