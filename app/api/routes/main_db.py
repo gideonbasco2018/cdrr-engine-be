@@ -287,17 +287,14 @@ def _apply_processing_type_filter(query, processing_type):
             query = query.filter(MainDB.DB_PROCESSING_TYPE == processing_type)
     return query
 
-
 # ---------------------
 # Routes
 # ---------------------
-
 @router.get("/", response_model=MainDBListResponse)
 def get_main_db(
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=1000),
     search: Optional[str] = Query(None),
-    # ✅ BAGO — multiple DTNs as comma-separated string
     dtns: Optional[str] = Query(None, description="Comma-separated DTN numbers, e.g. 20260319173438,20260422154843"),
     status: Optional[str] = Query(None),
     category: Optional[str] = Query(None),

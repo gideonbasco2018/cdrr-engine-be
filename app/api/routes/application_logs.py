@@ -1,8 +1,5 @@
 # app/api/routes/application_logs.py
-"""
-Application Logs Routes
-Track workflow steps and decisions for applications
-"""
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -22,13 +19,12 @@ from app.models.application_logs import ApplicationLogs
 import app.crud.notification as crud_notif
 from app.schemas.notification import NotificationCreate
 from app.crud.application_logs import toggle_star
+
 router = APIRouter(
     prefix="/api/application-logs",
     tags=["Application Logs"]
 )
 
-
-# ── I-REPLACE ang buong create_application_log() function ────────────
 @router.post("/", response_model=ApplicationLogResponse, status_code=status.HTTP_201_CREATED)
 def create_application_log(
     log_in: ApplicationLogCreate,
@@ -36,16 +32,15 @@ def create_application_log(
     db: Session = Depends(get_db)
 ):
     try:
-        # 1. Create the log (existing logic)
+      
         log = crud_logs.create(db, log_in=log_in)
 
-        # 2. If may deadline_date → agad mag-create ng notification (REAL-TIME)
         if log_in.deadline_date and log_in.user_name:
             try:
-                # Kunin ang DTN mula sa main_db
+           
                 dtn = str(log.main_db.DB_DTN) if log.main_db else f"LOG#{log.id}"
 
-                # Huwag mag-duplicate kung may existing na notification ngayon
+              
                 if not crud_notif.already_notified_today(
                     db,
                     user_name  = log_in.user_name,
@@ -64,7 +59,7 @@ def create_application_log(
                         app_log_id = log.id,
                     ))
             except Exception as notif_err:
-                # Huwag i-fail ang whole request kahit mag-error ang notification
+        
                 print(f"[Notification] Failed to create instant notification: {notif_err}")
 
         return log
@@ -301,7 +296,6 @@ def get_logs_by_dtn(
     Example:
         GET /api/application-logs?dtn=20210927134427
     """
-    # Step 1: find the main_db record that owns this DTN
     main_record = (
         db.query(MainDB)
         .filter(MainDB.DB_DTN == dtn)
@@ -314,7 +308,6 @@ def get_logs_by_dtn(
             detail=f"No main_db record found for DTN {dtn}"
         )
 
-    # Step 2: fetch logs — latest first
     logs = (
         db.query(ApplicationLogs)
         .filter(ApplicationLogs.main_db_id == main_record.DB_ID)
@@ -356,14 +349,11 @@ def reroute_application(
 ):
     from sqlalchemy import text
     from datetime import datetime
-    
-    # Check 1: Anong oras sa MySQL ngayon?
+
     mysql_now = db.execute(text("SELECT NOW()")).fetchone()[0]
-    
-    # Check 2: Anong natanggap mula frontend?
+
     received_at = log_in.rerouted_at
     
-    # Check 3: Anong oras sa Python server?
     python_now = datetime.now()
     
     print("="*50)

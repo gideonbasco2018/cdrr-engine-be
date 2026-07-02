@@ -1,6 +1,4 @@
-# ============================================================
-# FILE: app/api/routes/menu_permissions.py
-# ============================================================
+# app/api/routes/menu_permissions.py
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -16,7 +14,7 @@ from app.schemas.menu_permissions import (
     MenuItemListResponse
 )
 
-# ✅ Router with prefix, tags, and auth dependency
+# Router with prefix, tags, and auth dependency
 router = APIRouter(
     prefix="/api/menu-permissions",
     tags=["Menu Permissions"],

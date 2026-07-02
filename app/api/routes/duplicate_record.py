@@ -33,11 +33,11 @@ def get_duplicates(
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    Tumukoy ng totoong duplicate records sa buong main_db table
-    (hindi lang sa current page) — base sa DTN o Registration No.
+    Detect true duplicate records across the entire main_db table
+    (not just the current page) — based on DTN or Registration No.
 
-    Pinaginate ang `records` (default 50/page, max 200/page) para
-    hindi sumabog ang response size sa malaking dataset.
+    The `records` field is paginated (default 50/page, max 200/page)
+    to keep the response size manageable on large datasets.
     """
     dupe_groups, records, total_count = crud_duplicate.get_duplicate_records(
         db, by, page=page, page_size=page_size

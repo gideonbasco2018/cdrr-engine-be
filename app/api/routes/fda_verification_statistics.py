@@ -1,7 +1,5 @@
-"""
-FDA Verification Portal - Statistics API
-Dashboard statistics and metrics
-"""
+# app/api/routes/fda_verification_statistics.py
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
 from datetime import datetime, date, timedelta
@@ -16,7 +14,6 @@ router = APIRouter(
 )
 
 
-# ==================== DASHBOARD STATISTICS ====================
 @router.get("/dashboard")
 async def get_dashboard_statistics(
     uploaded_by: Optional[str] = Query(None, description="Filter by uploader username")
@@ -49,7 +46,6 @@ async def get_dashboard_statistics(
         )
 
 
-# ==================== UPLOAD HISTORY ====================
 @router.get("/upload-history")
 async def get_upload_history(
     uploaded_by: Optional[str] = Query(None, description="Filter by uploader username"),
@@ -75,8 +71,6 @@ async def get_upload_history(
             detail=f"Failed to retrieve upload history: {str(e)}"
         )
 
-
-# ==================== EXPIRY ANALYSIS ====================
 @router.get("/expiry-analysis")
 async def get_expiry_analysis(
     uploaded_by: Optional[str] = Query(None, description="Filter by uploader username")

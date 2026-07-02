@@ -1,10 +1,5 @@
-"""
-Group Management Routes
-CRUD for groups + assign/remove users to groups
-Admin / SuperAdmin only
+# app/api/routes/groups.py
 
-Uses crud.group for all DB operations (consistent with routes/auth.py → crud.user)
-"""
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List

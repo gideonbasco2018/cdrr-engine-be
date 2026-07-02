@@ -1,4 +1,5 @@
 # app/api/routes/fda_verification.py
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -14,7 +15,7 @@ from app.crud import fda_verification as crud
 router = APIRouter(
     prefix="/api/fda",
     tags=["FDA Verification"],
-    dependencies=[Depends(get_current_active_user)]  # 🔐 LOGIN REQUIRED BY DEFAULT
+    dependencies=[Depends(get_current_active_user)]  
 )
 
 

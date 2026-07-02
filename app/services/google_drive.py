@@ -83,3 +83,56 @@ def delete_file_from_drive(file_id: str) -> bool:
     except Exception as exc:
         print(f"[GDrive] delete_file error for {file_id}: {exc}")
         return False
+def _find_or_create_child_folder(service, parent_id: str, folder_name: str, drive_id: str) -> str:
+    query = (
+        f"name = '{folder_name}' "
+        f"and mimeType = 'application/vnd.google-apps.folder' "
+        f"and '{parent_id}' in parents "
+        f"and trashed = false"
+    )
+    results = (
+        service.files()
+        .list(
+            q=query,
+            corpora="drive",
+            driveId=drive_id,
+            includeItemsFromAllDrives=True,
+            supportsAllDrives=True,
+            fields="files(id, name)",
+        )
+        .execute()
+    )
+
+    existing = results.get("files", [])
+    if existing:
+        return existing[0]["id"]
+
+    folder_metadata = {
+        "name": folder_name,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [parent_id],
+    }
+    folder = (
+        service.files()
+        .create(body=folder_metadata, fields="id", supportsAllDrives=True)
+        .execute()
+    )
+    return folder["id"]
+
+def get_or_create_application_folder(db_entry_type: str, db_dtn: str) -> str:
+    service = _build_service()
+    root_folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")  # ito na yung Shared Drive ID
+    if not root_folder_id:
+        raise RuntimeError("GOOGLE_DRIVE_FOLDER_ID is not configured in .env")
+
+    db_entry_type = (db_entry_type or "Unknown").strip()
+    db_dtn = (db_dtn or "Unknown").strip()
+
+    entry_type_folder_id = _find_or_create_child_folder(
+        service, root_folder_id, db_entry_type, drive_id=root_folder_id
+    )
+    dtn_folder_id = _find_or_create_child_folder(
+        service, entry_type_folder_id, db_dtn, drive_id=root_folder_id
+    )
+
+    return dtn_folder_id

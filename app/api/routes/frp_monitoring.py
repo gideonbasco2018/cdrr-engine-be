@@ -1,4 +1,5 @@
 # app/api/routes/frp_monitoring.py
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -31,6 +32,7 @@ def get_kpi_summary(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """Get top-level KPI summary numbers for the FRP monitoring dashboard."""
     return crud.get_kpi_summary(db)
 
 
@@ -39,6 +41,7 @@ def get_status_distribution(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """Get the breakdown of applications by their current status."""
     return crud.get_status_distribution(db)
 
 
@@ -47,6 +50,7 @@ def get_doc_types(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """Get the breakdown of applications by document type."""
     return crud.get_doc_types(db)
 
 
@@ -59,6 +63,10 @@ def get_top_countries(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """
+    Get the top countries associated with a given supply-chain entity
+    type (manufacturer, trader, importer, distributor, or repacker).
+    """
     return crud.get_top_countries(db, entity_type=entity_type)
 
 
@@ -67,6 +75,7 @@ def get_product_categories(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """Get the breakdown of applications by product category."""
     return crud.get_product_categories(db)
 
 
@@ -75,6 +84,7 @@ def get_compliance(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """Get compliance-related summary metrics for FRP monitoring."""
     return crud.get_compliance(db)
 
 
@@ -84,6 +94,10 @@ def get_cpr_trend(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """
+    Get the CPR release trend over time, optionally filtered to a
+    specific year.
+    """
     return crud.get_cpr_trend(db, year=year)
 
 
@@ -93,6 +107,7 @@ def get_recent_activity(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """Get the most recent application activity, limited to `limit` entries."""
     return crud.get_recent_activity(db, limit=limit)
 
 
@@ -101,6 +116,7 @@ def get_alerts(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """Get active alerts for the FRP monitoring dashboard."""
     return crud.get_alerts(db)
 
 
@@ -109,6 +125,7 @@ def get_app_status_breakdown(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """Get application counts grouped by status, used for dashboard charts."""
     return crud.get_app_status_breakdown(db)
 
 
@@ -117,6 +134,7 @@ def get_reviewer_workload(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """Get the current workload distribution across reviewers."""
     return crud.get_reviewer_workload(db)
 
 
@@ -182,6 +200,16 @@ def get_applications_list(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
+    """
+    Get a paginated, filterable list of FRP applications.
+
+    Supports quick presets (`filter_type`), free-text search, a period
+    filter by received/released month, and a wide set of advanced filters
+    covering general application fields (status, category, doc type,
+    upload/received/released date ranges) as well as supply-chain entity
+    fields (manufacturer, trader, importer, distributor, repacker and
+    their countries).
+    """
     return crud.get_applications_list(
         db,
         filter_type=filter_type,

@@ -1,12 +1,8 @@
-# ============================================================
-# FILE: app/api/routes/bulk_upload_history.py
-# ============================================================
+# app/api/routes/bulk_upload_history.py
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional
-from datetime import datetime
+from typing import Optional
 
 from app.core.database import get_db
 from app.core.deps import get_current_active_user
@@ -16,91 +12,17 @@ from app.crud.bulk_upload_history import (
     get_upload_history_by_id,
     get_history_records_paginated,
 )
-
+from app.schemas.bulk_upload_history import (
+    UploadHistoryCreate,
+    UploadHistoryResponse,
+    PaginatedHistoryResponse,
+    PaginatedRecordsResponse,
+)
 router = APIRouter(
     prefix="/api/bulk-upload-history",
     tags=["Doctrack - Bulk Upload History"],
     dependencies=[Depends(get_current_active_user)],
 )
-
-
-# ─────────────────────────────────────────────
-# Schemas
-# ─────────────────────────────────────────────
-
-class InsertedRecordEntry(BaseModel):
-    rowNum:  int
-    rsn:     str
-    remarks: str = ""
-
-
-class FailedRecordEntry(BaseModel):
-    rowNum:  int = 0 
-    rsn:     str
-    remarks: str = ""
-    reason:  str
-
-
-class UploadHistoryCreate(BaseModel):
-    fileName:        str  = Field(...,    description="Name of the uploaded .xlsx file")
-    uploadedBy:      str  = Field(...,    description="Username of the uploader")  # ✅ String
-    insertedCount:   int  = Field(...,    description="How many logs were successfully inserted")
-    failedCount:     int  = Field(...,    description="How many rows were skipped")
-    insertedRecords: List[InsertedRecordEntry] = Field(default=[], description="Successfully inserted rows")
-    failedRecords:   List[FailedRecordEntry]   = Field(default=[], description="Skipped rows with reasons")
-
-
-class InsertedRecordResponse(BaseModel):
-    recordID:  int
-    historyID: int
-    rowNum:    int
-    rsn:       str
-    remarks:   Optional[str]
-
-    class Config:
-        from_attributes = True
-
-
-class UploadHistoryResponse(BaseModel):
-    historyID:     int
-    fileName:      str
-    uploadedAt:    datetime
-    uploadedBy:    str                      # ✅ String
-    insertedCount: int
-    failedCount:   int
-    failedRecords: List[Dict[str, Any]]
-    records:       List[InsertedRecordResponse] = []
-
-    class Config:
-        from_attributes = True
-
-
-class UploadHistoryListItem(BaseModel):
-    """Lighter version for list view — no child records"""
-    historyID:     int
-    fileName:      str
-    uploadedAt:    datetime
-    uploadedBy:    str                      # ✅ String
-    insertedCount: int
-    failedCount:   int
-
-    class Config:
-        from_attributes = True
-
-
-class PaginatedHistoryResponse(BaseModel):
-    total:  int
-    limit:  Optional[int]
-    offset: int
-    data:   List[UploadHistoryListItem]
-
-
-class PaginatedRecordsResponse(BaseModel):
-    total:     int
-    limit:     int
-    offset:    int
-    historyID: int
-    data:      List[InsertedRecordResponse]
 
 
 # ─────────────────────────────────────────────
@@ -154,7 +76,7 @@ def save_upload_history(
 def list_upload_history(
     limit:       Optional[int] = Query(default=None),
     offset:      int           = Query(default=0,  ge=0),
-    uploaded_by: Optional[str] = Query(default=None, description="Filter by username"), 
+    uploaded_by: Optional[str] = Query(default=None, description="Filter by username"),
     db: Session = Depends(get_db),
 ):
     """
