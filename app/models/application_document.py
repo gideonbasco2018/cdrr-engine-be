@@ -16,10 +16,9 @@ class ApplicationDocument(Base):
     main_db_id = Column(
         Integer,
         ForeignKey("main_db.DB_ID", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True, 
         index=True,
     )
-
     # Google Drive info
     drive_file_id   = Column(String(255), nullable=False)           # GDrive file ID
     drive_file_url  = Column(Text, nullable=False)                  # webViewLink
@@ -51,6 +50,8 @@ class ApplicationDocument(Base):
 
     # Relationship
     main_db = relationship("MainDB", back_populates="application_documents")
+
+   
 
     def __repr__(self):
         return (

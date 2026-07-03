@@ -45,7 +45,7 @@ ALLOWED_MIME_TYPES = {
 
 @router.post("/upload", response_model=UploadDocumentResponse, status_code=201)
 async def upload_document(
-    main_db_id: int = Form(...),
+    main_db_id: int | None = Form(None),  
     db_entry_type: str = Form(...),
     db_dtn: str = Form(...),
     doc_category: str | None = Form(None),
@@ -164,7 +164,7 @@ def delete_document(
                     "schema": {
                         "type": "object",
                         "properties": {
-                            "main_db_id": {"type": "integer"},
+                            "main_db_id": {"type": "integer", "nullable": True},
                             "db_entry_type": {"type": "string"},
                             "db_dtn": {"type": "string"},
                             "doc_category": {"type": "string", "nullable": True},
@@ -176,7 +176,8 @@ def delete_document(
                                 },
                             },
                         },
-                        "required": ["main_db_id", "db_entry_type", "db_dtn", "files"],
+                        
+                        "required": ["db_entry_type", "db_dtn", "files"],
                     }
                 }
             },
@@ -184,10 +185,10 @@ def delete_document(
     },
 )
 async def upload_documents_batch(
-    main_db_id: Annotated[int, Form(...)],
     db_entry_type: Annotated[str, Form(...)],
     db_dtn: Annotated[str, Form(...)],
     files: Annotated[List[UploadFile], File(...)],
+    main_db_id: Annotated[int | None, Form()] = None,   
     doc_category: Annotated[str | None, Form()] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
