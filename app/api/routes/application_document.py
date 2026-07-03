@@ -287,3 +287,13 @@ async def upload_documents_batch(
         failed=failed,
         results=results,
     )
+
+@router.get("/by-dtn/{db_dtn}", response_model=ApplicationDocumentListResponse)
+def list_documents_by_dtn(
+    db_dtn: str,
+    db: Session = Depends(get_db),
+):
+    """Return all non-deleted documents linked to a given DTN, across
+    all entry types and document categories."""
+    docs = crud_doc.get_documents_by_dtn(db, db_dtn)
+    return ApplicationDocumentListResponse(data=docs, total=len(docs))

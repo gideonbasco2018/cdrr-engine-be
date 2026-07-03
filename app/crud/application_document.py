@@ -84,3 +84,17 @@ def get_existing_folder_id(
 
     doc = q.first()
     return doc.drive_folder_id if doc else None
+
+def get_documents_by_dtn(
+    db: Session,
+    db_dtn: str,
+    include_deleted: bool = False,
+) -> list[ApplicationDocument]:
+    """Kunin lahat ng non-deleted documents na naka-link sa isang DTN,
+    kahit iba-iba ang entry_type/doc_category nila."""
+    q = db.query(ApplicationDocument).filter(
+        ApplicationDocument.db_dtn == db_dtn
+    )
+    if not include_deleted:
+        q = q.filter(ApplicationDocument.is_deleted == 0)
+    return q.order_by(ApplicationDocument.created_at.desc()).all()
