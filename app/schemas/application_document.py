@@ -6,7 +6,7 @@ from datetime import datetime
 
 
 class ApplicationDocumentBase(BaseModel):
-    main_db_id:        int
+    main_db_id:        Optional[int] = None
     db_entry_type:     str
     db_dtn:            str
     doc_category:      Optional[str] = None
