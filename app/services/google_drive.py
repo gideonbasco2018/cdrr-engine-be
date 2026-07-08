@@ -54,7 +54,7 @@ def upload_file_to_drive(
             body=metadata,
             media_body=media,
             fields="id, webViewLink, parents",
-            supportsAllDrives=True,  
+            supportsAllDrives=True,
         )
         .execute()
     )
@@ -77,12 +77,14 @@ def delete_file_from_drive(file_id: str) -> bool:
         service = _build_service()
         service.files().delete(
             fileId=file_id,
-            supportsAllDrives=True, 
+            supportsAllDrives=True,
         ).execute()
         return True
     except Exception as exc:
         print(f"[GDrive] delete_file error for {file_id}: {exc}")
         return False
+
+
 def _find_or_create_child_folder(service, parent_id: str, folder_name: str, drive_id: str) -> str:
     query = (
         f"name = '{folder_name}' "
@@ -119,6 +121,7 @@ def _find_or_create_child_folder(service, parent_id: str, folder_name: str, driv
     )
     return folder["id"]
 
+
 def get_or_create_application_folder(
     db_entry_type: str,
     db_dtn: str,
@@ -127,6 +130,27 @@ def get_or_create_application_folder(
     """
     Gumawa (o hanapin) ng nested folder: ROOT / db_entry_type / db_dtn / [doc_category]
     Returns yung folder_id ng pinaka-loob na folder.
+
+    NOTE: Existing function — HINDI ginalaw ang behavior. Ginawa na lang siyang
+    thin wrapper sa ibaba papuntang bagong `get_or_create_folder_path`, pero
+    parehas pa rin ang input/output kontrata niya.
+    """
+    category_parts = [doc_category] if doc_category and doc_category.strip() else []
+    return get_or_create_folder_path(db_entry_type, db_dtn, category_parts)
+
+
+# ── BAGO: generalized version na sumusuporta sa arbitrary-depth na subfolders ──
+def get_or_create_folder_path(
+    db_entry_type: str,
+    db_dtn: str,
+    category_parts: Optional[list[str]] = None,
+) -> str:
+    """
+    Gumawa (o hanapin) ng nested folder: ROOT / db_entry_type / db_dtn / cat1 / cat2 / ...
+    Suporta na sa multi-level na subfolders (galing sa buong-folder upload,
+    kung saan hindi natin alam kung ilang level ang nested subfolders).
+
+    Returns yung folder_id ng pinaka-loob (deepest) na folder.
     """
     service = _build_service()
     root_folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
@@ -136,18 +160,18 @@ def get_or_create_application_folder(
     db_entry_type = (db_entry_type or "Unknown").strip()
     db_dtn = (db_dtn or "Unknown").strip()
 
-    entry_type_folder_id = _find_or_create_child_folder(
+    current_id = _find_or_create_child_folder(
         service, root_folder_id, db_entry_type, drive_id=root_folder_id
     )
-    dtn_folder_id = _find_or_create_child_folder(
-        service, entry_type_folder_id, db_dtn, drive_id=root_folder_id
+    current_id = _find_or_create_child_folder(
+        service, current_id, db_dtn, drive_id=root_folder_id
     )
 
-    # ── Optional na sub-folder ────────────────────────────────────
-    if doc_category and doc_category.strip():
-        category_folder_id = _find_or_create_child_folder(
-            service, dtn_folder_id, doc_category.strip(), drive_id=root_folder_id
-        )
-        return category_folder_id
+    for part in (category_parts or []):
+        part = (part or "").strip()
+        if part:
+            current_id = _find_or_create_child_folder(
+                service, current_id, part, drive_id=root_folder_id
+            )
 
-    return dtn_folder_id
+    return current_id
