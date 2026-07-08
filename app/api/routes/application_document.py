@@ -351,6 +351,7 @@ async def upload_documents_folder(
     files: Annotated[List[UploadFile], File(...)],
     relative_paths: Annotated[List[str], Form(...)],
     main_db_id: Annotated[int | None, Form()] = None,
+    batch_id: Annotated[str | None, Form()] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -378,7 +379,7 @@ async def upload_documents_folder(
             detail="'files' and 'relative_paths' must have the same length.",
         )
 
-    batch_id = str(uuid.uuid4())
+    batch_id = (batch_id or "").strip() or str(uuid.uuid4()) 
     results: list[BatchUploadResult] = []
     folder_cache: dict[str, str] = {}  # (entry_type|dtn|category) -> drive folder_id
 
