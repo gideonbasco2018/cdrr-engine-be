@@ -33,20 +33,93 @@ def _build_service():
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
+def folder_exists(folder_id: str) -> bool:
+    """I-verify kung buhay pa (hindi na-delete/hindi trashed) ang isang Drive folder ID."""
+    if not folder_id:
+        return False
+    try:
+        service = _build_service()
+        meta = (
+            service.files()
+            .get(fileId=folder_id, fields="id, trashed", supportsAllDrives=True)
+            .execute()
+        )
+        return not meta.get("trashed", False)
+    except Exception:
+        return False
+
+
+def find_file_in_folder(filename: str, folder_id: str) -> Optional[str]:
+    """
+    Hanapin ang file ID kung may existing (hindi pa trashed) na file na
+    PAREHONG PANGALAN sa loob ng isang partikular na Drive folder.
+    Ginagamit para ma-detect kung dapat i-overwrite/update na lang sa
+    halip na gumawa ng duplicate.
+    """
+    if not folder_id:
+        return None
+    try:
+        service = _build_service()
+        safe_name = filename.replace("'", "\\'")
+        query = (
+            f"name = '{safe_name}' "
+            f"and '{folder_id}' in parents "
+            f"and trashed = false"
+        )
+        results = (
+            service.files()
+            .list(
+                q=query,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+                fields="files(id, name)",
+            )
+            .execute()
+        )
+        files = results.get("files", [])
+        return files[0]["id"] if files else None
+    except Exception as exc:
+        print(f"[GDrive] find_file_in_folder error for '{filename}': {exc}")
+        return None
+
+
 def upload_file_to_drive(
     file_bytes: bytes,
     filename: str,
     mime_type: str,
     folder_id: Optional[str] = None,
+    existing_file_id: Optional[str] = None,
 ) -> dict:
+    """
+    Kung may `existing_file_id`, ia-UPDATE (overwrite) ang laman ng file na
+    iyon — mananatili ang parehong Drive file ID at share link. Kung wala,
+    gagawa ng bagong file gaya ng dati.
+    """
     service   = _build_service()
     folder_id = folder_id or os.getenv("GOOGLE_DRIVE_FOLDER_ID")
+
+    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=False)
+
+    if existing_file_id:
+        updated = (
+            service.files()
+            .update(
+                fileId=existing_file_id,
+                media_body=media,
+                fields="id, webViewLink, parents",
+                supportsAllDrives=True,
+            )
+            .execute()
+        )
+        return {
+            "file_id":   updated["id"],
+            "file_url":  updated.get("webViewLink", ""),
+            "folder_id": (updated.get("parents") or [folder_id])[0],
+        }
 
     metadata: dict = {"name": filename}
     if folder_id:
         metadata["parents"] = [folder_id]
-
-    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=False)
 
     created = (
         service.files()
