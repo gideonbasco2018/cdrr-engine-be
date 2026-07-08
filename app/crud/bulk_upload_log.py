@@ -1,5 +1,7 @@
 # app/crud/bulk_upload_log.py
 
+from datetime import datetime
+
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
@@ -52,6 +54,8 @@ def _apply_log_filters(
     db_dtn: str | None = None,
     db_entry_type: str | None = None,
     batch_id: str | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
 ):
     if status:
         query = query.filter(BulkUploadLog.status == status)
@@ -63,6 +67,10 @@ def _apply_log_filters(
         query = query.filter(BulkUploadLog.db_entry_type == db_entry_type)
     if batch_id:
         query = query.filter(BulkUploadLog.batch_id == batch_id)
+    if date_from:
+        query = query.filter(BulkUploadLog.created_at >= date_from)
+    if date_to:
+        query = query.filter(BulkUploadLog.created_at <= date_to)
     return query
 
 
@@ -74,13 +82,16 @@ def get_logs(
     db_dtn: str | None = None,
     db_entry_type: str | None = None,
     batch_id: str | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[BulkUploadLog]:
     """
     Pangkalahatang listahan ng logs (success + failed), may optional filters:
     status ('success'/'failed'), uploader (exact match sa username), DTN
-    (partial match), entry type, o batch_id. Pinaka-recent muna.
+    (partial match), entry type, batch_id, o date range (date_from/date_to,
+    parehong inclusive, batay sa `created_at`). Pinaka-recent muna.
 
     Pag successful ang isang log at may naka-link na ApplicationDocument,
     dinadagdagan natin ito ng drive_file_url/drive_file_id (transient
@@ -94,6 +105,8 @@ def get_logs(
         db_dtn=db_dtn,
         db_entry_type=db_entry_type,
         batch_id=batch_id,
+        date_from=date_from,
+        date_to=date_to,
     )
     logs = (
         query.order_by(desc(BulkUploadLog.created_at))
@@ -130,6 +143,8 @@ def count_logs(
     db_dtn: str | None = None,
     db_entry_type: str | None = None,
     batch_id: str | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
 ) -> int:
     query = db.query(BulkUploadLog)
     query = _apply_log_filters(
@@ -139,6 +154,8 @@ def count_logs(
         db_dtn=db_dtn,
         db_entry_type=db_entry_type,
         batch_id=batch_id,
+        date_from=date_from,
+        date_to=date_to,
     )
     return query.count()
 
