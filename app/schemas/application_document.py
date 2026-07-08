@@ -63,3 +63,6 @@ class BatchUploadResponse(BaseModel):
     succeeded: int
     failed: int
     results: list[BatchUploadResult]
+    # ── BAGO: optional lang, backward-compatible sa existing upload-batch ──
+    # Populated lang sa upload-folder, para makuha yung logs sa GET endpoint.
+    batch_id: Optional[str] = None
