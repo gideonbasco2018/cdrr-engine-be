@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     enchant-2 \
     tesseract-ocr \
     libzbar0 \
+    unrar-free \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy and install Python dependencies

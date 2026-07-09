@@ -4,6 +4,7 @@ import io
 import mimetypes
 import uuid
 import zipfile
+import rarfile
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -43,8 +44,10 @@ router = APIRouter(
     dependencies=[Depends(get_current_active_user)],
 )
 
-# ── 5 MB hard limit ──────────────────────────────────────────────────
-MAX_FILE_SIZE = 5 * 1024 * 1024
+#  ── 5 MB hard limit ──────────────────────────────────────────────────
+# MAX_FILE_SIZE = 5 * 1024 * 1024
+# ── 150 MB hard limit ──────────────────────────────────────────────────
+MAX_FILE_SIZE = 150 * 1024 * 1024
 
 ALLOWED_MIME_TYPES = {
     "application/pdf",
@@ -56,6 +59,11 @@ ALLOWED_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/vnd.ms-excel",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.rar",
+    "application/x-rar-compressed",
+    "application/x-rar",
 }
 
 def _guess_mime(filename: str) -> str:
@@ -586,10 +594,12 @@ async def upload_documents_folder(
             doc_category = "/".join(category_parts) if category_parts else None
 
             file_bytes = await file.read()
-            is_zip = file.filename.lower().endswith(".zip")
+            lower_name = file.filename.lower()
+            is_zip = lower_name.endswith(".zip")
+            is_rar = lower_name.endswith(".rar")
 
-            # ── Not a zip: normal file, just goes through the same validate/upload ──
-            if not is_zip:
+            # ── Not an archive: normal file, same validate/upload path ──
+            if not is_zip and not is_rar:
                 await _handle_entry(
                     file_bytes=file_bytes,
                     filename=file.filename,
@@ -644,6 +654,8 @@ async def upload_documents_folder(
                             category_parts=inner_category_parts,
                         )
 
+
+
             except zipfile.BadZipFile:
                 error_msg = "Invalid or corrupted zip file."
                 _log(
@@ -654,6 +666,62 @@ async def upload_documents_folder(
                 results.append(BatchUploadResult(
                     filename=file.filename, success=False, error=error_msg,
                 ))
+            
+            # ── RAR: extract in memory, treat each entry as its own file ──
+            if is_rar:
+                try:
+                    with rarfile.RarFile(io.BytesIO(file_bytes)) as rf:
+                        entries = [
+                            info for info in rf.infolist()
+                            if not info.isdir()
+                            and not info.filename.startswith("__MACOSX")
+                            and not info.filename.rsplit("/", 1)[-1].startswith(".")
+                        ]
+
+                        if not entries:
+                            error_msg = "Rar file is empty or has no usable files."
+                            _log(
+                                db_dtn=db_dtn, doc_category=doc_category, relative_path=rel_path,
+                                filename=file.filename, status="failed", error_message=error_msg,
+                                mime_type=file.content_type, file_size_bytes=len(file_bytes),
+                            )
+                            results.append(BatchUploadResult(
+                                filename=file.filename, success=False, error=error_msg,
+                            ))
+                            continue
+
+                        for info in entries:
+                            inner_parts = [p for p in info.filename.replace("\\", "/").split("/") if p]
+                            inner_filename = inner_parts[-1]
+                            inner_category_parts = category_parts + inner_parts[:-1]
+                            inner_category = (
+                                "/".join(inner_category_parts) if inner_category_parts else None
+                            )
+                            inner_bytes = rf.read(info)
+                            inner_mime = _guess_mime(inner_filename)
+                            inner_rel_path = "/".join([db_dtn, *inner_category_parts, inner_filename])
+
+                            await _handle_entry(
+                                file_bytes=inner_bytes,
+                                filename=inner_filename,
+                                content_type=inner_mime,
+                                rel_path=inner_rel_path,
+                                db_dtn=db_dtn,
+                                doc_category=inner_category,
+                                category_parts=inner_category_parts,
+                            )
+
+                except rarfile.Error as exc:
+                    error_msg = f"Invalid or corrupted rar file: {exc}"
+                    _log(
+                        db_dtn=db_dtn, doc_category=doc_category, relative_path=rel_path,
+                        filename=file.filename, status="failed", error_message=error_msg,
+                        mime_type=file.content_type, file_size_bytes=len(file_bytes),
+                    )
+                    results.append(BatchUploadResult(
+                        filename=file.filename, success=False, error=error_msg,
+                    ))
+                continue
 
         except Exception as exc:
             _log(

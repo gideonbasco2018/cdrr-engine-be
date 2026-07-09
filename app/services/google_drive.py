@@ -98,7 +98,7 @@ def upload_file_to_drive(
     service   = _build_service()
     folder_id = folder_id or os.getenv("GOOGLE_DRIVE_FOLDER_ID")
 
-    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=False)
+    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=True, chunksize=5 * 1024 * 1024)
 
     if existing_file_id:
         updated = (
