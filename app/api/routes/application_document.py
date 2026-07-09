@@ -46,8 +46,8 @@ router = APIRouter(
 
 #  ── 5 MB hard limit ──────────────────────────────────────────────────
 # MAX_FILE_SIZE = 5 * 1024 * 1024
-# ── 150 MB hard limit ──────────────────────────────────────────────────
-MAX_FILE_SIZE = 150 * 1024 * 1024
+# ── 200 MB hard limit ─────────────────────────────────────────────────
+MAX_FILE_SIZE = 200 * 1024 * 1024
 
 ALLOWED_MIME_TYPES = {
     "application/pdf",
