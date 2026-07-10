@@ -3,6 +3,7 @@
 CRUD Operations for Main DB
 Database operations for pharmaceutical reports
 """
+
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, desc, or_, cast, String, nullslast, exists
 from typing import Optional, List, Tuple, Dict
@@ -13,12 +14,15 @@ from app.models.application_logs import ApplicationLogs
 from app.models.application_delegation import ApplicationDelegation
 from app.schemas.main_db import MainDBCreate, MainDBUpdate
 
+
 # ✅ Subquery helpers — "decked" = has a Decking log
 def _decked_subquery(db: Session):
     """Returns a subquery: DB_IDs that have a Decking application log"""
-    return db.query(ApplicationLogs.main_db_id).filter(
-        ApplicationLogs.application_step == "Decking"
-    ).subquery()
+    return (
+        db.query(ApplicationLogs.main_db_id)
+        .filter(ApplicationLogs.application_step == "Decking")
+        .subquery()
+    )
 
 
 # -----------------------------
@@ -26,9 +30,12 @@ def _decked_subquery(db: Session):
 # -----------------------------
 def get_main_db_record(db: Session, record_id: int) -> Optional[MainDB]:
     """Get a single record by ID with application delegation"""
-    return db.query(MainDB).options(
-        joinedload(MainDB.application_delegation)
-    ).filter(MainDB.DB_ID == record_id).first()
+    return (
+        db.query(MainDB)
+        .options(joinedload(MainDB.application_delegation))
+        .filter(MainDB.DB_ID == record_id)
+        .first()
+    )
 
 
 # -----------------------------
@@ -41,7 +48,7 @@ def get_main_db_records(
     search: Optional[str] = None,
     filters: Optional[Dict[str, any]] = None,
     sort_by: str = "DB_DATE_EXCEL_UPLOAD",
-    sort_order: str = "desc"
+    sort_order: str = "desc",
 ) -> Tuple[List[MainDB], int]:
     """Fetch MainDB records with ApplicationDelegation (1-to-1) and flexible filtering"""
     print(f"🔍 CRUD: filters={filters}, sort_by={sort_by}, sort_order={sort_order}")
@@ -51,62 +58,70 @@ def get_main_db_records(
     if filters is None:
         filters = {}
 
-    status              = filters.get("status")
-    category            = filters.get("category")
-    prescription        = filters.get("prescription")
-    prescription_not    = filters.get("prescription_not")
-    dtn                 = filters.get("dtn")
+    status = filters.get("status")
+    category = filters.get("category")
+    prescription = filters.get("prescription")
+    prescription_not = filters.get("prescription_not")
+    dtn = filters.get("dtn")
     # ✅ BAGO — multiple DTNs support
-    dtns                = filters.get("dtns")  # List[int]
-    manufacturer        = filters.get("manufacturer")
-    lto_company         = filters.get("lto_company")
-    brand_name          = filters.get("brand_name")
-    generic_name        = filters.get("generic_name")
-    app_status          = filters.get("app_status")
-    app_type            = filters.get("app_type")
-    processing_type     = filters.get("processing_type")
-    dosage_form         = filters.get("dosage_form")
+    dtns = filters.get("dtns")  # List[int]
+    manufacturer = filters.get("manufacturer")
+    lto_company = filters.get("lto_company")
+    brand_name = filters.get("brand_name")
+    generic_name = filters.get("generic_name")
+    app_status = filters.get("app_status")
+    app_type = filters.get("app_type")
+    processing_type = filters.get("processing_type")
+    entry_type = filters.get("entry_type")
+    dosage_form = filters.get("dosage_form")
     manufacturer_country = filters.get("manufacturer_country")
-    trader              = filters.get("trader")
-    trader_country      = filters.get("trader_country")
-    importer            = filters.get("importer")
-    importer_country    = filters.get("importer_country")
-    distributor         = filters.get("distributor")
+    trader = filters.get("trader")
+    trader_country = filters.get("trader_country")
+    importer = filters.get("importer")
+    importer_country = filters.get("importer_country")
+    distributor = filters.get("distributor")
     distributor_country = filters.get("distributor_country")
-    repacker            = filters.get("repacker")
-    repacker_country    = filters.get("repacker_country")
-    type_doc_released   = filters.get("type_doc_released")
-    date_released_from  = filters.get("date_released_from")
-    date_released_to    = filters.get("date_released_to")
+    repacker = filters.get("repacker")
+    repacker_country = filters.get("repacker_country")
+    type_doc_released = filters.get("type_doc_released")
+    date_released_from = filters.get("date_released_from")
+    date_released_to = filters.get("date_released_to")
     date_received_cent_from = filters.get("date_received_cent_from")
-    date_received_cent_to   = filters.get("date_received_cent_to")
-    user_uploader           = filters.get("user_uploader")
-    date_excel_upload_from  = filters.get("date_excel_upload_from")
-    date_excel_upload_to    = filters.get("date_excel_upload_to")
-    null_date_released      = filters.get("null_date_released")
+    date_received_cent_to = filters.get("date_received_cent_to")
+    user_uploader = filters.get("user_uploader")
+    date_excel_upload_from = filters.get("date_excel_upload_from")
+    date_excel_upload_to = filters.get("date_excel_upload_to")
+    null_date_released = filters.get("null_date_released")
     null_date_received_cent = filters.get("null_date_received_cent")
 
     if status == "decked":
-        closed_decking_ids = db.query(ApplicationLogs.main_db_id).filter(
-            ApplicationLogs.application_step == "Decking",
-            ApplicationLogs.del_thread == "Close"
-        ).subquery()
+        closed_decking_ids = (
+            db.query(ApplicationLogs.main_db_id)
+            .filter(
+                ApplicationLogs.application_step == "Decking",
+                ApplicationLogs.del_thread == "Close",
+            )
+            .subquery()
+        )
         query = query.filter(
             or_(
                 MainDB.DB_APP_STATUS == "Completed",
-                MainDB.DB_ID.in_(closed_decking_ids)
+                MainDB.DB_ID.in_(closed_decking_ids),
             )
         )
         print("✅ Applied decked filter (Decking log OR Completed status)")
 
     elif status == "not_decked":
-        closed_decking_ids = db.query(ApplicationLogs.main_db_id).filter(
-            ApplicationLogs.application_step == "Decking",
-            ApplicationLogs.del_thread == "Close"
-        ).subquery()
+        closed_decking_ids = (
+            db.query(ApplicationLogs.main_db_id)
+            .filter(
+                ApplicationLogs.application_step == "Decking",
+                ApplicationLogs.del_thread == "Close",
+            )
+            .subquery()
+        )
         query = query.filter(
-            MainDB.DB_APP_STATUS != "Completed",
-            MainDB.DB_ID.notin_(closed_decking_ids)
+            MainDB.DB_APP_STATUS != "Completed", MainDB.DB_ID.notin_(closed_decking_ids)
         )
         print("✅ Applied not_decked filter (no Decking log AND not Completed)")
 
@@ -117,7 +132,10 @@ def get_main_db_records(
     if prescription:
         if prescription == "__EMPTY__":
             query = query.filter(
-                or_(MainDB.DB_PROD_CLASS_PRESCRIP.is_(None), MainDB.DB_PROD_CLASS_PRESCRIP == "")
+                or_(
+                    MainDB.DB_PROD_CLASS_PRESCRIP.is_(None),
+                    MainDB.DB_PROD_CLASS_PRESCRIP == "",
+                )
             )
         else:
             query = query.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
@@ -172,11 +190,22 @@ def get_main_db_records(
     if processing_type is not None:
         if processing_type == "__EMPTY__":
             query = query.filter(
-                or_(MainDB.DB_PROCESSING_TYPE.is_(None), MainDB.DB_PROCESSING_TYPE == "")
+                or_(
+                    MainDB.DB_PROCESSING_TYPE.is_(None), MainDB.DB_PROCESSING_TYPE == ""
+                )
             )
         else:
             query = query.filter(MainDB.DB_PROCESSING_TYPE == processing_type)
         print(f"✅ Applied processing_type filter: {processing_type}")
+
+    if entry_type is not None:
+        if entry_type == "__EMPTY__":
+            query = query.filter(
+                or_(MainDB.DB_ENTRY_TYPE.is_(None), MainDB.DB_ENTRY_TYPE == "")
+            )
+        else:
+            query = query.filter(MainDB.DB_ENTRY_TYPE == entry_type)
+        print(f"✅ Applied entry_type filter: {entry_type}")
 
     if dosage_form:
         query = query.filter(MainDB.DB_PROD_DOS_FORM.like(f"%{dosage_form}%"))
@@ -225,7 +254,7 @@ def get_main_db_records(
             query = query.filter(
                 or_(
                     MainDB.DB_TYPE_DOC_RELEASED.is_(None),
-                    MainDB.DB_TYPE_DOC_RELEASED == ""
+                    MainDB.DB_TYPE_DOC_RELEASED == "",
                 )
             )
             print(f"✅ Applied type_doc_released filter (Blank/No Data)")
@@ -236,9 +265,13 @@ def get_main_db_records(
                     func.lower(MainDB.DB_TYPE_DOC_RELEASED) == "cert",
                 )
             )
-            print(f"✅ Applied type_doc_released filter (Certificate+Cert alias): {type_doc_released}")
+            print(
+                f"✅ Applied type_doc_released filter (Certificate+Cert alias): {type_doc_released}"
+            )
         else:
-            query = query.filter(MainDB.DB_TYPE_DOC_RELEASED.ilike(f"%{type_doc_released}%"))
+            query = query.filter(
+                MainDB.DB_TYPE_DOC_RELEASED.ilike(f"%{type_doc_released}%")
+            )
             print(f"✅ Applied type_doc_released filter: {type_doc_released}")
 
     if null_date_released:
@@ -251,20 +284,31 @@ def get_main_db_records(
             query = query.filter(MainDB.DB_DATE_RELEASED >= date_released_from)
             print(f"✅ Applied date_released_from filter: {date_released_from}")
         if date_released_to:
-            query = query.filter(MainDB.DB_DATE_RELEASED <= date_released_to + " 23:59:59")
+            query = query.filter(
+                MainDB.DB_DATE_RELEASED <= date_released_to + " 23:59:59"
+            )
             print(f"✅ Applied date_released_to filter: {date_released_to}")
 
     if null_date_received_cent:
         query = query.filter(
-            or_(MainDB.DB_DATE_RECEIVED_CENT.is_(None), MainDB.DB_DATE_RECEIVED_CENT == "")
+            or_(
+                MainDB.DB_DATE_RECEIVED_CENT.is_(None),
+                MainDB.DB_DATE_RECEIVED_CENT == "",
+            )
         )
         print(f"✅ Applied null_date_received_cent filter")
     elif date_received_cent_from or date_received_cent_to:
         if date_received_cent_from:
-            query = query.filter(MainDB.DB_DATE_RECEIVED_CENT >= date_received_cent_from)
-            print(f"✅ Applied date_received_cent_from filter: {date_received_cent_from}")
+            query = query.filter(
+                MainDB.DB_DATE_RECEIVED_CENT >= date_received_cent_from
+            )
+            print(
+                f"✅ Applied date_received_cent_from filter: {date_received_cent_from}"
+            )
         if date_received_cent_to:
-            query = query.filter(MainDB.DB_DATE_RECEIVED_CENT <= date_received_cent_to + " 23:59:59")
+            query = query.filter(
+                MainDB.DB_DATE_RECEIVED_CENT <= date_received_cent_to + " 23:59:59"
+            )
             print(f"✅ Applied date_received_cent_to filter: {date_received_cent_to}")
 
     if user_uploader:
@@ -313,13 +357,19 @@ def get_main_db_records(
     print(f"📊 Total records found: {total}")
 
     delegation_sort_fields = [
-        'DB_DATE_DECKED_END', 'DB_DATE_EVAL_END', 'DB_DATE_CHECKER_END',
-        'DB_DATE_SUPERVISOR_END', 'DB_DATE_QA_END', 'DB_DATE_DIRECTOR_END',
-        'DB_DATE_RELEASING_OFFICER_END',
+        "DB_DATE_DECKED_END",
+        "DB_DATE_EVAL_END",
+        "DB_DATE_CHECKER_END",
+        "DB_DATE_SUPERVISOR_END",
+        "DB_DATE_QA_END",
+        "DB_DATE_DIRECTOR_END",
+        "DB_DATE_RELEASING_OFFICER_END",
     ]
 
     if sort_by in delegation_sort_fields:
-        query = query.outerjoin(ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID)
+        query = query.outerjoin(
+            ApplicationDelegation, MainDB.DB_ID == ApplicationDelegation.DB_MAIN_ID
+        )
         sort_column = getattr(ApplicationDelegation, sort_by)
         if sort_order.lower() == "desc":
             query = query.order_by(nullslast(desc(sort_column)))
@@ -334,7 +384,7 @@ def get_main_db_records(
     else:
         print(f"⚠️ Unknown sort field: {sort_by}, using default")
         query = query.order_by(desc(MainDB.DB_DATE_EXCEL_UPLOAD))
-    
+
     # ✅ joinedload — single JOIN query, no N+1
     query = query.options(joinedload(MainDB.application_delegation))
 
@@ -344,7 +394,7 @@ def get_main_db_records(
         records = query.offset(skip).limit(limit).all()
 
     print(f"✅ Returning {len(records)} records (skip={skip}, limit={limit})")
-    
+
     return records, total
 
 
@@ -352,15 +402,14 @@ def get_main_db_records(
 # Application Logs per MainDB Record
 # -----------------------------
 def get_application_logs(
-    db: Session,
-    main_id: int,
-    skip: int = 0,
-    limit: int = 50
+    db: Session, main_id: int, skip: int = 0, limit: int = 50
 ) -> Tuple[List[ApplicationLogs], int]:
     """Fetch paginated logs for a specific MainDB record"""
     query = db.query(ApplicationLogs).filter(ApplicationLogs.main_db_id == main_id)
     total = query.count()
-    logs = query.order_by(ApplicationLogs.del_index.asc()).offset(skip).limit(limit).all()
+    logs = (
+        query.order_by(ApplicationLogs.del_index.asc()).offset(skip).limit(limit).all()
+    )
     return logs, total
 
 
@@ -370,19 +419,25 @@ def get_application_logs(
 def create_main_db_record(db: Session, record: MainDBCreate) -> MainDB:
     """Create a new record with proper type handling"""
     data = record.model_dump(exclude_unset=True)
-    if 'DB_DATE_EXCEL_UPLOAD' not in data or data['DB_DATE_EXCEL_UPLOAD'] is None:
-        data['DB_DATE_EXCEL_UPLOAD'] = datetime.now()
-    elif isinstance(data.get('DB_DATE_EXCEL_UPLOAD'), str):
+    if "DB_DATE_EXCEL_UPLOAD" not in data or data["DB_DATE_EXCEL_UPLOAD"] is None:
+        data["DB_DATE_EXCEL_UPLOAD"] = datetime.now()
+    elif isinstance(data.get("DB_DATE_EXCEL_UPLOAD"), str):
         try:
-            data['DB_DATE_EXCEL_UPLOAD'] = datetime.strptime(data['DB_DATE_EXCEL_UPLOAD'], "%Y-%m-%d %H:%M:%S")
+            data["DB_DATE_EXCEL_UPLOAD"] = datetime.strptime(
+                data["DB_DATE_EXCEL_UPLOAD"], "%Y-%m-%d %H:%M:%S"
+            )
         except ValueError:
-            data['DB_DATE_EXCEL_UPLOAD'] = datetime.now()
+            data["DB_DATE_EXCEL_UPLOAD"] = datetime.now()
 
-    if data.get('DB_TRASH_DATE_ENCODED') and isinstance(data['DB_TRASH_DATE_ENCODED'], str):
+    if data.get("DB_TRASH_DATE_ENCODED") and isinstance(
+        data["DB_TRASH_DATE_ENCODED"], str
+    ):
         try:
-            data['DB_TRASH_DATE_ENCODED'] = datetime.strptime(data['DB_TRASH_DATE_ENCODED'], "%Y-%m-%d %H:%M:%S")
+            data["DB_TRASH_DATE_ENCODED"] = datetime.strptime(
+                data["DB_TRASH_DATE_ENCODED"], "%Y-%m-%d %H:%M:%S"
+            )
         except ValueError:
-            data['DB_TRASH_DATE_ENCODED'] = None
+            data["DB_TRASH_DATE_ENCODED"] = None
 
     db_record = MainDB(**data)
     db.add(db_record)
@@ -392,9 +447,7 @@ def create_main_db_record(db: Session, record: MainDBCreate) -> MainDB:
 
 
 def update_main_db_record(
-    db: Session,
-    record_id: int,
-    record_update: MainDBUpdate
+    db: Session, record_id: int, record_update: MainDBUpdate
 ) -> Optional[MainDB]:
     """Update an existing record"""
     db_record = get_main_db_record(db, record_id)
@@ -403,22 +456,32 @@ def update_main_db_record(
 
     update_data = record_update.model_dump(exclude_unset=True)
 
-    if update_data.get('DB_DATE_EXCEL_UPLOAD') and isinstance(update_data['DB_DATE_EXCEL_UPLOAD'], str):
+    if update_data.get("DB_DATE_EXCEL_UPLOAD") and isinstance(
+        update_data["DB_DATE_EXCEL_UPLOAD"], str
+    ):
         try:
-            update_data['DB_DATE_EXCEL_UPLOAD'] = datetime.strptime(update_data['DB_DATE_EXCEL_UPLOAD'], "%Y-%m-%d %H:%M:%S")
+            update_data["DB_DATE_EXCEL_UPLOAD"] = datetime.strptime(
+                update_data["DB_DATE_EXCEL_UPLOAD"], "%Y-%m-%d %H:%M:%S"
+            )
         except ValueError:
             pass
 
-    if update_data.get('DB_TRASH_DATE_ENCODED') and isinstance(update_data['DB_TRASH_DATE_ENCODED'], str):
+    if update_data.get("DB_TRASH_DATE_ENCODED") and isinstance(
+        update_data["DB_TRASH_DATE_ENCODED"], str
+    ):
         try:
-            update_data['DB_TRASH_DATE_ENCODED'] = datetime.strptime(update_data['DB_TRASH_DATE_ENCODED'], "%Y-%m-%d %H:%M:%S")
+            update_data["DB_TRASH_DATE_ENCODED"] = datetime.strptime(
+                update_data["DB_TRASH_DATE_ENCODED"], "%Y-%m-%d %H:%M:%S"
+            )
         except ValueError:
             pass
 
-    if update_data.get('DB_DECISION_SIGNED_DATE') and isinstance(update_data['DB_DECISION_SIGNED_DATE'], str):
+    if update_data.get("DB_DECISION_SIGNED_DATE") and isinstance(
+        update_data["DB_DECISION_SIGNED_DATE"], str
+    ):
         try:
-            update_data['DB_DECISION_SIGNED_DATE'] = datetime.strptime(
-                update_data['DB_DECISION_SIGNED_DATE'], "%Y-%m-%d"
+            update_data["DB_DECISION_SIGNED_DATE"] = datetime.strptime(
+                update_data["DB_DECISION_SIGNED_DATE"], "%Y-%m-%d"
             ).date()
         except ValueError:
             pass
@@ -458,13 +521,15 @@ def hard_delete_main_db_record(db: Session, record_id: int) -> bool:
 # -----------------------------
 # Bulk Operations
 # -----------------------------
-def bulk_create_main_db_records(db: Session, records: List[MainDBCreate]) -> List[MainDB]:
+def bulk_create_main_db_records(
+    db: Session, records: List[MainDBCreate]
+) -> List[MainDB]:
     """Bulk create MainDB records"""
     db_records = []
     for record in records:
         data = record.model_dump(exclude_unset=True)
-        if 'DB_DATE_EXCEL_UPLOAD' not in data:
-            data['DB_DATE_EXCEL_UPLOAD'] = datetime.now()
+        if "DB_DATE_EXCEL_UPLOAD" not in data:
+            data["DB_DATE_EXCEL_UPLOAD"] = datetime.now()
         db_records.append(MainDB(**data))
     db.add_all(db_records)
     db.commit()
@@ -478,9 +543,13 @@ def bulk_delete_main_db_records(db: Session, record_ids: List[int]) -> int:
     if not record_ids:
         return 0
     try:
-        deleted_count = db.query(MainDB).filter(MainDB.DB_ID.in_(record_ids)).update(
-            {"DB_TRASH": "deleted", "DB_TRASH_DATE_ENCODED": datetime.now()},
-            synchronize_session=False
+        deleted_count = (
+            db.query(MainDB)
+            .filter(MainDB.DB_ID.in_(record_ids))
+            .update(
+                {"DB_TRASH": "deleted", "DB_TRASH_DATE_ENCODED": datetime.now()},
+                synchronize_session=False,
+            )
         )
         db.commit()
         return deleted_count
@@ -497,40 +566,49 @@ def get_main_db_summary(db: Session) -> dict:
     """Summary statistics — decked/not decked based on application_logs"""
     total_records = db.query(MainDB).count()
 
-    decked_ids = db.query(ApplicationLogs.main_db_id).filter(
-        ApplicationLogs.application_step == "Decking"
-    ).subquery()
+    decked_ids = (
+        db.query(ApplicationLogs.main_db_id)
+        .filter(ApplicationLogs.application_step == "Decking")
+        .subquery()
+    )
 
-    decked_count = db.query(MainDB).filter(
-        or_(
-            MainDB.DB_ID.in_(decked_ids),
-            MainDB.DB_APP_STATUS == "Completed"
-        )
-    ).count()
+    decked_count = (
+        db.query(MainDB)
+        .filter(or_(MainDB.DB_ID.in_(decked_ids), MainDB.DB_APP_STATUS == "Completed"))
+        .count()
+    )
 
-    not_decked_count = db.query(MainDB).filter(
-        MainDB.DB_ID.notin_(decked_ids),
-        or_(
-            MainDB.DB_APP_STATUS.is_(None),
-            MainDB.DB_APP_STATUS == "",
-            MainDB.DB_APP_STATUS != "Completed"
+    not_decked_count = (
+        db.query(MainDB)
+        .filter(
+            MainDB.DB_ID.notin_(decked_ids),
+            or_(
+                MainDB.DB_APP_STATUS.is_(None),
+                MainDB.DB_APP_STATUS == "",
+                MainDB.DB_APP_STATUS != "Completed",
+            ),
         )
-    ).count()
+        .count()
+    )
 
     otc_count = db.query(MainDB).filter(MainDB.DB_PROD_CLASS_PRESCRIP == "OTC").count()
 
-    status_counts = db.query(
-        MainDB.DB_APP_STATUS, func.count(MainDB.DB_ID)
-    ).group_by(MainDB.DB_APP_STATUS).all()
+    status_counts = (
+        db.query(MainDB.DB_APP_STATUS, func.count(MainDB.DB_ID))
+        .group_by(MainDB.DB_APP_STATUS)
+        .all()
+    )
 
-    category_counts = db.query(
-        MainDB.DB_EST_CAT, func.count(MainDB.DB_ID)
-    ).group_by(MainDB.DB_EST_CAT).all()
+    category_counts = (
+        db.query(MainDB.DB_EST_CAT, func.count(MainDB.DB_ID))
+        .group_by(MainDB.DB_EST_CAT)
+        .all()
+    )
 
     seven_days_ago = datetime.now() - timedelta(days=7)
-    recent_uploads = db.query(MainDB).filter(
-        MainDB.DB_DATE_EXCEL_UPLOAD >= seven_days_ago
-    ).count()
+    recent_uploads = (
+        db.query(MainDB).filter(MainDB.DB_DATE_EXCEL_UPLOAD >= seven_days_ago).count()
+    )
 
     result = {
         "total_records": total_records,
@@ -538,11 +616,15 @@ def get_main_db_summary(db: Session) -> dict:
         "not_decked_count": not_decked_count,
         "otc_count": otc_count,
         "by_status": {status or "Unknown": count for status, count in status_counts},
-        "by_category": {category or "Unknown": count for category, count in category_counts},
+        "by_category": {
+            category or "Unknown": count for category, count in category_counts
+        },
         "recent_uploads": recent_uploads,
     }
 
-    print(f"📊 Summary: Total={total_records}, Decked={decked_count}, Not Decked={not_decked_count}, OTC={otc_count}")
+    print(
+        f"📊 Summary: Total={total_records}, Decked={decked_count}, Not Decked={not_decked_count}, OTC={otc_count}"
+    )
     return result
 
 
@@ -550,22 +632,31 @@ def get_upload_statistics(db: Session) -> dict:
     """Detailed upload statistics"""
     try:
         total = db.query(MainDB).count()
-        status_counts = db.query(
-            MainDB.DB_APP_STATUS, func.count(MainDB.DB_ID)
-        ).group_by(MainDB.DB_APP_STATUS).all()
+        status_counts = (
+            db.query(MainDB.DB_APP_STATUS, func.count(MainDB.DB_ID))
+            .group_by(MainDB.DB_APP_STATUS)
+            .all()
+        )
 
-        category_counts = db.query(
-            MainDB.DB_EST_CAT, func.count(MainDB.DB_ID)
-        ).group_by(MainDB.DB_EST_CAT)\
-            .order_by(desc(func.count(MainDB.DB_ID))).limit(10).all()
+        category_counts = (
+            db.query(MainDB.DB_EST_CAT, func.count(MainDB.DB_ID))
+            .group_by(MainDB.DB_EST_CAT)
+            .order_by(desc(func.count(MainDB.DB_ID)))
+            .limit(10)
+            .all()
+        )
 
         seven_days_ago = datetime.now() - timedelta(days=7)
-        recent_uploads_query = db.query(
-            func.date(MainDB.DB_DATE_EXCEL_UPLOAD).label('date'),
-            func.count(MainDB.DB_ID).label('count')
-        ).filter(MainDB.DB_DATE_EXCEL_UPLOAD >= seven_days_ago)\
-            .group_by(func.date(MainDB.DB_DATE_EXCEL_UPLOAD))\
-            .order_by(desc(func.date(MainDB.DB_DATE_EXCEL_UPLOAD))).all()
+        recent_uploads_query = (
+            db.query(
+                func.date(MainDB.DB_DATE_EXCEL_UPLOAD).label("date"),
+                func.count(MainDB.DB_ID).label("count"),
+            )
+            .filter(MainDB.DB_DATE_EXCEL_UPLOAD >= seven_days_ago)
+            .group_by(func.date(MainDB.DB_DATE_EXCEL_UPLOAD))
+            .order_by(desc(func.date(MainDB.DB_DATE_EXCEL_UPLOAD)))
+            .all()
+        )
 
         recent_uploads = [
             {"date": str(row[0]) if row[0] else None, "count": row[1]}
@@ -574,8 +665,12 @@ def get_upload_statistics(db: Session) -> dict:
 
         return {
             "total": total,
-            "by_status": {status or "Unknown": count for status, count in status_counts},
-            "by_category": {category or "Unknown": count for category, count in category_counts},
+            "by_status": {
+                status or "Unknown": count for status, count in status_counts
+            },
+            "by_category": {
+                category or "Unknown": count for category, count in category_counts
+            },
             "recent_uploads": recent_uploads,
         }
     except Exception as e:
@@ -598,18 +693,18 @@ def get_unique_values(db: Session, field: str) -> List[str]:
 def get_upload_history(db: Session, limit: int = 50) -> List[dict]:
     """Get upload history grouped by user and date"""
     try:
-        results = db.query(
-            MainDB.DB_USER_UPLOADER,
-            func.date(MainDB.DB_DATE_EXCEL_UPLOAD).label('upload_date'),
-            func.count(MainDB.DB_ID).label('record_count')
-        ).filter(
-            MainDB.DB_DATE_EXCEL_UPLOAD.isnot(None)
-        ).group_by(
-            MainDB.DB_USER_UPLOADER,
-            func.date(MainDB.DB_DATE_EXCEL_UPLOAD)
-        ).order_by(
-            desc(func.date(MainDB.DB_DATE_EXCEL_UPLOAD))
-        ).limit(limit).all()
+        results = (
+            db.query(
+                MainDB.DB_USER_UPLOADER,
+                func.date(MainDB.DB_DATE_EXCEL_UPLOAD).label("upload_date"),
+                func.count(MainDB.DB_ID).label("record_count"),
+            )
+            .filter(MainDB.DB_DATE_EXCEL_UPLOAD.isnot(None))
+            .group_by(MainDB.DB_USER_UPLOADER, func.date(MainDB.DB_DATE_EXCEL_UPLOAD))
+            .order_by(desc(func.date(MainDB.DB_DATE_EXCEL_UPLOAD)))
+            .limit(limit)
+            .all()
+        )
 
         return [
             {
@@ -622,7 +717,8 @@ def get_upload_history(db: Session, limit: int = 50) -> List[dict]:
     except Exception as e:
         print(f"Error fetching upload history: {e}")
         return []
-    
+
+
 def get_upload_history_paginated(
     db: Session,
     username: str,
@@ -667,8 +763,7 @@ def get_upload_history_paginated(
     total_records = db.query(func.sum(subq.c.record_count)).scalar() or 0
 
     rows = (
-        base_query
-        .order_by(desc(MainDB.DB_DATE_EXCEL_UPLOAD))
+        base_query.order_by(desc(MainDB.DB_DATE_EXCEL_UPLOAD))
         .offset(offset)
         .limit(limit)
         .all()
@@ -683,4 +778,4 @@ def get_upload_history_paginated(
         for r in rows
     ]
 
-    return data, total, total_records   
+    return data, total, total_records
