@@ -5,6 +5,7 @@ from typing import Optional, List
 from datetime import datetime
 from datetime import date
 
+
 # -----------------------------
 # ApplicationLogs schema
 # -----------------------------
@@ -37,27 +38,27 @@ class ApplicationDelegationResponse(BaseModel):
     DB_DECKER_DECISION: Optional[str] = None
     DB_DECKER_REMARKS: Optional[str] = None
     DB_DATE_DECKED_END: Optional[datetime] = None
-    
+
     DB_EVALUATOR: Optional[str] = None
     DB_EVAL_DECISION: Optional[str] = None
     DB_EVAL_REMARKS: Optional[str] = None
     DB_DATE_EVAL_END: Optional[datetime] = None
-    
+
     DB_CHECKER: Optional[str] = None
     DB_CHECKER_DECISION: Optional[str] = None
     DB_CHECKER_REMARKS: Optional[str] = None
     DB_DATE_CHECKER_END: Optional[datetime] = None
-    
+
     DB_SUPERVISOR: Optional[str] = None
     DB_SUPERVISOR_DECISION: Optional[str] = None
     DB_SUPERVISOR_REMARKS: Optional[str] = None
     DB_DATE_SUPERVISOR_END: Optional[datetime] = None
-    
+
     DB_QA: Optional[str] = None
     DB_QA_DECISION: Optional[str] = None
     DB_QA_REMARKS: Optional[str] = None
     DB_DATE_QA_END: Optional[datetime] = None
-    
+
     DB_DIRECTOR: Optional[str] = None
     DB_DIRECTOR_DECISION: Optional[str] = None
     DB_DIRECTOR_REMARKS: Optional[str] = None
@@ -70,15 +71,15 @@ class ApplicationDelegationResponse(BaseModel):
     DB_DATE_RELEASING_OFFICER_END: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
-    
+
     @field_serializer(
-        'DB_DATE_DECKED_END', 
-        'DB_DATE_EVAL_END',
-        'DB_DATE_CHECKER_END',
-        'DB_DATE_SUPERVISOR_END',
-        'DB_DATE_QA_END',
-        'DB_DATE_DIRECTOR_END',
-        'DB_DATE_RELEASING_OFFICER_END',
+        "DB_DATE_DECKED_END",
+        "DB_DATE_EVAL_END",
+        "DB_DATE_CHECKER_END",
+        "DB_DATE_SUPERVISOR_END",
+        "DB_DATE_QA_END",
+        "DB_DATE_DIRECTOR_END",
+        "DB_DATE_RELEASING_OFFICER_END",
     )
     def serialize_datetime(self, value: Optional[datetime]) -> Optional[str]:
         return value.isoformat() if value else None
@@ -209,9 +210,11 @@ class MainDBBase(BaseModel):
     DB_DECISION_SIGNED_DATE: Optional[date] = None
 
     DB_ENTRY_TYPE: Optional[str] = None
-    
+
     # ✅ FIX: Convert empty string to None for all Optional[int] fields
-    @field_validator('DB_DTN', 'DB_IS_IN_PM', 'DB_TIMELINE_CITIZEN_CHARTER', mode='before')
+    @field_validator(
+        "DB_DTN", "DB_IS_IN_PM", "DB_TIMELINE_CITIZEN_CHARTER", mode="before"
+    )
     @classmethod
     def parse_optional_int(cls, v):
         if v == "" or v is None:
