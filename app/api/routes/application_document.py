@@ -66,13 +66,15 @@ ALLOWED_MIME_TYPES = {
     "application/x-rar",
 }
 
+
 def _guess_mime(filename: str) -> str:
     mime, _ = mimetypes.guess_type(filename)
     return mime or "application/octet-stream"
 
+
 @router.post("/upload", response_model=UploadDocumentResponse, status_code=201)
 async def upload_document(
-    main_db_id: int | None = Form(None),  
+    main_db_id: int | None = Form(None),
     db_entry_type: str = Form(...),
     db_dtn: str = Form(...),
     doc_category: str | None = Form(None),
@@ -86,7 +88,7 @@ async def upload_document(
         raise HTTPException(
             status_code=415,
             detail=f"File type '{file.content_type}' is not allowed. "
-                   f"Accepted: PDF, JPG, PNG, GIF, WEBP, DOC, DOCX, XLS, XLSX.",
+            f"Accepted: PDF, JPG, PNG, GIF, WEBP, DOC, DOCX, XLS, XLSX.",
         )
 
     file_bytes = await file.read()
@@ -97,7 +99,9 @@ async def upload_document(
     folder_id = crud_doc.get_existing_folder_id(db, db_entry_type, db_dtn, doc_category)
     if not folder_id:
         try:
-            folder_id = get_or_create_application_folder(db_entry_type, db_dtn, doc_category)
+            folder_id = get_or_create_application_folder(
+                db_entry_type, db_dtn, doc_category
+            )
         except Exception as exc:
             raise HTTPException(
                 status_code=502,
@@ -144,6 +148,7 @@ async def upload_document(
         file_size_bytes=doc.file_size_bytes,
     )
 
+
 @router.get("/{main_db_id}", response_model=ApplicationDocumentListResponse)
 def list_documents(
     main_db_id: int,
@@ -171,12 +176,9 @@ def delete_document(
     delete_file_from_drive(doc.drive_file_id)
 
     # Soft-delete in DB
-    crud_doc.soft_delete_document(
-        db, document_id, deleted_by=current_user.username
-    )
+    crud_doc.soft_delete_document(db, document_id, deleted_by=current_user.username)
 
     return DeleteDocumentResponse(message="Document deleted successfully.")
-
 
 
 @router.post(
@@ -203,7 +205,6 @@ def delete_document(
                                 },
                             },
                         },
-                        
                         "required": ["db_entry_type", "db_dtn", "files"],
                     }
                 }
@@ -215,7 +216,7 @@ async def upload_documents_batch(
     db_entry_type: Annotated[str, Form(...)],
     db_dtn: Annotated[str, Form(...)],
     files: Annotated[List[UploadFile], File(...)],
-    main_db_id: Annotated[int | None, Form()] = None,   
+    main_db_id: Annotated[int | None, Form()] = None,
     doc_category: Annotated[str | None, Form()] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -229,7 +230,9 @@ async def upload_documents_batch(
     folder_id = crud_doc.get_existing_folder_id(db, db_entry_type, db_dtn, doc_category)
     if not folder_id:
         try:
-            folder_id = get_or_create_application_folder(db_entry_type, db_dtn, doc_category)
+            folder_id = get_or_create_application_folder(
+                db_entry_type, db_dtn, doc_category
+            )
         except Exception as exc:
             raise HTTPException(
                 status_code=502,
@@ -242,21 +245,25 @@ async def upload_documents_batch(
         try:
             # ── Validate mime type ───────────────────────────────
             if file.content_type not in ALLOWED_MIME_TYPES:
-                results.append(BatchUploadResult(
-                    filename=file.filename,
-                    success=False,
-                    error=f"File type '{file.content_type}' is not allowed.",
-                ))
+                results.append(
+                    BatchUploadResult(
+                        filename=file.filename,
+                        success=False,
+                        error=f"File type '{file.content_type}' is not allowed.",
+                    )
+                )
                 continue
 
             # ── Read & size-check ────────────────────────────────
             file_bytes = await file.read()
             if len(file_bytes) > MAX_FILE_SIZE:
-                results.append(BatchUploadResult(
-                    filename=file.filename,
-                    success=False,
-                    error="File exceeds the 5 MB limit.",
-                ))
+                results.append(
+                    BatchUploadResult(
+                        filename=file.filename,
+                        success=False,
+                        error="File exceeds the 5 MB limit.",
+                    )
+                )
                 continue
 
             # ── Upload to Drive ──────────────────────────────────
@@ -286,25 +293,29 @@ async def upload_documents_batch(
             )
             doc = crud_doc.create_document(db, payload)
 
-            results.append(BatchUploadResult(
-                filename=file.filename,
-                success=True,
-                document=UploadDocumentResponse(
-                    id=doc.id,
-                    drive_file_id=doc.drive_file_id,
-                    drive_file_url=doc.drive_file_url,
-                    original_filename=doc.original_filename,
-                    file_size_bytes=doc.file_size_bytes,
-                ),
-            ))
+            results.append(
+                BatchUploadResult(
+                    filename=file.filename,
+                    success=True,
+                    document=UploadDocumentResponse(
+                        id=doc.id,
+                        drive_file_id=doc.drive_file_id,
+                        drive_file_url=doc.drive_file_url,
+                        original_filename=doc.original_filename,
+                        file_size_bytes=doc.file_size_bytes,
+                    ),
+                )
+            )
 
         except Exception as exc:
             # If one file fails, the whole batch shouldn't blow up
-            results.append(BatchUploadResult(
-                filename=file.filename,
-                success=False,
-                error=str(exc),
-            ))
+            results.append(
+                BatchUploadResult(
+                    filename=file.filename,
+                    success=False,
+                    error=str(exc),
+                )
+            )
 
     succeeded = sum(1 for r in results if r.success)
     failed = len(results) - succeeded
@@ -315,6 +326,7 @@ async def upload_documents_batch(
         failed=failed,
         results=results,
     )
+
 
 @router.post(
     "/upload-folder",
@@ -366,15 +378,15 @@ async def upload_documents_folder(
     """
     Upload an entire folder (e.g., from an <input webkitdirectory>).
     -The top-level folder name (the first segment of the relative path) is treated as the db_dtn.
-        -If multiple different top-level folders are detected in the provided 
-        relative_paths (i.e., multiple DTNs in a single request), 
-        they are automatically processed as separate Drive folders and database 
+        -If multiple different top-level folders are detected in the provided
+        relative_paths (i.e., multiple DTNs in a single request),
+        they are automatically processed as separate Drive folders and database
         records. Each file uses its own db_dtn based on its relative path.
-    -Any subfolder(s) between the DTN folder and the file itself, regardless of depth, are joined 
+    -Any subfolder(s) between the DTN folder and the file itself, regardless of depth, are joined
         using / and stored as the doc_category.
-    -If a file is a .zip archive, it is automatically extracted in memory. Each extracted file is 
-        processed as an individual file and goes through the same file type validation, size validation, 
-        folder resolution, Google Drive upload, and logging workflow. Any subfolders inside the ZIP archive 
+    -If a file is a .zip archive, it is automatically extracted in memory. Each extracted file is
+        processed as an individual file and goes through the same file type validation, size validation,
+        folder resolution, Google Drive upload, and logging workflow. Any subfolders inside the ZIP archive
         are appended to the doc_category, using the ZIP file's relative path as the base.
     -db_entry_type remains a required form field and is not derived from the folder structure.
     -All file upload attempts, whether successful or failed, are recorded in BulkUploadLog and grouped under a single batch_id (UUID) representing the entire upload request.
@@ -387,7 +399,7 @@ async def upload_documents_folder(
             detail="'files' and 'relative_paths' must have the same length.",
         )
 
-    batch_id = (batch_id or "").strip() or str(uuid.uuid4()) 
+    batch_id = (batch_id or "").strip() or str(uuid.uuid4())
     results: list[BatchUploadResult] = []
     folder_cache: dict[str, str] = {}  # (entry_type|dtn|category) -> drive folder_id
 
@@ -447,29 +459,44 @@ async def upload_documents_folder(
         if content_type not in ALLOWED_MIME_TYPES:
             error_msg = f"File type '{content_type}' is not allowed."
             _log(
-                db_dtn=db_dtn, doc_category=doc_category, relative_path=rel_path,
-                filename=filename, status="failed", error_message=error_msg,
+                db_dtn=db_dtn,
+                doc_category=doc_category,
+                relative_path=rel_path,
+                filename=filename,
+                status="failed",
+                error_message=error_msg,
                 mime_type=content_type,
             )
-            results.append(BatchUploadResult(filename=filename, success=False, error=error_msg))
+            results.append(
+                BatchUploadResult(filename=filename, success=False, error=error_msg)
+            )
             return
 
         # ── Size check ────────────────────────────────────────
         if len(file_bytes) > MAX_FILE_SIZE:
             error_msg = "File exceeds the 5 MB limit."
             _log(
-                db_dtn=db_dtn, doc_category=doc_category, relative_path=rel_path,
-                filename=filename, status="failed", error_message=error_msg,
-                mime_type=content_type, file_size_bytes=len(file_bytes),
+                db_dtn=db_dtn,
+                doc_category=doc_category,
+                relative_path=rel_path,
+                filename=filename,
+                status="failed",
+                error_message=error_msg,
+                mime_type=content_type,
+                file_size_bytes=len(file_bytes),
             )
-            results.append(BatchUploadResult(filename=filename, success=False, error=error_msg))
+            results.append(
+                BatchUploadResult(filename=filename, success=False, error=error_msg)
+            )
             return
 
         # ── Resolve (or create) the Drive folder ─────────────────
         cache_key = f"{db_entry_type}|{db_dtn}|{doc_category or ''}"
         folder_id = folder_cache.get(cache_key)
         if not folder_id:
-            candidate_id = crud_doc.get_existing_folder_id(db, db_entry_type, db_dtn, doc_category)
+            candidate_id = crud_doc.get_existing_folder_id(
+                db, db_entry_type, db_dtn, doc_category
+            )
             # Verify the cached folder is actually still alive before using
             # it — if it's already been deleted on Drive itself, don't use
             # it, just create a new one.
@@ -477,13 +504,26 @@ async def upload_documents_folder(
                 folder_id = candidate_id
             else:
                 try:
-                    folder_id = get_or_create_folder_path(db_entry_type, db_dtn, category_parts)
+                    folder_id = get_or_create_folder_path(
+                        db_entry_type, db_dtn, category_parts
+                    )
                 except Exception as exc:
                     error_msg = f"Failed to prepare Drive folder: {exc}"
-                    _log(db_dtn=db_dtn, doc_category=doc_category, relative_path=rel_path,
-                         filename=filename, status="failed", error_message=error_msg,
-                         mime_type=content_type, file_size_bytes=len(file_bytes))
-                    results.append(BatchUploadResult(filename=filename, success=False, error=error_msg))
+                    _log(
+                        db_dtn=db_dtn,
+                        doc_category=doc_category,
+                        relative_path=rel_path,
+                        filename=filename,
+                        status="failed",
+                        error_message=error_msg,
+                        mime_type=content_type,
+                        file_size_bytes=len(file_bytes),
+                    )
+                    results.append(
+                        BatchUploadResult(
+                            filename=filename, success=False, error=error_msg
+                        )
+                    )
                     return
             folder_cache[cache_key] = folder_id
 
@@ -539,33 +579,47 @@ async def upload_documents_folder(
                 doc = crud_doc.create_document(db, payload)
 
             _log(
-                db_dtn=db_dtn, doc_category=doc_category, relative_path=rel_path,
+                db_dtn=db_dtn,
+                doc_category=doc_category,
+                relative_path=rel_path,
                 filename=filename,
                 status="success",
-                error_message="Overwritten (replaced existing file)." if existing_doc else None,
-                mime_type=content_type, file_size_bytes=len(file_bytes),
+                error_message=(
+                    "Overwritten (replaced existing file)." if existing_doc else None
+                ),
+                mime_type=content_type,
+                file_size_bytes=len(file_bytes),
                 application_document_id=doc.id,
             )
 
-            results.append(BatchUploadResult(
-                filename=filename,
-                success=True,
-                document=UploadDocumentResponse(
-                    id=doc.id,
-                    drive_file_id=doc.drive_file_id,
-                    drive_file_url=doc.drive_file_url,
-                    original_filename=doc.original_filename,
-                    file_size_bytes=doc.file_size_bytes,
-                ),
-            ))
+            results.append(
+                BatchUploadResult(
+                    filename=filename,
+                    success=True,
+                    document=UploadDocumentResponse(
+                        id=doc.id,
+                        drive_file_id=doc.drive_file_id,
+                        drive_file_url=doc.drive_file_url,
+                        original_filename=doc.original_filename,
+                        file_size_bytes=doc.file_size_bytes,
+                    ),
+                )
+            )
 
         except Exception as exc:
             _log(
-                db_dtn=db_dtn, doc_category=doc_category, relative_path=rel_path,
-                filename=filename, status="failed", error_message=str(exc),
-                mime_type=content_type, file_size_bytes=len(file_bytes),
+                db_dtn=db_dtn,
+                doc_category=doc_category,
+                relative_path=rel_path,
+                filename=filename,
+                status="failed",
+                error_message=str(exc),
+                mime_type=content_type,
+                file_size_bytes=len(file_bytes),
             )
-            results.append(BatchUploadResult(filename=filename, success=False, error=str(exc)))
+            results.append(
+                BatchUploadResult(filename=filename, success=False, error=str(exc))
+            )
 
     # ── Main loop — once per "top-level" file that arrives in the request ──
     for file, rel_path in zip(files, relative_paths):
@@ -582,11 +636,13 @@ async def upload_documents_folder(
                     status="failed",
                     error_message="Invalid relative path — missing root (DTN) folder.",
                 )
-                results.append(BatchUploadResult(
-                    filename=file.filename,
-                    success=False,
-                    error="Invalid relative path — missing root (DTN) folder.",
-                ))
+                results.append(
+                    BatchUploadResult(
+                        filename=file.filename,
+                        success=False,
+                        error="Invalid relative path — missing root (DTN) folder.",
+                    )
+                )
                 continue
 
             db_dtn = parts[0].strip()
@@ -615,7 +671,8 @@ async def upload_documents_folder(
             try:
                 with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
                     entries = [
-                        zi for zi in zf.infolist()
+                        zi
+                        for zi in zf.infolist()
                         if not zi.is_dir()
                         and not zi.filename.startswith("__MACOSX")
                         and not zi.filename.rsplit("/", 1)[-1].startswith(".")
@@ -624,13 +681,22 @@ async def upload_documents_folder(
                     if not entries:
                         error_msg = "Zip file is empty or has no usable files."
                         _log(
-                            db_dtn=db_dtn, doc_category=doc_category, relative_path=rel_path,
-                            filename=file.filename, status="failed", error_message=error_msg,
-                            mime_type=file.content_type, file_size_bytes=len(file_bytes),
+                            db_dtn=db_dtn,
+                            doc_category=doc_category,
+                            relative_path=rel_path,
+                            filename=file.filename,
+                            status="failed",
+                            error_message=error_msg,
+                            mime_type=file.content_type,
+                            file_size_bytes=len(file_bytes),
                         )
-                        results.append(BatchUploadResult(
-                            filename=file.filename, success=False, error=error_msg,
-                        ))
+                        results.append(
+                            BatchUploadResult(
+                                filename=file.filename,
+                                success=False,
+                                error=error_msg,
+                            )
+                        )
                         continue
 
                     for zi in entries:
@@ -638,11 +704,15 @@ async def upload_documents_folder(
                         inner_filename = inner_parts[-1]
                         inner_category_parts = category_parts + inner_parts[:-1]
                         inner_category = (
-                            "/".join(inner_category_parts) if inner_category_parts else None
+                            "/".join(inner_category_parts)
+                            if inner_category_parts
+                            else None
                         )
                         inner_bytes = zf.read(zi)
                         inner_mime = _guess_mime(inner_filename)
-                        inner_rel_path = "/".join([db_dtn, *inner_category_parts, inner_filename])
+                        inner_rel_path = "/".join(
+                            [db_dtn, *inner_category_parts, inner_filename]
+                        )
 
                         await _handle_entry(
                             file_bytes=inner_bytes,
@@ -654,25 +724,33 @@ async def upload_documents_folder(
                             category_parts=inner_category_parts,
                         )
 
-
-
             except zipfile.BadZipFile:
                 error_msg = "Invalid or corrupted zip file."
                 _log(
-                    db_dtn=db_dtn, doc_category=doc_category, relative_path=rel_path,
-                    filename=file.filename, status="failed", error_message=error_msg,
-                    mime_type=file.content_type, file_size_bytes=len(file_bytes),
+                    db_dtn=db_dtn,
+                    doc_category=doc_category,
+                    relative_path=rel_path,
+                    filename=file.filename,
+                    status="failed",
+                    error_message=error_msg,
+                    mime_type=file.content_type,
+                    file_size_bytes=len(file_bytes),
                 )
-                results.append(BatchUploadResult(
-                    filename=file.filename, success=False, error=error_msg,
-                ))
-            
+                results.append(
+                    BatchUploadResult(
+                        filename=file.filename,
+                        success=False,
+                        error=error_msg,
+                    )
+                )
+
             # ── RAR: extract in memory, treat each entry as its own file ──
             if is_rar:
                 try:
                     with rarfile.RarFile(io.BytesIO(file_bytes)) as rf:
                         entries = [
-                            info for info in rf.infolist()
+                            info
+                            for info in rf.infolist()
                             if not info.isdir()
                             and not info.filename.startswith("__MACOSX")
                             and not info.filename.rsplit("/", 1)[-1].startswith(".")
@@ -681,25 +759,42 @@ async def upload_documents_folder(
                         if not entries:
                             error_msg = "Rar file is empty or has no usable files."
                             _log(
-                                db_dtn=db_dtn, doc_category=doc_category, relative_path=rel_path,
-                                filename=file.filename, status="failed", error_message=error_msg,
-                                mime_type=file.content_type, file_size_bytes=len(file_bytes),
+                                db_dtn=db_dtn,
+                                doc_category=doc_category,
+                                relative_path=rel_path,
+                                filename=file.filename,
+                                status="failed",
+                                error_message=error_msg,
+                                mime_type=file.content_type,
+                                file_size_bytes=len(file_bytes),
                             )
-                            results.append(BatchUploadResult(
-                                filename=file.filename, success=False, error=error_msg,
-                            ))
+                            results.append(
+                                BatchUploadResult(
+                                    filename=file.filename,
+                                    success=False,
+                                    error=error_msg,
+                                )
+                            )
                             continue
 
                         for info in entries:
-                            inner_parts = [p for p in info.filename.replace("\\", "/").split("/") if p]
+                            inner_parts = [
+                                p
+                                for p in info.filename.replace("\\", "/").split("/")
+                                if p
+                            ]
                             inner_filename = inner_parts[-1]
                             inner_category_parts = category_parts + inner_parts[:-1]
                             inner_category = (
-                                "/".join(inner_category_parts) if inner_category_parts else None
+                                "/".join(inner_category_parts)
+                                if inner_category_parts
+                                else None
                             )
                             inner_bytes = rf.read(info)
                             inner_mime = _guess_mime(inner_filename)
-                            inner_rel_path = "/".join([db_dtn, *inner_category_parts, inner_filename])
+                            inner_rel_path = "/".join(
+                                [db_dtn, *inner_category_parts, inner_filename]
+                            )
 
                             await _handle_entry(
                                 file_bytes=inner_bytes,
@@ -714,13 +809,22 @@ async def upload_documents_folder(
                 except rarfile.Error as exc:
                     error_msg = f"Invalid or corrupted rar file: {exc}"
                     _log(
-                        db_dtn=db_dtn, doc_category=doc_category, relative_path=rel_path,
-                        filename=file.filename, status="failed", error_message=error_msg,
-                        mime_type=file.content_type, file_size_bytes=len(file_bytes),
+                        db_dtn=db_dtn,
+                        doc_category=doc_category,
+                        relative_path=rel_path,
+                        filename=file.filename,
+                        status="failed",
+                        error_message=error_msg,
+                        mime_type=file.content_type,
+                        file_size_bytes=len(file_bytes),
                     )
-                    results.append(BatchUploadResult(
-                        filename=file.filename, success=False, error=error_msg,
-                    ))
+                    results.append(
+                        BatchUploadResult(
+                            filename=file.filename,
+                            success=False,
+                            error=error_msg,
+                        )
+                    )
                 continue
 
         except Exception as exc:
@@ -732,11 +836,13 @@ async def upload_documents_folder(
                 status="failed",
                 error_message=str(exc),
             )
-            results.append(BatchUploadResult(
-                filename=file.filename,
-                success=False,
-                error=str(exc),
-            ))
+            results.append(
+                BatchUploadResult(
+                    filename=file.filename,
+                    success=False,
+                    error=str(exc),
+                )
+            )
 
     succeeded = sum(1 for r in results if r.success)
     failed = len(results) - succeeded
@@ -748,6 +854,7 @@ async def upload_documents_folder(
         results=results,
         batch_id=batch_id,
     )
+
 
 @router.get("/upload-folder/logs", response_model=BulkUploadLogListResponse)
 def get_all_upload_logs(
@@ -812,7 +919,9 @@ def get_upload_folder_logs(
     return BulkUploadLogListResponse(data=logs, total=len(logs), batch_id=batch_id)
 
 
-@router.get("/upload-folder/logs/{batch_id}/failed", response_model=BulkUploadLogListResponse)
+@router.get(
+    "/upload-folder/logs/{batch_id}/failed", response_model=BulkUploadLogListResponse
+)
 def get_upload_folder_failed_logs(
     batch_id: str,
     db: Session = Depends(get_db),
@@ -822,7 +931,9 @@ def get_upload_folder_failed_logs(
     return BulkUploadLogListResponse(data=logs, total=len(logs), batch_id=batch_id)
 
 
-@router.get("/upload-folder/logs/by-dtn/{db_dtn}", response_model=BulkUploadLogListResponse)
+@router.get(
+    "/upload-folder/logs/by-dtn/{db_dtn}", response_model=BulkUploadLogListResponse
+)
 def get_upload_folder_logs_by_dtn(
     db_dtn: str,
     db: Session = Depends(get_db),
@@ -841,3 +952,155 @@ def list_documents_by_dtn(
     all entry types and document categories."""
     docs = crud_doc.get_documents_by_dtn(db, db_dtn)
     return ApplicationDocumentListResponse(data=docs, total=len(docs))
+
+
+@router.post("/upload-folder/single", response_model=BatchUploadResult, status_code=201)
+async def upload_single_folder_file(
+    db_entry_type: Annotated[str, Form(...)],
+    db_dtn: Annotated[str, Form(...)],
+    relative_path: Annotated[str, Form(...)],
+    batch_id: Annotated[str, Form(...)],
+    file: Annotated[UploadFile, File(...)],
+    main_db_id: Annotated[int | None, Form()] = None,
+    doc_category: Annotated[str | None, Form()] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Uploads a single file that belongs to a folder batch (using the `batch_id`
+    from the parent request).
+
+    This endpoint is used by the frontend instead of sending one large
+    multi-file request. It enables real-time, byte-level upload progress
+    tracking for each file and supports concurrent uploads, resulting in
+    significantly better performance than sequentially uploading files to
+    Google Drive within a single request.
+    """
+    category_parts = (
+        [p.strip() for p in doc_category.split("/") if p.strip()]
+        if doc_category and doc_category.strip()
+        else []
+    )
+    filename = file.filename
+    content_type = file.content_type
+
+    def _log(
+        status,
+        error_message=None,
+        mime_type=None,
+        file_size_bytes=None,
+        application_document_id=None,
+    ):
+        try:
+            crud_log.create_log(
+                db,
+                BulkUploadLogCreate(
+                    batch_id=batch_id,
+                    main_db_id=main_db_id,
+                    db_entry_type=db_entry_type,
+                    db_dtn=db_dtn,
+                    doc_category=doc_category,
+                    original_filename=filename,
+                    relative_path=relative_path,
+                    status=status,
+                    error_message=error_message,
+                    mime_type=mime_type,
+                    file_size_bytes=file_size_bytes,
+                    application_document_id=application_document_id,
+                    uploaded_by_user_id=current_user.id,
+                    uploaded_by_user_name=current_user.username,
+                ),
+            )
+        except Exception as log_exc:
+            print(f"[BulkUploadLog] Failed to write log for {filename}: {log_exc}")
+
+    if content_type not in ALLOWED_MIME_TYPES:
+        error_msg = f"File type '{content_type}' is not allowed."
+        _log("failed", error_msg, content_type)
+        return BatchUploadResult(filename=filename, success=False, error=error_msg)
+
+    file_bytes = await file.read()
+    if len(file_bytes) > MAX_FILE_SIZE:
+        error_msg = "File exceeds the 200 MB limit."
+        _log("failed", error_msg, content_type, len(file_bytes))
+        return BatchUploadResult(filename=filename, success=False, error=error_msg)
+
+    candidate_id = crud_doc.get_existing_folder_id(
+        db, db_entry_type, db_dtn, doc_category
+    )
+    if candidate_id and folder_exists(candidate_id):
+        folder_id = candidate_id
+    else:
+        try:
+            folder_id = get_or_create_folder_path(db_entry_type, db_dtn, category_parts)
+        except Exception as exc:
+            error_msg = f"Failed to prepare Drive folder: {exc}"
+            _log("failed", error_msg, content_type, len(file_bytes))
+            return BatchUploadResult(filename=filename, success=False, error=error_msg)
+
+    existing_doc = crud_doc.get_existing_document_by_name(
+        db, db_entry_type, db_dtn, doc_category, filename
+    )
+    existing_drive_file_id = find_file_in_folder(filename, folder_id)
+
+    try:
+        drive_result = upload_file_to_drive(
+            file_bytes=file_bytes,
+            filename=filename,
+            mime_type=content_type,
+            folder_id=folder_id,
+            existing_file_id=existing_drive_file_id,
+        )
+        from app.schemas.application_document import ApplicationDocumentCreate
+
+        if existing_doc:
+            doc = crud_doc.overwrite_document(
+                db,
+                existing_doc,
+                drive_file_id=drive_result["file_id"],
+                drive_file_url=drive_result["file_url"],
+                drive_folder_id=drive_result.get("folder_id") or folder_id,
+                mime_type=content_type,
+                file_size_bytes=len(file_bytes),
+                uploaded_by_user_id=current_user.id,
+                uploaded_by_user_name=current_user.username,
+            )
+        else:
+            payload = ApplicationDocumentCreate(
+                main_db_id=main_db_id,
+                db_entry_type=db_entry_type,
+                db_dtn=db_dtn,
+                doc_category=doc_category,
+                drive_file_id=drive_result["file_id"],
+                drive_file_url=drive_result["file_url"],
+                drive_folder_id=drive_result.get("folder_id") or folder_id,
+                original_filename=filename,
+                mime_type=content_type,
+                file_size_bytes=len(file_bytes),
+                uploaded_by_user_id=current_user.id,
+                uploaded_by_user_name=current_user.username,
+            )
+            doc = crud_doc.create_document(db, payload)
+
+        _log(
+            "success",
+            "Overwritten (replaced existing file)." if existing_doc else None,
+            content_type,
+            len(file_bytes),
+            doc.id,
+        )
+
+        return BatchUploadResult(
+            filename=filename,
+            success=True,
+            document=UploadDocumentResponse(
+                id=doc.id,
+                drive_file_id=doc.drive_file_id,
+                drive_file_url=doc.drive_file_url,
+                original_filename=doc.original_filename,
+                file_size_bytes=doc.file_size_bytes,
+            ),
+        )
+    except Exception as exc:
+        _log("failed", str(exc), content_type, len(file_bytes))
+        return BatchUploadResult(filename=filename, success=False, error=str(exc))
