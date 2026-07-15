@@ -1,6 +1,7 @@
 """
 Schemas for ApplicationLogs + MainDB Joined View
 """
+
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, date
@@ -11,6 +12,7 @@ from datetime import datetime, date
 # ---------------------
 class MainDBBrief(BaseModel):
     """All MainDB columns embedded in joined log response"""
+
     DB_ID: int
 
     # Establishment Information
@@ -164,6 +166,7 @@ class LogWithMainDBResponse(BaseModel):
     Single ApplicationLog row joined with MainDB.
     Used for table rows.
     """
+
     # Log fields
     id: int
     main_db_id: int
@@ -195,30 +198,37 @@ class LogWithMainDBResponse(BaseModel):
     received_at: Optional[datetime] = None
     received_by: Optional[str] = None
 
-    # ── Starred tracking ──          
+    # ── Starred tracking ──
     is_starred: int = 0
     starred_at: Optional[datetime] = None
+
+    # ── Target tracking (NEW) ──
+    is_targeted: bool = False
+    target_start_date: Optional[date] = None
+    target_end_date: Optional[date] = None
+    target_remarks: Optional[str] = None
 
     # Joined MainDB info
     main_db: Optional[MainDBBrief] = None
 
     #  Sent by (previous log) + previous log fields
-    sent_by_user_name:            Optional[str]      = None
-    sent_by_user_id:              Optional[int]      = None
-    sent_at:                      Optional[datetime] = None
-    sent_by_first_name:           Optional[str]      = None 
-    sent_by_surname:              Optional[str]      = None  
-    prev_application_step:        Optional[str]      = None
-    prev_application_status:      Optional[str]      = None
-    prev_application_decision:    Optional[str]      = None
-    prev_application_remarks:     Optional[str]      = None
-    prev_action_type:             Optional[str]      = None
-    prev_decision_result:         Optional[str]      = None
-    prev_decision_authority:      Optional[str]      = None
-    prev_accomplished_date:       Optional[datetime] = None
-    prev_start_date:              Optional[datetime] = None
-    prev_deadline_date:           Optional[date]     = None
+    sent_by_user_name: Optional[str] = None
+    sent_by_user_id: Optional[int] = None
+    sent_at: Optional[datetime] = None
+    sent_by_first_name: Optional[str] = None
+    sent_by_surname: Optional[str] = None
+    prev_application_step: Optional[str] = None
+    prev_application_status: Optional[str] = None
+    prev_application_decision: Optional[str] = None
+    prev_application_remarks: Optional[str] = None
+    prev_action_type: Optional[str] = None
+    prev_decision_result: Optional[str] = None
+    prev_decision_authority: Optional[str] = None
+    prev_accomplished_date: Optional[datetime] = None
+    prev_start_date: Optional[datetime] = None
+    prev_deadline_date: Optional[date] = None
     prev_del_index: Optional[int] = None
+
     class Config:
         from_attributes = True
 
@@ -237,11 +247,15 @@ class MarkReadResponse(BaseModel):
 # ---------------------
 class MarkReceivedRequest(BaseModel):
     """Bulk mark-as-received request body."""
-    ids: List[int] = Field(..., min_length=1, description="List of log IDs to mark as received")
+
+    ids: List[int] = Field(
+        ..., min_length=1, description="List of log IDs to mark as received"
+    )
 
 
 class MarkReceivedItemResponse(BaseModel):
     """Single item result in a bulk mark-as-received response."""
+
     id: int
     is_received: int
     received_at: Optional[datetime] = None
@@ -250,8 +264,9 @@ class MarkReceivedItemResponse(BaseModel):
 
 class MarkReceivedBulkResponse(BaseModel):
     """Response for bulk mark-as-received."""
-    updated: int                              # how many rows were actually changed
-    skipped: int                              # already received — no-op
+
+    updated: int  # how many rows were actually changed
+    skipped: int  # already received — no-op
     results: List[MarkReceivedItemResponse]
 
 

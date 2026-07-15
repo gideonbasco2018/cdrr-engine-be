@@ -2,14 +2,15 @@
 API Routes
 Include all route modules here
 """
+
 from fastapi import APIRouter
 from app.api.routes import (
-    auth, 
-    main_db, 
-    groups, 
-    doctrack, 
-    analytics, 
-    fda_verification_test_conn, 
+    auth,
+    main_db,
+    groups,
+    doctrack,
+    analytics,
+    fda_verification_test_conn,
     fda_verification,
     fda_verification_statistics,
     menu_permissions,
@@ -32,7 +33,9 @@ from app.api.routes import (
     frp_monitoring,
     application_document,
     duplicate_record,
+    target_assignments,
 )
+
 api_router = APIRouter()
 
 api_router.include_router(auth.router)
@@ -63,5 +66,4 @@ api_router.include_router(pdf_rename.router)
 api_router.include_router(frp_monitoring.router)
 api_router.include_router(application_document.router)
 api_router.include_router(duplicate_record.router)
-
- 
+api_router.include_router(target_assignments.router)
