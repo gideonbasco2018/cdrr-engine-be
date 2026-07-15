@@ -99,4 +99,6 @@ class TeamMemberOut(BaseModel):
     lead_role: str
     assigned_at: Optional[datetime] = None
     task_count: int = 0
+    completed_count: int = 0
+    in_progress_count: int = 0
     target_count: int = 0

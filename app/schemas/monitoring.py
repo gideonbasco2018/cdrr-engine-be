@@ -31,13 +31,14 @@ class RecordItem(BaseModel):
     id: int
     dtn: Optional[str] = None
     user_name: Optional[str] = None
-    full_name: Optional[str] = None   
+    full_name: Optional[str] = None
     drug_name: Optional[str] = None
     date_received_cent: Optional[str] = None
     timeline: Optional[str] = None
     app_step: Optional[str] = None
     app_status: Optional[str] = None
     prescription: Optional[str] = None
+    entry_type: Optional[str] = None
 
     class Config:
         orm_mode = True
@@ -49,6 +50,7 @@ class AllRecordsResponse(BaseModel):
     page_size: int
     total_pages: int
     data: List[RecordItem]
+
 
 # -----------------------------
 # Release record response
@@ -72,6 +74,7 @@ class ReleaseListResponse(BaseModel):
     page_size: int
     total_pages: int
     data: List[ReleaseRecord]
+
 
 # -----------------------------
 # Overview KPI Summary
@@ -115,41 +118,45 @@ class CprTrendResponse(BaseModel):
 
 
 # ── Processing Trend ───────────────────────────────────────────────────────────
- 
+
+
 class ProcessingTrendItem(BaseModel):
     """One data point in the trend series — one period (month or year)."""
-    period: str                  # e.g. "2025-01" (monthly) or "2025" (yearly)
-    received_count: int = 0      # records where DB_DATE_RECEIVED_CENT falls in period
-    released_count: int = 0      # records where DB_DATE_RELEASED falls in period
- 
- 
+
+    period: str  # e.g. "2025-01" (monthly) or "2025" (yearly)
+    received_count: int = 0  # records where DB_DATE_RECEIVED_CENT falls in period
+    released_count: int = 0  # records where DB_DATE_RELEASED falls in period
+
+
 class ProcessingTrendResponse(BaseModel):
     data: List[ProcessingTrendItem]
- 
+
     # Dropdown option lists returned alongside the data so the frontend
     # can populate its filter controls in a single request.
-    doc_types: List[str]         # distinct DB_TYPE_DOC_RELEASED values
+    doc_types: List[str]  # distinct DB_TYPE_DOC_RELEASED values
     processing_types: List[str]  # distinct DB_PROCESSING_TYPE values
-    entry_types: List[str]       # distinct DB_ENTRY_TYPE values
-    app_statuses: List[str]      # distinct DB_APP_STATUS values
-    app_types: List[str]         # distinct DB_APP_TYPE values
- 
- 
+    entry_types: List[str]  # distinct DB_ENTRY_TYPE values
+    app_statuses: List[str]  # distinct DB_APP_STATUS values
+    app_types: List[str]  # distinct DB_APP_TYPE values
+
+
 class ProcessingStatsSummary(BaseModel):
     """Aggregate counts broken down by a categorical column."""
-    label: str     # e.g. "CPR", "ORIGINAL", "APPROVED"
+
+    label: str  # e.g. "CPR", "ORIGINAL", "APPROVED"
     count: int
- 
- 
+
+
 class ProcessingBreakdownResponse(BaseModel):
     """
     Breakdown of record counts by one dimension (doc_type, processing_type,
     entry_type, app_status, or app_type) for the filtered result set.
     Used to power pie / bar charts.
     """
-    dimension: str                      # which column was grouped
+
+    dimension: str  # which column was grouped
     data: List[ProcessingStatsSummary]
- 
+
     # Same dropdown lists as ProcessingTrendResponse
     doc_types: List[str]
     processing_types: List[str]
@@ -157,7 +164,9 @@ class ProcessingBreakdownResponse(BaseModel):
     app_statuses: List[str]
     app_types: List[str]
 
+
 # ── Summary (formerly Weekly Status) ──────────────────────────────────────────
+
 
 class SummaryRow(BaseModel):
     app_type: str
@@ -181,7 +190,9 @@ class SummaryResponse(BaseModel):
     rows: List[SummaryRow]
     overall_status: List[SummaryStatusRow]
 
+
 # ── Application Status Overview ────────────────────────────────────────────────
+
 
 class ApplicationStatusStepCount(BaseModel):
     step: str

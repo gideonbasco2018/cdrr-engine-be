@@ -52,6 +52,30 @@ def count_member_tasks(db: Session, member_user_id: int) -> int:
     )
 
 
+def count_member_completed(db: Session, member_user_id: int) -> int:
+    return (
+        db.query(func.count(ApplicationLogs.id))
+        .filter(
+            ApplicationLogs.user_id == member_user_id,
+            ApplicationLogs.application_status == "COMPLETED",
+        )
+        .scalar()
+        or 0
+    )
+
+
+def count_member_in_progress(db: Session, member_user_id: int) -> int:
+    return (
+        db.query(func.count(ApplicationLogs.id))
+        .filter(
+            ApplicationLogs.user_id == member_user_id,
+            ApplicationLogs.application_status != "COMPLETED",
+        )
+        .scalar()
+        or 0
+    )
+
+
 def count_member_targets(db: Session, member_user_id: int) -> int:
     return (
         db.query(func.count(TargetAssignment.id))
@@ -85,6 +109,8 @@ def build_team_overview(db: Session, lead_user_id: int) -> List[TeamMemberOut]:
                 lead_role=a.lead_role,
                 assigned_at=a.assigned_at,
                 task_count=count_member_tasks(db, a.member_user_id),
+                completed_count=count_member_completed(db, a.member_user_id),
+                in_progress_count=count_member_in_progress(db, a.member_user_id),
                 target_count=count_member_targets(db, a.member_user_id),
             )
         )
