@@ -12,10 +12,9 @@ from app.models.bulk_upload_history_records import BulkUploadHistoryRecord
 from app.models.bulk_upload_history import BulkUploadHistory
 from app.models.closed_tasks import ClosedTask
 from app.models.lead_assignment import LeadAssignment
-from app.models.application_document import ApplicationDocument 
-from app.models.bulk_upload_log import BulkUploadLog 
-
-
+from app.models.application_document import ApplicationDocument
+from app.models.bulk_upload_log import BulkUploadLog
+from app.models.target_assignment import TargetAssignment
 
 __all__ = [
     "MainDB",
@@ -36,8 +35,6 @@ __all__ = [
     "ClosedTask",
     "LeadAssignment",
     "ApplicationDocument",
-    "BulkUploadLog"
-
-
+    "BulkUploadLog",
+    "TargetAssignment",
 ]
-

@@ -1,6 +1,6 @@
 # cdrr-engine/cdrr-engine-be/main.py
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request  
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -8,9 +8,9 @@ from app.core.config import settings
 from app.core.deadline_checker import run_deadline_notifications
 from app.core.security import refresh_token_if_needed
 from app.api.routes import (
-    auth, 
-    main_db, 
-    groups, 
+    auth,
+    main_db,
+    groups,
     application_logs,
     doctrack,
     analytics,
@@ -37,6 +37,7 @@ from app.api.routes import (
     frp_monitoring,
     application_document,
     duplicate_record,
+    target_assignments,
 )
 
 # ── Scheduler setup ───────────────────────────────────────────────────
@@ -51,6 +52,7 @@ scheduler.add_job(
     replace_existing=True,
 )
 
+
 # ── Lifespan (start/stop scheduler with the app) ─────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -59,6 +61,7 @@ async def lifespan(app: FastAPI):
     yield
     scheduler.shutdown()
     print("[Scheduler] Stopped.")
+
 
 # ── FastAPI app ───────────────────────────────────────────────────────
 app = FastAPI(
@@ -78,22 +81,27 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-New-Token"], 
+    expose_headers=["X-New-Token"],
 )
+
 
 # ── Token Auto-Refresh Middleware ─────────────────────────────────────  ← BAGO
 @app.middleware("http")
 async def auto_refresh_token(request: Request, call_next):
     response = await call_next(request)
-    
+
     auth_header = request.headers.get("Authorization", "")
-    token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else None
-    
+    token = (
+        auth_header.replace("Bearer ", "")
+        if auth_header.startswith("Bearer ")
+        else None
+    )
+
     if token:
         new_token = refresh_token_if_needed(token)
         if new_token:
             response.headers["X-New-Token"] = new_token
-    
+
     return response
 
 
@@ -113,21 +121,21 @@ app.include_router(otc.router)
 app.include_router(cdrr_report.router)
 app.include_router(workflow_tasks.router)
 app.include_router(field_audit_log.router)
-app.include_router(notifications.router)  
-app.include_router(bulk_upload_history.router) 
-app.include_router(dashboard.router) 
-app.include_router(applications.router) 
-app.include_router(monitoring.router) 
-app.include_router(spellcheck.router) 
-app.include_router(closed_tasks.router) 
-app.include_router(lead_assignment.router) 
-app.include_router(cpr_correction.router) 
+app.include_router(notifications.router)
+app.include_router(bulk_upload_history.router)
+app.include_router(dashboard.router)
+app.include_router(applications.router)
+app.include_router(monitoring.router)
+app.include_router(spellcheck.router)
+app.include_router(closed_tasks.router)
+app.include_router(lead_assignment.router)
+app.include_router(cpr_correction.router)
 app.include_router(doc_type_released.router)
 app.include_router(pdf_rename.router)
 app.include_router(frp_monitoring.router)
 app.include_router(application_document.router)
 app.include_router(duplicate_record.router)
-
+app.include_router(target_assignments.router)
 
 
 @app.get("/")

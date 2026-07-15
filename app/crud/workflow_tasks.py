@@ -1,6 +1,7 @@
 """
 CRUD: ApplicationLogs RIGHT JOIN MainDB
 """
+
 from sqlalchemy.orm import Session, contains_eager
 from sqlalchemy import func, desc, or_, and_
 from typing import Optional, List, Tuple
@@ -11,6 +12,8 @@ PHT = timezone(timedelta(hours=8))
 from app.models.application_logs import ApplicationLogs
 from app.models.main_db import MainDB
 from app.models.user import User
+from app.models.target_assignment import TargetAssignment
+
 
 def get_logs_joined_with_main_db(
     db: Session,
@@ -61,7 +64,7 @@ def get_logs_joined_with_main_db(
             and_(
                 ApplicationLogs.main_db_id == latest_subq.c.main_db_id,
                 ApplicationLogs.del_thread == latest_subq.c.del_thread,
-                ApplicationLogs.del_index  == latest_subq.c.max_del_index,
+                ApplicationLogs.del_index == latest_subq.c.max_del_index,
             ),
         )
 
@@ -76,7 +79,9 @@ def get_logs_joined_with_main_db(
     if application_status:
         query = query.filter(ApplicationLogs.application_status == application_status)
     if application_decision:
-        query = query.filter(ApplicationLogs.application_decision == application_decision)
+        query = query.filter(
+            ApplicationLogs.application_decision == application_decision
+        )
     if user_name:
         query = query.filter(ApplicationLogs.user_name == user_name)
     if user_id is not None:
@@ -87,12 +92,16 @@ def get_logs_joined_with_main_db(
         query = query.filter(MainDB.DB_EST_CAT == est_cat)
     if app_type:
         if app_type == "__EMPTY__":
-            query = query.filter(or_(MainDB.DB_APP_TYPE.is_(None), MainDB.DB_APP_TYPE == ""))
+            query = query.filter(
+                or_(MainDB.DB_APP_TYPE.is_(None), MainDB.DB_APP_TYPE == "")
+            )
         else:
             query = query.filter(MainDB.DB_APP_TYPE == app_type)
     if db_app_status:
         if db_app_status == "__EMPTY__":
-            query = query.filter(or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == ""))
+            query = query.filter(
+                or_(MainDB.DB_APP_STATUS.is_(None), MainDB.DB_APP_STATUS == "")
+            )
         else:
             query = query.filter(MainDB.DB_APP_STATUS == db_app_status)
     if lto_company:
@@ -104,14 +113,19 @@ def get_logs_joined_with_main_db(
     if prescription:
         if prescription == "__EMPTY__":
             query = query.filter(
-                or_(MainDB.DB_PROD_CLASS_PRESCRIP.is_(None), MainDB.DB_PROD_CLASS_PRESCRIP == "")
+                or_(
+                    MainDB.DB_PROD_CLASS_PRESCRIP.is_(None),
+                    MainDB.DB_PROD_CLASS_PRESCRIP == "",
+                )
             )
         else:
             query = query.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
     if processing_type:
         if processing_type == "__EMPTY__":
             query = query.filter(
-                or_(MainDB.DB_PROCESSING_TYPE.is_(None), MainDB.DB_PROCESSING_TYPE == "")
+                or_(
+                    MainDB.DB_PROCESSING_TYPE.is_(None), MainDB.DB_PROCESSING_TYPE == ""
+                )
             )
         else:
             query = query.filter(MainDB.DB_PROCESSING_TYPE == processing_type)
@@ -133,13 +147,22 @@ def get_logs_joined_with_main_db(
     total = query.count()
 
     LOG_SORT_FIELDS = {
-        "created_at", "updated_at", "accomplished_date", "start_date",
-        "del_index", "del_last_index", "application_step",
-        "application_status", "user_name",
+        "created_at",
+        "updated_at",
+        "accomplished_date",
+        "start_date",
+        "del_index",
+        "del_last_index",
+        "application_step",
+        "application_status",
+        "user_name",
     }
     MAIN_DB_SORT_FIELDS = {
-        "DB_DATE_EXCEL_UPLOAD", "DB_DTN", "DB_EST_LTO_COMP",
-        "DB_PROD_BR_NAME", "DB_APP_STATUS",
+        "DB_DATE_EXCEL_UPLOAD",
+        "DB_DTN",
+        "DB_EST_LTO_COMP",
+        "DB_PROD_BR_NAME",
+        "DB_APP_STATUS",
     }
 
     if sort_by in LOG_SORT_FIELDS and hasattr(ApplicationLogs, sort_by):
@@ -162,6 +185,7 @@ def get_logs_joined_with_main_db(
     #   log.sent_by_user_id    → user_id of the sender
     #   log.sent_at            → "Last Modified" column (when it was forwarded)
     _attach_sent_by(db, logs)
+    _attach_target_info(db, logs)
     # ─────────────────────────────────────────────────────────────────────────
 
     return logs, total
@@ -188,19 +212,12 @@ def _attach_sent_by(db: Session, logs: List[ApplicationLogs]) -> None:
         conditions = [
             and_(
                 ApplicationLogs.main_db_id == mid,
-                ApplicationLogs.del_index  == didx,
+                ApplicationLogs.del_index == didx,
             )
             for mid, didx in pairs
         ]
-        prev_logs = (
-            db.query(ApplicationLogs)
-            .filter(or_(*conditions))
-            .all()
-        )
-        prev_lookup = {
-            (row.main_db_id, row.del_index): row
-            for row in prev_logs
-        }
+        prev_logs = db.query(ApplicationLogs).filter(or_(*conditions)).all()
+        prev_lookup = {(row.main_db_id, row.del_index): row for row in prev_logs}
 
     # Collect all sent_by_user_ids to bulk-fetch user info
     user_ids = set()
@@ -218,28 +235,56 @@ def _attach_sent_by(db: Session, logs: List[ApplicationLogs]) -> None:
     # Attach attributes
     for log in logs:
         prev = prev_lookup.get((log.main_db_id, log.del_previous))
-        log.sent_by_user_name        = prev.user_name               if prev else None
-        log.sent_by_user_id          = prev.user_id                 if prev else None
-        log.sent_at                  = prev.updated_at              if prev else None
+        log.sent_by_user_name = prev.user_name if prev else None
+        log.sent_by_user_id = prev.user_id if prev else None
+        log.sent_at = prev.updated_at if prev else None
 
         # NEW: resolve first_name + surname from sent_by_user_id
         sender = user_lookup.get(prev.user_id) if prev and prev.user_id else None
-        log.sent_by_first_name       = sender.first_name            if sender else None
-        log.sent_by_surname          = sender.surname               if sender else None
+        log.sent_by_first_name = sender.first_name if sender else None
+        log.sent_by_surname = sender.surname if sender else None
 
-        log.prev_del_index           = prev.del_index               if prev else None
-        log.prev_application_step    = prev.application_step        if prev else None
-        log.prev_application_status  = prev.application_status      if prev else None
-        log.prev_application_decision = prev.application_decision   if prev else None
-        log.prev_application_remarks = prev.application_remarks     if prev else None
-        log.prev_action_type         = prev.action_type             if prev else None
-        log.prev_decision_result     = prev.decision_result         if prev else None
-        log.prev_decision_authority  = prev.decision_authority_name if prev else None
-        log.prev_accomplished_date   = prev.accomplished_date        if prev else None
-        log.prev_start_date          = prev.start_date              if prev else None
-        log.prev_deadline_date       = prev.deadline_date           if prev else None
+        log.prev_del_index = prev.del_index if prev else None
+        log.prev_application_step = prev.application_step if prev else None
+        log.prev_application_status = prev.application_status if prev else None
+        log.prev_application_decision = prev.application_decision if prev else None
+        log.prev_application_remarks = prev.application_remarks if prev else None
+        log.prev_action_type = prev.action_type if prev else None
+        log.prev_decision_result = prev.decision_result if prev else None
+        log.prev_decision_authority = prev.decision_authority_name if prev else None
+        log.prev_accomplished_date = prev.accomplished_date if prev else None
+        log.prev_start_date = prev.start_date if prev else None
+        log.prev_deadline_date = prev.deadline_date if prev else None
+
 
 # ── unchanged functions below ─────────────────────────────────────────────────
+def _attach_target_info(db: Session, logs: List[ApplicationLogs]) -> None:
+    """
+    Bulk-fetch active TargetAssignment rows for the given logs and attach
+    is_targeted / target_start_date / target_end_date / target_remarks
+    as Python attributes — same pattern as _attach_sent_by, no N+1.
+    """
+    log_ids = [log.id for log in logs]
+    if not log_ids:
+        return
+
+    targets = (
+        db.query(TargetAssignment)
+        .filter(
+            TargetAssignment.application_log_id.in_(log_ids),
+            TargetAssignment.is_active == True,  # noqa: E712
+        )
+        .all()
+    )
+    target_lookup = {t.application_log_id: t for t in targets}
+
+    for log in logs:
+        t = target_lookup.get(log.id)
+        log.is_targeted = t is not None
+        log.target_start_date = t.target_start_date if t else None
+        log.target_end_date = t.target_end_date if t else None
+        log.target_remarks = t.remarks if t else None
+
 
 def get_logs_by_thread(
     db: Session,
@@ -255,7 +300,7 @@ def get_logs_by_thread(
         .order_by(ApplicationLogs.del_index.asc())
     )
     total = query.count()
-    logs  = query.offset(skip).limit(limit).all()
+    logs = query.offset(skip).limit(limit).all()
     return logs, total
 
 
@@ -279,27 +324,24 @@ def mark_logs_as_received(
     log_ids: List[int],
     received_by: str,
 ) -> Tuple[List[ApplicationLogs], int, int]:
-    logs = (
-        db.query(ApplicationLogs)
-        .filter(ApplicationLogs.id.in_(log_ids))
-        .all()
-    )
-    now_pht  = datetime.now(PHT).replace(tzinfo=None)
+    logs = db.query(ApplicationLogs).filter(ApplicationLogs.id.in_(log_ids)).all()
+    now_pht = datetime.now(PHT).replace(tzinfo=None)
     updated: List[ApplicationLogs] = []
-    skipped  = 0
+    skipped = 0
     for log in logs:
         if log.is_received:
             skipped += 1
         else:
-            log.is_received  = 1
-            log.received_at  = now_pht
-            log.received_by  = received_by
+            log.is_received = 1
+            log.received_at = now_pht
+            log.received_by = received_by
             updated.append(log)
     if updated:
         db.commit()
         for log in updated:
             db.refresh(log)
     return updated, len(updated), skipped
+
 
 def get_task_count_for_user(
     db: Session,
