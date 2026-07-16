@@ -13,6 +13,7 @@ from app.schemas.target_assignment import (
     TargetAssignmentCreate,
     TargetAssignmentBulkCreate,
     TeamMemberOut,
+    AllTeamsMemberOut,
     MemberTaskOut,
 )
 
@@ -52,30 +53,6 @@ def count_member_tasks(db: Session, member_user_id: int) -> int:
     )
 
 
-def count_member_completed(db: Session, member_user_id: int) -> int:
-    return (
-        db.query(func.count(ApplicationLogs.id))
-        .filter(
-            ApplicationLogs.user_id == member_user_id,
-            ApplicationLogs.application_status == "COMPLETED",
-        )
-        .scalar()
-        or 0
-    )
-
-
-def count_member_in_progress(db: Session, member_user_id: int) -> int:
-    return (
-        db.query(func.count(ApplicationLogs.id))
-        .filter(
-            ApplicationLogs.user_id == member_user_id,
-            ApplicationLogs.application_status != "COMPLETED",
-        )
-        .scalar()
-        or 0
-    )
-
-
 def count_member_targets(db: Session, member_user_id: int) -> int:
     return (
         db.query(func.count(TargetAssignment.id))
@@ -109,9 +86,43 @@ def build_team_overview(db: Session, lead_user_id: int) -> List[TeamMemberOut]:
                 lead_role=a.lead_role,
                 assigned_at=a.assigned_at,
                 task_count=count_member_tasks(db, a.member_user_id),
-                completed_count=count_member_completed(db, a.member_user_id),
-                in_progress_count=count_member_in_progress(db, a.member_user_id),
                 target_count=count_member_targets(db, a.member_user_id),
+            )
+        )
+    return result
+
+
+# ── Monitoring: EVERY team, not just the current lead's ──────────────
+def get_all_active_lead_assignments(db: Session) -> List[LeadAssignment]:
+    return (
+        db.query(LeadAssignment)
+        .filter(LeadAssignment.is_active == True)  # noqa: E712
+        .all()
+    )
+
+
+def build_all_teams_overview(db: Session) -> List[AllTeamsMemberOut]:
+    assignments = get_all_active_lead_assignments(db)
+
+    result: List[AllTeamsMemberOut] = []
+    for a in assignments:
+        result.append(
+            AllTeamsMemberOut(
+                lead_assignment_id=a.id,
+                member_user_id=a.member_user_id,
+                member_name=(
+                    f"{a.member.first_name} {a.member.surname}".strip()
+                    if a.member
+                    else ""
+                ),
+                lead_role=a.lead_role,
+                assigned_at=a.assigned_at,
+                task_count=count_member_tasks(db, a.member_user_id),
+                target_count=count_member_targets(db, a.member_user_id),
+                lead_user_id=a.lead_user_id,
+                lead_name=(
+                    f"{a.lead.first_name} {a.lead.surname}".strip() if a.lead else ""
+                ),
             )
         )
     return result
