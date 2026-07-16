@@ -99,6 +99,12 @@ class TeamMemberOut(BaseModel):
     lead_role: str
     assigned_at: Optional[datetime] = None
     task_count: int = 0
-    completed_count: int = 0
-    in_progress_count: int = 0
     target_count: int = 0
+
+
+# ── "Every team" view (Monitoring) ───────────────────────────────────
+# Same shape as TeamMemberOut, plus which lead this member reports to —
+# used when an admin browses ALL teams instead of just "my team".
+class AllTeamsMemberOut(TeamMemberOut):
+    lead_user_id: int
+    lead_name: str

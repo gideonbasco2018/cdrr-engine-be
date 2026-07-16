@@ -6,13 +6,14 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.core.deps import get_current_active_user
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.crud import target_assignment as crud_target_assignment
 from app.schemas.target_assignment import (
     TargetAssignmentCreate,
     TargetAssignmentBulkCreate,
     TargetAssignmentOut,
     TeamMemberOut,
+    AllTeamsMemberOut,
     MemberTaskOut,
 )
 
@@ -20,6 +21,14 @@ router = APIRouter(
     prefix="/api/target_assignments",
     tags=["Target Assignments "],
 )
+
+
+def _require_admin(current_user: User) -> None:
+    if current_user.role not in (UserRole.ADMIN, UserRole.SUPERADMIN):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admins only.",
+        )
 
 
 # ── GET /api/lead-assignments/my-team ───────────────────────────────
@@ -49,6 +58,34 @@ def get_member_tasks(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This user is not on your team.",
         )
+    return crud_target_assignment.get_member_tasks(db, member_user_id)
+
+
+# ── GET /api/lead-assignments/all-teams ─────────────────────────────
+# Monitoring/admin view — EVERY active lead assignment across the org,
+# not just the current user's own team.
+@router.get("/lead-assignments/all-teams", response_model=List[AllTeamsMemberOut])
+def get_all_teams(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    _require_admin(current_user)
+    return crud_target_assignment.build_all_teams_overview(db)
+
+
+# ── GET /api/lead-assignments/all-teams/{member_user_id}/tasks ─────
+# Same task list as get_member_tasks, but without the "is this user on
+# MY team" check — admins can look at anyone's tasks.
+@router.get(
+    "/lead-assignments/all-teams/{member_user_id}/tasks",
+    response_model=List[MemberTaskOut],
+)
+def get_all_teams_member_tasks(
+    member_user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    _require_admin(current_user)
     return crud_target_assignment.get_member_tasks(db, member_user_id)
 
 
