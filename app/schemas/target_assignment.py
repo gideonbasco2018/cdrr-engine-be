@@ -69,6 +69,17 @@ class TargetAssignmentOut(BaseModel):
     untargeted_at: Optional[datetime] = None
 
 
+# ── One entry in an application's step history (application_logs row) ──
+class ApplicationHistoryEntry(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    step: Optional[str] = None
+    status: Optional[str] = None
+    date: Optional[datetime] = None
+    decision: Optional[str] = None
+    user_name: Optional[str] = None
+
+
 # ── Combined view for the "team + tasks" screen ─────────────────────
 # One row = one application_logs task, flattened with brand/DTN info
 # from main_db, plus whether it's currently targeted.
@@ -81,6 +92,8 @@ class MemberTaskOut(BaseModel):
     brand_name: Optional[str] = None
     step: Optional[str] = None
     status: Optional[str] = None
+    entry_type: Optional[str] = None
+    app_type: Optional[str] = None
     date_accomplished: Optional[datetime] = None
     date_received_center: Optional[str] = None
     is_targeted: bool = False
@@ -88,6 +101,10 @@ class MemberTaskOut(BaseModel):
     target_start_date: Optional[date] = None
     target_end_date: Optional[date] = None
     target_remarks: Optional[str] = None
+    # Weighted per-stage checklist (see compute_application_progress in
+    # crud/target_assignment.py for the exact stage weights/rules).
+    application_progress_percent: Optional[float] = None
+    application_history: List[ApplicationHistoryEntry] = []
 
 
 class TeamMemberOut(BaseModel):

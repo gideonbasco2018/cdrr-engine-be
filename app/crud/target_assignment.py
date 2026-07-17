@@ -1,5 +1,6 @@
 # app/crud/target_assignment.py
 
+from collections import defaultdict
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -15,7 +16,32 @@ from app.schemas.target_assignment import (
     TeamMemberOut,
     AllTeamsMemberOut,
     MemberTaskOut,
+    ApplicationHistoryEntry,
 )
+
+# Status kinds treated as "terminal" (application is done, one way or
+# another) — used by get_application_progress below. Kept in sync with
+# the frontend's STATUS_KIND_MAP; update both if statuses change.
+_DONE_STATUSES = {"COMPLETED", "CLOSED", "RELEASED"}
+_STOPPED_STATUSES = {"CANCELLED", "CANCELED", "REJECTED", "DENIED"}
+
+# ── Application progress: weighted per-stage checklist ──────────────
+# ⚠️ CONFIRM/CORRECT these step_names with Gids — see the docstring on
+# compute_application_progress() below for the full explanation.
+APPLICATION_STAGE_WEIGHTS = [
+    {"key": "quality_evaluation", "weight": 40, "step_names": ["Quality Evaluation"]},
+    {"key": "checker", "weight": 10, "step_names": ["Checking"]},
+    {"key": "supervisor", "weight": 10, "step_names": ["PRSDD Compliance"]},
+    {"key": "qa_admin", "weight": 10, "step_names": ["PRSDD Chief Admin"]},
+    {"key": "lrd_chief_admin", "weight": 10, "step_names": ["LRD Chief Admin"]},
+    {"key": "od_receiving", "weight": 10, "step_names": ["OD-Receiving"]},
+    {
+        "key": "od_releasing",
+        "weight": 10,
+        "step_names": ["OD-Releasing", "Releasing Officer"],
+    },
+]
+_TERMINAL_RELEASE_STEPS = {"OD-RELEASING", "RELEASING OFFICER"}
 
 
 # ── Lead assignment helpers ─────────────────────────────────────────
@@ -128,6 +154,97 @@ def build_all_teams_overview(db: Session) -> List[AllTeamsMemberOut]:
     return result
 
 
+# ── Application progress (approximation — see module docstring note) ──
+def get_application_history_map(db: Session, main_db_ids: List[int]) -> dict:
+    """
+    One query for ALL application_logs belonging to the given main_db_ids,
+    grouped by main_db_id and ordered chronologically. Used to build both
+    the progress bar and the hover "history" tooltip without an N+1 query
+    per row.
+    """
+    if not main_db_ids:
+        return {}
+    history_rows = (
+        db.query(ApplicationLogs)
+        .filter(ApplicationLogs.main_db_id.in_(main_db_ids))
+        .order_by(ApplicationLogs.main_db_id, ApplicationLogs.created_at.asc())
+        .all()
+    )
+    grouped = defaultdict(list)
+    for h in history_rows:
+        grouped[h.main_db_id].append(h)
+    return grouped
+
+
+def compute_application_progress(history: List[ApplicationLogs]) -> float:
+    """
+    Weighted per-stage checklist (as specified by Gids):
+      Quality Evaluation .......... 40%
+      Checker  ..................... +10%
+      Supervisor .................... +10%
+      QA Admin ...................... +10%
+      LRD Chief Admin ............... +10%
+      OD-Receiving ................... +10%
+      OD-Releasing .................... +10%   (sums to 100%)
+
+    A stage is credited ONCE its step has EVER shown a "done" status
+    (Completed/Closed/Released) anywhere in the application's full
+    history — an existence check, not a running/current-step position.
+    This means if a step bounces back later (e.g. sent back to Quality
+    Evaluation for another round), the percentage does NOT drop and
+    does NOT add extra points either — it just stays at whatever was
+    already earned. The application only ever reads 100% once the
+    releasing stage itself (OD-Releasing / "Releasing Officer") is
+    completed — which is also the last stage below, so both conditions
+    agree by construction.
+
+    ⚠️ CONFIRM WITH GIDS: the `step_names` below are a best guess based
+    on the literal `application_step` values seen so far (Quality
+    Evaluation, Checking, PRSDD Compliance, PRSDD Chief Admin, LRD
+    Chief Admin, OD-Receiving, OD-Releasing). "Checker" / "Supervisor" /
+    "QA Admin" don't appear verbatim as step text anywhere I've seen —
+    please verify/correct which literal step maps to each stage below.
+    """
+    if not history:
+        return 0.0
+
+    def is_done(log: ApplicationLogs) -> bool:
+        return (log.application_status or "").strip().upper() in _DONE_STATUSES
+
+    # Terminal: the releasing step itself is completed -> 100%, full stop.
+    for h in history:
+        step_key = (h.application_step or "").strip().upper()
+        if step_key in _TERMINAL_RELEASE_STEPS and is_done(h):
+            return 100.0
+
+    total = 0
+    for stage in APPLICATION_STAGE_WEIGHTS:
+        names = {n.strip().upper() for n in stage["step_names"]}
+        earned = any(
+            (h.application_step or "").strip().upper() in names and is_done(h)
+            for h in history
+        )
+        if earned:
+            total += stage["weight"]
+
+    return min(100.0, float(total))
+
+
+def build_application_history_entries(
+    history: List[ApplicationLogs],
+) -> List[ApplicationHistoryEntry]:
+    return [
+        ApplicationHistoryEntry(
+            step=h.application_step,
+            status=h.application_status,
+            date=h.start_date or h.created_at,
+            decision=h.application_decision,
+            user_name=h.user_name,
+        )
+        for h in history
+    ]
+
+
 # ── Member tasks (flattened application_logs + main_db + target state) ──
 def get_member_tasks(db: Session, member_user_id: int) -> List[MemberTaskOut]:
     rows = (
@@ -142,24 +259,34 @@ def get_member_tasks(db: Session, member_user_id: int) -> List[MemberTaskOut]:
         .all()
     )
 
-    return [
-        MemberTaskOut(
-            log_id=log.id,
-            db_id=main.DB_ID,
-            dtn=main.DB_DTN,
-            brand_name=main.DB_PROD_BR_NAME,
-            step=log.application_step,
-            status=log.application_status,
-            date_accomplished=log.accomplished_date,
-            date_received_center=main.DB_DATE_RECEIVED_CENT,
-            is_targeted=target is not None,
-            target_assignment_id=target.id if target else None,
-            target_start_date=target.target_start_date if target else None,
-            target_end_date=target.target_end_date if target else None,
-            target_remarks=target.remarks if target else None,
+    main_db_ids = list({main.DB_ID for _, main, _ in rows})
+    history_map = get_application_history_map(db, main_db_ids)
+
+    result = []
+    for log, main, target in rows:
+        history = history_map.get(main.DB_ID, [])
+        result.append(
+            MemberTaskOut(
+                log_id=log.id,
+                db_id=main.DB_ID,
+                dtn=main.DB_DTN,
+                brand_name=main.DB_PROD_BR_NAME,
+                step=log.application_step,
+                status=log.application_status,
+                entry_type=main.DB_ENTRY_TYPE or "ORIGINAL",
+                app_type=main.DB_APP_TYPE,
+                date_accomplished=log.accomplished_date,
+                date_received_center=main.DB_DATE_RECEIVED_CENT,
+                is_targeted=target is not None,
+                target_assignment_id=target.id if target else None,
+                target_start_date=target.target_start_date if target else None,
+                target_end_date=target.target_end_date if target else None,
+                target_remarks=target.remarks if target else None,
+                application_progress_percent=compute_application_progress(history),
+                application_history=build_application_history_entries(history),
+            )
         )
-        for log, main, target in rows
-    ]
+    return result
 
 
 # ── Target assignment mutations ─────────────────────────────────────
