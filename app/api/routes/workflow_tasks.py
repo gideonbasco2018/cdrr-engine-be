@@ -1,6 +1,7 @@
 """
 Router: ApplicationLogs + MainDB Joined View
 """
+
 import math
 from typing import Optional
 
@@ -46,7 +47,7 @@ def list_logs_with_main_db(
     user_name: Optional[str] = Query(None),
     user_id: Optional[int] = Query(None),
     main_db_id: Optional[int] = Query(None),
-    dtn: Optional[int] = Query(None),
+    dtn: Optional[str] = Query(None),
     est_cat: Optional[str] = Query(None),
     app_type: Optional[str] = Query(None),
     db_app_status: Optional[str] = Query(None),
@@ -74,7 +75,7 @@ def list_logs_with_main_db(
         application_status=application_status,
         application_decision=application_decision,
         user_name=user_name,
-        user_id=user_id, 
+        user_id=user_id,
         main_db_id=main_db_id,
         dtn=dtn,
         est_cat=est_cat,
@@ -186,7 +187,9 @@ def get_thread_history(
     Returns all logs ordered by del_index ascending.
     """
     skip = (page - 1) * page_size
-    logs, total = get_logs_by_thread(db=db, del_thread=del_thread, skip=skip, limit=page_size)
+    logs, total = get_logs_by_thread(
+        db=db, del_thread=del_thread, skip=skip, limit=page_size
+    )
     total_pages = math.ceil(total / page_size) if total > 0 else 0
 
     return {
@@ -196,6 +199,7 @@ def get_thread_history(
         "total_pages": total_pages,
         "data": logs,
     }
+
 
 @router.get("/my-task-count")
 def get_my_task_count(

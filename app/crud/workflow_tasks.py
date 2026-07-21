@@ -28,7 +28,7 @@ def get_logs_joined_with_main_db(
     user_name: Optional[str] = None,
     user_id: Optional[int] = None,
     main_db_id: Optional[int] = None,
-    dtn: Optional[int] = None,
+    dtn: Optional[str] = None,
     est_cat: Optional[str] = None,
     app_type: Optional[str] = None,
     db_app_status: Optional[str] = None,
@@ -86,8 +86,13 @@ def get_logs_joined_with_main_db(
         query = query.filter(ApplicationLogs.user_name == user_name)
     if user_id is not None:
         query = query.filter(ApplicationLogs.user_id == user_id)
-    if dtn is not None:
-        query = query.filter(MainDB.DB_DTN == dtn)
+    if dtn:
+        query = query.filter(
+            or_(
+                MainDB.DB_DTN == int(dtn),
+                MainDB.DB_OLD_RSN == dtn,
+            )
+        )
     if est_cat:
         query = query.filter(MainDB.DB_EST_CAT == est_cat)
     if app_type:
