@@ -1,6 +1,15 @@
 # app/models/application_logs.py
 
-from sqlalchemy import Column, Integer, SmallInteger, String, Text, Date, ForeignKey, DateTime
+from sqlalchemy import (
+    Column,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    Date,
+    ForeignKey,
+    DateTime,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.base_class import Base
@@ -17,7 +26,7 @@ class ApplicationLogs(Base):
         Integer,
         ForeignKey("main_db.DB_ID", ondelete="CASCADE"),
         nullable=False,
-        index=True
+        index=True,
     )
 
     # Application Information
@@ -33,28 +42,41 @@ class ApplicationLogs(Base):
 
     # ── Compliance Deadline (NEW) ──────────────────────────────────────
     # Only populated when application_decision = 'For Compliance'
-    deadline_date          = Column(Date, nullable=True, index=True)   # target deadline
-    working_days           = Column(SmallInteger, nullable=True)        # e.g. 20
+    deadline_date = Column(Date, nullable=True, index=True)  # target deadline
+    working_days = Column(SmallInteger, nullable=True)  # e.g. 20
 
     # ── Read tracking ──────────────────────────────────────────────────
-    is_read = Column(SmallInteger, nullable=False, default=0)   # 0 = unread, 1 = read
-    read_at = Column(DateTime, nullable=True)                   # timestamp when opened
+    is_read = Column(SmallInteger, nullable=False, default=0)  # 0 = unread, 1 = read
+    read_at = Column(DateTime, nullable=True)  # timestamp when opened
 
     # User who performed the action
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     action_type = Column(String(100), nullable=True, index=True)
     decision_result = Column(String(255), nullable=True, index=True)
-    decision_authority_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    decision_authority_id = Column(
+        Integer, ForeignKey("users.id"), nullable=True, index=True
+    )
     decision_authority_name = Column(String(255), nullable=True)
-    doctrack_remarks        = Column(Text, nullable=True)   
+    doctrack_remarks = Column(Text, nullable=True)
 
     # ── Received tracking ─────────────────────────────────────────────
-    is_received  = Column(SmallInteger, nullable=False, default=0)  # 0 = not yet, 1 = received
-    received_at  = Column(DateTime, nullable=True)                   # timestamp when marked received
-    received_by  = Column(String(255), nullable=True)                # username who marked it
+    is_received = Column(
+        SmallInteger, nullable=False, default=0
+    )  # 0 = not yet, 1 = received
+    received_at = Column(DateTime, nullable=True)  # timestamp when marked received
+    received_by = Column(String(255), nullable=True)  # username who marked it
 
     # Relationship to MainDB (many-to-one)
     main_db = relationship("MainDB", back_populates="application_logs")
+    user = relationship("User", foreign_keys=[user_id])
+
+    @property
+    def user_first_name(self):
+        return self.user.first_name if self.user else None
+
+    @property
+    def user_surname(self):
+        return self.user.surname if self.user else None
 
     # Timestamps
     created_at = Column(DateTime, server_default=func.now())
