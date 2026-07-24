@@ -16,11 +16,15 @@ def _get_credentials() -> service_account.Credentials:
     info_str = os.getenv("GOOGLE_SERVICE_ACCOUNT_INFO")
     if info_str:
         info = json.loads(info_str)
-        return service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+        return service_account.Credentials.from_service_account_info(
+            info, scopes=SCOPES
+        )
 
     json_path = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
     if json_path:
-        return service_account.Credentials.from_service_account_file(json_path, scopes=SCOPES)
+        return service_account.Credentials.from_service_account_file(
+            json_path, scopes=SCOPES
+        )
 
     raise RuntimeError(
         "Google Drive credentials not configured. "
@@ -91,31 +95,20 @@ def upload_file_to_drive(
     existing_file_id: Optional[str] = None,
 ) -> dict:
     """
-    Kung may `existing_file_id`, ia-UPDATE (overwrite) ang laman ng file na
-    iyon — mananatili ang parehong Drive file ID at share link. Kung wala,
-    gagawa ng bagong file gaya ng dati.
+    Laging gumagawa ng BAGONG file sa Drive (bagong file_id) sa bawat upload —
+    tinatanggal ang luma pagkatapos ng successful upload. Ginagawa ito para
+    iwasan ang Google Drive thumbnail cache/regeneration delay na nangyayari
+    kapag pareho lang ang file_id na ina-overwrite.
     """
-    service   = _build_service()
+    service = _build_service()
     folder_id = folder_id or os.getenv("GOOGLE_DRIVE_FOLDER_ID")
 
-    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype=mime_type, resumable=True, chunksize=5 * 1024 * 1024)
-
-    if existing_file_id:
-        updated = (
-            service.files()
-            .update(
-                fileId=existing_file_id,
-                media_body=media,
-                fields="id, webViewLink, parents",
-                supportsAllDrives=True,
-            )
-            .execute()
-        )
-        return {
-            "file_id":   updated["id"],
-            "file_url":  updated.get("webViewLink", ""),
-            "folder_id": (updated.get("parents") or [folder_id])[0],
-        }
+    media = MediaIoBaseUpload(
+        io.BytesIO(file_bytes),
+        mimetype=mime_type,
+        resumable=True,
+        chunksize=5 * 1024 * 1024,
+    )
 
     metadata: dict = {"name": filename}
     if folder_id:
@@ -138,9 +131,19 @@ def upload_file_to_drive(
         supportsAllDrives=True,
     ).execute()
 
+    # Tanggalin ang lumang file matapos ang successful na bagong upload
+    if existing_file_id:
+        try:
+            service.files().delete(
+                fileId=existing_file_id,
+                supportsAllDrives=True,
+            ).execute()
+        except Exception as exc:
+            print(f"[GDrive] failed to delete old file {existing_file_id}: {exc}")
+
     return {
-        "file_id":   created["id"],
-        "file_url":  created.get("webViewLink", ""),
+        "file_id": created["id"],
+        "file_url": created.get("webViewLink", ""),
         "folder_id": (created.get("parents") or [None])[0],
     }
 
@@ -158,7 +161,9 @@ def delete_file_from_drive(file_id: str) -> bool:
         return False
 
 
-def _find_or_create_child_folder(service, parent_id: str, folder_name: str, drive_id: str) -> str:
+def _find_or_create_child_folder(
+    service, parent_id: str, folder_name: str, drive_id: str
+) -> str:
     query = (
         f"name = '{folder_name}' "
         f"and mimeType = 'application/vnd.google-apps.folder' "
@@ -240,7 +245,7 @@ def get_or_create_folder_path(
         service, current_id, db_dtn, drive_id=root_folder_id
     )
 
-    for part in (category_parts or []):
+    for part in category_parts or []:
         part = (part or "").strip()
         if part:
             current_id = _find_or_create_child_folder(
