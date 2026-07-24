@@ -13,6 +13,7 @@ from app.db.base_class import Base
 import enum
 from sqlalchemy.dialects.mysql import TINYINT
 
+
 # Define Role Enum
 class UserRole(str, enum.Enum):
     USER = "User"
@@ -34,7 +35,7 @@ class User(Base):
     first_name = Column(String(100), nullable=False)
     surname = Column(String(100), nullable=False)
     position = Column(String(100), nullable=True)
-    alias = Column(String(100), nullable=True) 
+    alias = Column(String(100), nullable=True)
 
     # role
     role = Column(Enum(UserRole), default=UserRole.USER, nullable=False)
@@ -44,17 +45,11 @@ class User(Base):
 
     # 🔗 ASSOCIATION OBJECT RELATIONSHIP
     user_groups = relationship(
-        "UserGroup",
-        back_populates="user",
-        cascade="all, delete-orphan"
+        "UserGroup", back_populates="user", cascade="all, delete-orphan"
     )
 
     # 🔁 CONVENIENCE MANY-TO-MANY (read-only)
-    groups = relationship(
-        "Group",
-        secondary="user_groups",
-        viewonly=True
-    )
+    groups = relationship("Group", secondary="user_groups", viewonly=True)
 
     # status
     is_active = Column(Boolean, default=True)
@@ -66,8 +61,16 @@ class User(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
-    
-    has_upload_history = Column(TINYINT(1), nullable=False, default=0, comment="Show upload history on dashboard")
+
+    has_upload_history = Column(
+        TINYINT(1),
+        nullable=False,
+        default=0,
+        comment="Show upload history on dashboard",
+    )
+
+    profile_picture_url = Column(String(500), nullable=True)
+    profile_picture_drive_id = Column(String(255), nullable=True)
 
     # 🔙 Backward compatibility (KEEP SAFE)
     @property

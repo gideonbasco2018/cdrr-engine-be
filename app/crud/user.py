@@ -15,10 +15,10 @@ from app.models.user_groups import UserGroup
 from app.schemas.auth import UserCreate, UserUpdate
 from app.core.security import get_password_hash, verify_password
 
-
 # ======================================================
 # BASIC GETTERS
 # ======================================================
+
 
 def get_by_id(db: Session, user_id: int) -> Optional[User]:
     return db.query(User).filter(User.id == user_id).first()
@@ -36,6 +36,7 @@ def get_by_username(db: Session, username: str) -> Optional[User]:
 # GROUP-BASED QUERIES
 # ======================================================
 
+
 def get_users_by_group(db: Session, group_id: int) -> List[User]:
     """
     Get all ACTIVE users belonging to a specific group
@@ -43,10 +44,7 @@ def get_users_by_group(db: Session, group_id: int) -> List[User]:
     return (
         db.query(User)
         .join(UserGroup)
-        .filter(
-            UserGroup.group_id == group_id,
-            User.is_active == True
-        )
+        .filter(UserGroup.group_id == group_id, User.is_active == True)
         .order_by(User.first_name, User.surname)
         .all()
     )
@@ -55,6 +53,7 @@ def get_users_by_group(db: Session, group_id: int) -> List[User]:
 # ======================================================
 # CREATE USER
 # ======================================================
+
 
 def create(db: Session, user_in: UserCreate) -> User:
     """
@@ -119,6 +118,7 @@ def create(db: Session, user_in: UserCreate) -> User:
 # UPDATE USER
 # ======================================================
 
+
 def update(db: Session, user_id: int, user_in: UserUpdate) -> Optional[User]:
     db_user = get_by_id(db, user_id)
     if not db_user:
@@ -153,6 +153,7 @@ def update(db: Session, user_id: int, user_in: UserUpdate) -> Optional[User]:
 # PASSWORD RESET
 # ======================================================
 
+
 def reset_user_password(db: Session, user_id: int, new_password: str) -> Optional[User]:
     """
     Manually reset user's password to a specified password
@@ -171,6 +172,7 @@ def reset_user_password(db: Session, user_id: int, new_password: str) -> Optiona
 # ======================================================
 # AUTHENTICATION
 # ======================================================
+
 
 def authenticate(db: Session, username: str, password: str) -> Optional[User]:
     user = get_by_username(db, username)
@@ -195,12 +197,17 @@ def is_active(user: User) -> bool:
 # ADMIN FUNCTIONS
 # ======================================================
 
-def get_all_users(db: Session, skip: int = 0, limit: Optional[int] = None) -> List[User]:
+
+def get_all_users(
+    db: Session, skip: int = 0, limit: Optional[int] = None
+) -> List[User]:
     q = db.query(User).offset(skip)
     return q.limit(limit).all() if limit else q.all()
 
 
-def get_pending_users(db: Session, skip: int = 0, limit: Optional[int] = None) -> List[User]:
+def get_pending_users(
+    db: Session, skip: int = 0, limit: Optional[int] = None
+) -> List[User]:
     q = (
         db.query(User)
         .filter(User.is_active == False)
@@ -265,6 +272,23 @@ def admin_update_user(db: Session, user_id: int, update_data: dict) -> Optional[
         if hasattr(user, field):
             setattr(user, field, value)
 
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def update_profile_picture(
+    db: Session,
+    user_id: int,
+    profile_picture_url: str,
+    profile_picture_drive_id: str,
+) -> Optional[User]:
+    """Update a user's profile picture reference after a successful Drive upload."""
+    user = get_by_id(db, user_id)
+    if not user:
+        return None
+    user.profile_picture_url = profile_picture_url
+    user.profile_picture_drive_id = profile_picture_drive_id
     db.commit()
     db.refresh(user)
     return user

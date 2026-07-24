@@ -1,10 +1,15 @@
 # app/api/routes/auth.py
 
 from datetime import timedelta
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from app.services.google_drive import (
+    upload_file_to_drive,
+    get_or_create_folder_path,
+    delete_file_from_drive,
+)
 
 from app.db.session import get_db
 from app.core.deps import get_current_active_user
@@ -30,11 +35,18 @@ router = APIRouter(
     tags=["Authentication"],
 )
 
+PROFILE_PIC_MAX_SIZE = 5 * 1024 * 1024  # 5 MB
+PROFILE_PIC_ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+
+
 # ========================================
 # AUTHENTICATION
 # ========================================
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+
+@router.post(
+    "/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED
+)
 def register(
     user_in: UserCreate,
     db: Session = Depends(get_db),
@@ -104,6 +116,60 @@ def get_current_user_info(
     return current_user
 
 
+@router.post("/me/profile-picture", response_model=UserResponse)
+async def upload_my_profile_picture(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Upload/replace the CURRENT user's own profile picture."""
+    if file.content_type not in PROFILE_PIC_ALLOWED_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail="Only JPG, PNG, GIF, or WEBP images are allowed.",
+        )
+
+    file_bytes = await file.read()
+    if len(file_bytes) > PROFILE_PIC_MAX_SIZE:
+        raise HTTPException(status_code=413, detail="Image exceeds the 5 MB limit.")
+
+    try:
+        folder_id = get_or_create_folder_path(
+            "Profile Pictures", current_user.username, []
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Failed to prepare Drive folder: {exc}"
+        )
+
+    existing_file_id = current_user.profile_picture_drive_id
+
+    try:
+        drive_result = upload_file_to_drive(
+            file_bytes=file_bytes,
+            filename=file.filename,
+            mime_type=file.content_type,
+            folder_id=folder_id,
+            existing_file_id=existing_file_id,
+        )
+        direct_url = (
+            f"https://drive.google.com/thumbnail?id={drive_result['file_id']}&sz=w200"
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Google Drive upload failed: {exc}"
+        )
+
+    updated_user = crud_user.update_profile_picture(
+        db,
+        user_id=current_user.id,
+        profile_picture_url=direct_url,
+        profile_picture_drive_id=drive_result["file_id"],
+    )
+
+    return updated_user
+
+
 @router.post("/logout")
 def logout(
     current_user: User = Depends(get_current_active_user),
@@ -134,6 +200,7 @@ def update_current_user(
 # ========================================
 # GROUP-BASED USER QUERIES
 # ========================================
+
 
 @router.get("/users/group", response_model=List[UserResponse])
 def get_group_users(
@@ -204,6 +271,7 @@ def get_my_group_users(
 # ========================================
 # ADMIN ONLY
 # ========================================
+
 
 @router.get("/admin/users/pending", response_model=List[UserResponse])
 def get_pending_users(
@@ -299,9 +367,7 @@ def reset_user_password(
         )
 
     user = crud_user.reset_user_password(
-        db,
-        user_id=user_id,
-        new_password=password_data.new_password
+        db, user_id=user_id, new_password=password_data.new_password
     )
 
     if not user:
@@ -392,12 +458,82 @@ def admin_update_user(
                 detail="Invalid role. Must be one of: User, Admin, SuperAdmin",
             )
 
-    updated_user = crud_user.admin_update_user(db, user_id=user_id, update_data=update_dict)
+    updated_user = crud_user.admin_update_user(
+        db, user_id=user_id, update_data=update_dict
+    )
 
     if not updated_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
+
+    return updated_user
+
+
+@router.post("/admin/users/{user_id}/profile-picture", response_model=UserResponse)
+async def upload_profile_picture(
+    user_id: int,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Upload/replace a user's profile picture — stored on Google Drive."""
+    if current_user.role not in [UserRole.ADMIN, UserRole.SUPERADMIN]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can update profile pictures",
+        )
+
+    target_user = crud_user.get_by_id(db, user_id=user_id)
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    if file.content_type not in PROFILE_PIC_ALLOWED_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail="Only JPG, PNG, GIF, or WEBP images are allowed.",
+        )
+
+    file_bytes = await file.read()
+    if len(file_bytes) > PROFILE_PIC_MAX_SIZE:
+        raise HTTPException(status_code=413, detail="Image exceeds the 5 MB limit.")
+
+    try:
+        folder_id = get_or_create_folder_path(
+            "Profile Pictures", target_user.username, []
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Failed to prepare Drive folder: {exc}"
+        )
+
+    # Overwrite existing picture on Drive kung meron nang na-upload dati
+    existing_file_id = target_user.profile_picture_drive_id
+    try:
+        drive_result = upload_file_to_drive(
+            file_bytes=file_bytes,
+            filename=file.filename,
+            mime_type=file.content_type,
+            folder_id=folder_id,
+            existing_file_id=existing_file_id,
+        )
+        direct_url = (
+            f"https://drive.google.com/thumbnail?id={drive_result['file_id']}&sz=w200"
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Google Drive upload failed: {exc}"
+        )
+
+    updated_user = crud_user.update_profile_picture(
+        db,
+        user_id=user_id,
+        profile_picture_url=direct_url,  # ⬅ ito yung binago, dating drive_result["file_url"]
+        profile_picture_drive_id=drive_result["file_id"],
+    )
 
     return updated_user
