@@ -10,10 +10,10 @@ from app.models.application_logs import ApplicationLogs
 from app.models.main_db import MainDB
 from app.schemas.dashboard_detail import MetricDetailResponse, ApplicationLogDetail
 
-
 # ─────────────────────────────────────────────────────────
 # Internal helpers
 # ─────────────────────────────────────────────────────────
+
 
 def _base_query(
     db: Session,
@@ -58,9 +58,9 @@ def _to_date(value):
     """Safely coerce a datetime or date value to a plain date (or None)."""
     if value is None:
         return None
-    if hasattr(value, "date"):      # datetime → date
+    if hasattr(value, "date"):  # datetime → date
         return value.date()
-    return value                    # already a date
+    return value  # already a date
 
 
 def _row_to_detail(row: ApplicationLogs) -> ApplicationLogDetail:
@@ -83,7 +83,11 @@ def _row_to_detail(row: ApplicationLogs) -> ApplicationLogDetail:
         old_rsn=main.DB_OLD_RSN if main else None,
         entry_type=main.DB_ENTRY_TYPE if main else None,
         subject=main.DB_SUBJECT if main else None,
-        date_received_fdac=str(main.DB_LTR_DATE_RECEIVED_FDAC) if main and main.DB_LTR_DATE_RECEIVED_FDAC is not None else None,
+        date_received_fdac=(
+            str(main.DB_LTR_DATE_RECEIVED_FDAC)
+            if main and main.DB_LTR_DATE_RECEIVED_FDAC is not None
+            else None
+        ),
         evaluator=main.DB_EVAL if main else None,
         # ── from ApplicationLogs ────────────────────────────────────
         application_status=row.application_status,
@@ -98,37 +102,28 @@ def _row_to_detail(row: ApplicationLogs) -> ApplicationLogDetail:
 # ─────────────────────────────────────────────────────────
 # Public function
 # ─────────────────────────────────────────────────────────
-
 def get_metric_detail(
     db: Session,
     username: str,
     metric: str,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
-    accomplished_date_from: Optional[date] = None,  
-    accomplished_date_to: Optional[date] = None,    
-    app_step: Optional[str] = None,                 
-    dtn: Optional[str] = None,  
+    accomplished_date_from: Optional[date] = None,
+    accomplished_date_to: Optional[date] = None,
+    app_step: Optional[str] = None,
+    dtn: Optional[str] = None,
+    sort_by: Optional[str] = None,  # ✅ New
+    sort_dir: str = "asc",  # ✅ New
     page: int = 1,
     page_size: int = 10,
 ) -> MetricDetailResponse:
     """
     Return paginated application log rows for the requested KPI metric.
-
-    Args:
-        db                      SQLAlchemy session
-        username                Effective reviewer username
-        metric                  One of: received | completed | on_process
-        date_from               Inclusive start date filter (filters start_date)
-        date_to                 Inclusive end date filter (filters start_date)
-        accomplished_date_from  Filter rows where accomplished_date >= this date
-        accomplished_date_to    Filter rows where accomplished_date <= this date
-        app_step                Filter rows by application_step value
-        page                    1-based page number
-        page_size               Rows per page (1–500)
     """
     if metric not in ("received", "completed", "on_process"):
-        raise ValueError(f"Unknown metric '{metric}'. Use: received | completed | on_process")
+        raise ValueError(
+            f"Unknown metric '{metric}'. Use: received | completed | on_process"
+        )
 
     page = max(1, page)
     page_size = max(1, min(500, page_size))
@@ -140,7 +135,9 @@ def get_metric_detail(
     if accomplished_date_from:
         q = q.filter(ApplicationLogs.accomplished_date >= accomplished_date_from)
     if accomplished_date_to:
-        q = q.filter(func.date(ApplicationLogs.accomplished_date) <= accomplished_date_to)
+        q = q.filter(
+            func.date(ApplicationLogs.accomplished_date) <= accomplished_date_to
+        )
 
     # ── Step filter ──────────────────────────────────────────────────────────
     if app_step:
@@ -149,10 +146,17 @@ def get_metric_detail(
     # ── DTN filter ──────────────────────────────────────────────────────────
     if dtn:
         from sqlalchemy import cast, String
+
         q = q.filter(cast(MainDB.DB_DTN, String).contains(dtn))
-        
-    # ── Order + paginate ─────────────────────────────────────────────────────
-    q = q.order_by(ApplicationLogs.start_date.desc(), ApplicationLogs.id.desc())
+
+    # DB_DTN is stored as an int in format YYYYMMDDHHMMSS, so a plain
+    # numeric ORDER BY already gives correct chronological ordering —
+    # no digit-parsing needed.
+    if sort_by == "dtn":
+        order_col = MainDB.DB_DTN
+        q = q.order_by(order_col.asc() if sort_dir == "asc" else order_col.desc())
+    else:
+        q = q.order_by(ApplicationLogs.start_date.desc(), ApplicationLogs.id.desc())
 
     total = q.count()
     total_pages = max(1, math.ceil(total / page_size))

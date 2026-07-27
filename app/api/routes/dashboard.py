@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from typing import Optional, Literal
 from datetime import date
- 
+
 from app.db.session import get_db
 from app.core.deps import get_current_active_user
 from app.crud import dashboard as crud_dashboard
@@ -17,7 +17,7 @@ from app.schemas.recent_applications import RecentApplicationsResponse
 from app.crud import dashboard_detail as crud_detail
 from app.schemas.dashboard_detail import MetricDetailResponse
 from app.models.main_db import MainDB
-from app.models.user import User 
+from app.models.user import User
 
 router = APIRouter(
     prefix="/api/dashboard/stats",
@@ -50,11 +50,16 @@ def _effective_username(
 # Shared query params (reused across all 3 endpoints)
 # ─────────────────────────────────────────────────────────
 def _common_params(
-    date_from:   Optional[date] = Query(None, description="Start date filter  YYYY-MM-DD"),
-    date_to:     Optional[date] = Query(None, description="End date filter    YYYY-MM-DD"),
-    impersonate: Optional[int]  = Query(None, description="Admin only: user_id of target user"),
+    date_from: Optional[date] = Query(
+        None, description="Start date filter  YYYY-MM-DD"
+    ),
+    date_to: Optional[date] = Query(None, description="End date filter    YYYY-MM-DD"),
+    impersonate: Optional[int] = Query(
+        None, description="Admin only: user_id of target user"
+    ),
 ):
     return {"date_from": date_from, "date_to": date_to, "impersonate": impersonate}
+
 
 # ─────────────────────────────────────────────────────────
 # 1. GET /dashboard/stats/received
@@ -70,7 +75,7 @@ def get_received(
     current_user=Depends(get_current_active_user),
 ):
     username = _effective_username(current_user, params["impersonate"], db)
-    value    = crud_dashboard.get_total_received(
+    value = crud_dashboard.get_total_received(
         db, username, params["date_from"], params["date_to"]
     )
     return StatResponse(
@@ -96,7 +101,7 @@ def get_completed(
     current_user=Depends(get_current_active_user),
 ):
     username = _effective_username(current_user, params["impersonate"], db)
-    value    = crud_dashboard.get_total_completed(
+    value = crud_dashboard.get_total_completed(
         db, username, params["date_from"], params["date_to"]
     )
     return StatResponse(
@@ -122,7 +127,7 @@ def get_on_process(
     current_user=Depends(get_current_active_user),
 ):
     username = _effective_username(current_user, params["impersonate"], db)
-    value    = crud_dashboard.get_total_on_process(
+    value = crud_dashboard.get_total_on_process(
         db, username, params["date_from"], params["date_to"]
     )
     return StatResponse(
@@ -148,7 +153,7 @@ def get_summary(
     current_user=Depends(get_current_active_user),
 ):
     username = _effective_username(current_user, params["impersonate"], db)
-    stats    = crud_dashboard.get_stats_summary(
+    stats = crud_dashboard.get_stats_summary(
         db, username, params["date_from"], params["date_to"]
     )
     return CombinedStatsResponse(
@@ -162,7 +167,8 @@ def get_summary(
 # ═════════════════════════════════════════════════════════
 # CHART  (/api/dashboard/chart)
 # ═════════════════════════════════════════════════════════
- 
+
+
 # ─────────────────────────────────────────────────────────
 # GET /api/dashboard/chart
 # ─────────────────────────────────────────────────────────
@@ -197,7 +203,8 @@ def get_chart(
         description="Inclusive end date    YYYY-MM-DD",
     ),
     impersonate: Optional[int] = Query(
-        None, description="Admin only — user_id of target user",
+        None,
+        description="Admin only — user_id of target user",
     ),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
@@ -207,9 +214,9 @@ def get_chart(
             status_code=422,
             detail="date_from must be earlier than or equal to date_to.",
         )
- 
+
     username = _effective_username(current_user, impersonate, db)
- 
+
     try:
         return crud_chart.get_chart_data(
             db=db,
@@ -220,7 +227,8 @@ def get_chart(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
- 
+
+
 @router.get(
     "/recent-applications",
     response_model=RecentApplicationsResponse,
@@ -228,19 +236,25 @@ def get_chart(
 )
 def get_recent_applications(
     limit: int = Query(
-        default=10, ge=1, le=500,        # ← dagdag le=500 para puwedeng marami
+        default=10,
+        ge=1,
+        le=500,  # ← dagdag le=500 para puwedeng marami
         description="Number of rows to return",
     ),
     page: int = Query(
-        default=1, ge=1,
+        default=1,
+        ge=1,
         description="1-based page number",
     ),
     page_size: int = Query(
-        default=10, ge=1, le=50,
+        default=10,
+        ge=1,
+        le=50,
         description="Rows per page (max 50)",
     ),
     impersonate: Optional[int] = Query(
-        None, description="Admin only — user_id of target user",
+        None,
+        description="Admin only — user_id of target user",
     ),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
@@ -263,7 +277,8 @@ def get_recent_applications(
         page=data["page"],
         username=username,
     )
- 
+
+
 @router.get(
     "/global-recent-applications",
     response_model=RecentApplicationsResponse,
@@ -278,7 +293,7 @@ def get_global_recent_applications(
 ):
     data = crud_recent.get_recent_applications(
         db=db,
-        username=None,  
+        username=None,
         limit=limit,
         page=page,
         page_size=page_size,
@@ -292,7 +307,8 @@ def get_global_recent_applications(
         page=data["page"],
         username="ALL",
     )
- 
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # GET /api/dashboard/stats/detail
 # ─────────────────────────────────────────────────────────────────────────────
@@ -314,7 +330,6 @@ def get_metric_detail(
         None,
         description="Inclusive end date    YYYY-MM-DD  (filters start_date)",
     ),
-    # ✅ New: filter by accomplished/end date
     accomplished_date_from: Optional[date] = Query(
         None,
         description="Filter rows where end_date >= this date",
@@ -323,22 +338,34 @@ def get_metric_detail(
         None,
         description="Filter rows where end_date <= this date",
     ),
-    # ✅ New: filter by step name
     app_step: Optional[str] = Query(
         None,
         description="Filter rows by app_step (e.g. 'Quality Evaluation')",
     ),
-    dtn: Optional[str] = Query(None, description="Filter by DTN (partial match)"), 
+    dtn: Optional[str] = Query(None, description="Filter by DTN (partial match)"),
+    # ✅ New: sorting
+    sort_by: Optional[str] = Query(
+        None,
+        description="Column to sort by. Currently supported: 'dtn'",
+    ),
+    sort_dir: Literal["asc", "desc"] = Query(
+        "asc",
+        description="Sort direction when sort_by is provided",
+    ),
     page: int = Query(
-        default=1, ge=1,
+        default=1,
+        ge=1,
         description="1-based page number",
     ),
     page_size: int = Query(
-        default=10, ge=1, le=500,
+        default=10,
+        ge=1,
+        le=500,
         description="Rows per page (max 500)",
     ),
     impersonate: Optional[int] = Query(
-        None, description="Admin only — user_id of target user",
+        None,
+        description="Admin only — user_id of target user",
     ),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
@@ -348,21 +375,25 @@ def get_metric_detail(
             status_code=422,
             detail="metric must be one of: received, completed, on_process",
         )
- 
+
     if date_from and date_to and date_from > date_to:
         raise HTTPException(
             status_code=422,
             detail="date_from must be earlier than or equal to date_to.",
         )
- 
-    if accomplished_date_from and accomplished_date_to and accomplished_date_from > accomplished_date_to:
+
+    if (
+        accomplished_date_from
+        and accomplished_date_to
+        and accomplished_date_from > accomplished_date_to
+    ):
         raise HTTPException(
             status_code=422,
             detail="accomplished_date_from must be earlier than or equal to accomplished_date_to.",
         )
- 
+
     username = _effective_username(current_user, impersonate, db)
- 
+
     try:
         return crud_detail.get_metric_detail(
             db=db,
@@ -373,7 +404,9 @@ def get_metric_detail(
             accomplished_date_from=accomplished_date_from,
             accomplished_date_to=accomplished_date_to,
             app_step=app_step,
-            dtn=dtn, 
+            dtn=dtn,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
             page=page,
             page_size=page_size,
         )
@@ -390,9 +423,7 @@ def get_record_by_dtn(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    record = db.query(MainDB).filter(
-        MainDB.DB_DTN == int(dtn)
-    ).first()
+    record = db.query(MainDB).filter(MainDB.DB_DTN == int(dtn)).first()
 
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
@@ -485,10 +516,11 @@ def get_record_by_dtn(
         "appStatus": record.DB_APP_STATUS,
         "appRemarks": record.DB_APP_REMARKS,
         "userUploader": record.DB_USER_UPLOADER,
-        "dateExcelUpload": str(record.DB_DATE_EXCEL_UPLOAD) if record.DB_DATE_EXCEL_UPLOAD else None,
+        "dateExcelUpload": (
+            str(record.DB_DATE_EXCEL_UPLOAD) if record.DB_DATE_EXCEL_UPLOAD else None
+        ),
         "pharmaProdCat": record.DB_PHARMA_PROD_CAT,
         "pharmaProdCatLabel": record.DB_PHARMA_PROD_CAT_LABEL,
         "dbTimelineCitizenCharter": record.DB_TIMELINE_CITIZEN_CHARTER,
         "processingType": record.DB_PROCESSING_TYPE,
     }
-
