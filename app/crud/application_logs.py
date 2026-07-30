@@ -2,6 +2,7 @@
 """
 CRUD Operations for Application Logs
 """
+
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Optional, List
@@ -11,27 +12,26 @@ from app.schemas.application_logs import ApplicationLogCreate, ApplicationLogUpd
 from app.crud.notification import create_notification, already_notified_today
 from app.schemas.notification import NotificationCreate
 
-
 # ─────────────────────────────────────────────────────────────────────
 # NOTIFICATION HELPERS
 # ─────────────────────────────────────────────────────────────────────
 
 _ASSIGNED_TITLES = {
-    "S&E"               : "📋 New S&E Task Assigned",
+    "S&E": "📋 New S&E Task Assigned",
     "Quality Evaluation": "🔬 New Quality Evaluation Task Assigned",
-    "Decking"           : "🎯 Application Decked",
+    "Decking": "🎯 Application Decked",
 }
 
 _ASSIGNED_MESSAGES = {
-    "S&E"               : "You have been assigned an S&E task for DTN: {dtn}. Please review and process accordingly.",
+    "S&E": "You have been assigned an S&E task for DTN: {dtn}. Please review and process accordingly.",
     "Quality Evaluation": "You have been assigned a Quality Evaluation task for DTN: {dtn}. Please review and process accordingly.",
-    "Decking"           : "DTN {dtn} has been decked and assigned to you for processing.",
+    "Decking": "DTN {dtn} has been decked and assigned to you for processing.",
 }
 
 _COMPLETED_TITLES = {
-    "S&E"               : "✅ S&E Task Completed",
+    "S&E": "✅ S&E Task Completed",
     "Quality Evaluation": "✅ Quality Evaluation Completed",
-    "Decking"           : "✅ Decking Completed",
+    "Decking": "✅ Decking Completed",
 }
 
 
@@ -43,6 +43,7 @@ def _get_dtn(db: Session, main_db_id: int) -> str:
     """
     try:
         from app.models.main_db import MainDB
+
         main = db.query(MainDB).filter(MainDB.DB_ID == main_db_id).first()
         if main and getattr(main, "DB_DTN", None):
             return str(main.DB_DTN)
@@ -62,9 +63,9 @@ def _notify_assigned_user(db: Session, log_obj: ApplicationLogs, dtn: str) -> No
         if not log_obj.user_name:
             return
 
-        step  = log_obj.application_step or ""
+        step = log_obj.application_step or ""
         title = _ASSIGNED_TITLES.get(step, f"📌 New Task: {step}")
-        msg   = _ASSIGNED_MESSAGES.get(
+        msg = _ASSIGNED_MESSAGES.get(
             step,
             f"You have a new task for DTN: {dtn}.",
         ).format(dtn=dtn)
@@ -73,21 +74,24 @@ def _notify_assigned_user(db: Session, log_obj: ApplicationLogs, dtn: str) -> No
         if already_notified_today(db, log_obj.user_name, dtn, title_like=step):
             return
 
-        create_notification(db, NotificationCreate(
-            user_name  = log_obj.user_name,
-            title      = title,
-            message    = msg,
-            link_dtn   = dtn,
-            app_log_id = log_obj.id,
-        ))
+        create_notification(
+            db,
+            NotificationCreate(
+                user_name=log_obj.user_name,
+                title=title,
+                message=msg,
+                link_dtn=dtn,
+                app_log_id=log_obj.id,
+            ),
+        )
     except Exception:
         pass  # notification failure must never crash the main operation
 
 
 def _notify_on_complete(
-    db             : Session,
-    log_obj        : ApplicationLogs,
-    dtn            : str,
+    db: Session,
+    log_obj: ApplicationLogs,
+    dtn: str,
     notify_username: str,
 ) -> None:
     """
@@ -102,23 +106,23 @@ def _notify_on_complete(
         if not notify_username:
             return
 
-        step  = log_obj.application_step or ""
+        step = log_obj.application_step or ""
         title = _COMPLETED_TITLES.get(step, f"✅ {step} Completed")
-        msg   = (
-            f"{log_obj.user_name} has completed the {step} step "
-            f"for DTN: {dtn}."
-        )
+        msg = f"{log_obj.user_name} has completed the {step} step " f"for DTN: {dtn}."
 
         if already_notified_today(db, notify_username, dtn, title_like="Completed"):
             return
 
-        create_notification(db, NotificationCreate(
-            user_name  = notify_username,
-            title      = title,
-            message    = msg,
-            link_dtn   = dtn,
-            app_log_id = log_obj.id,
-        ))
+        create_notification(
+            db,
+            NotificationCreate(
+                user_name=notify_username,
+                title=title,
+                message=msg,
+                link_dtn=dtn,
+                app_log_id=log_obj.id,
+            ),
+        )
     except Exception:
         pass
 
@@ -128,50 +132,50 @@ def _notify_on_complete(
 # ─────────────────────────────────────────────────────────────────────
 def create(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
     db_log = ApplicationLogs(
-        main_db_id              = log_in.main_db_id,
-        application_step        = log_in.application_step,
-        user_name               = log_in.user_name,
-        application_status      = log_in.application_status,
-        application_decision    = log_in.application_decision,
-        application_remarks     = log_in.application_remarks,
-        start_date              = log_in.start_date,
-        accomplished_date       = log_in.accomplished_date,
-        del_index               = log_in.del_index,
-        del_previous            = log_in.del_previous,
-        del_last_index          = log_in.del_last_index,
-        del_thread              = log_in.del_thread,
-        deadline_date           = log_in.deadline_date,
-        working_days            = log_in.working_days,
+        main_db_id=log_in.main_db_id,
+        application_step=log_in.application_step,
+        user_name=log_in.user_name,
+        application_status=log_in.application_status,
+        application_decision=log_in.application_decision,
+        application_remarks=log_in.application_remarks,
+        start_date=log_in.start_date,
+        accomplished_date=log_in.accomplished_date,
+        del_index=log_in.del_index,
+        del_previous=log_in.del_previous,
+        del_last_index=log_in.del_last_index,
+        del_thread=log_in.del_thread,
+        deadline_date=log_in.deadline_date,
+        working_days=log_in.working_days,
         # ── Existing new fields ────────────────────────────────────
-        user_id                 = log_in.user_id,
-        action_type             = log_in.action_type,
-        decision_result         = log_in.decision_result,
-        decision_authority_id   = log_in.decision_authority_id,
-        decision_authority_name = log_in.decision_authority_name,
-        doctrack_remarks        = log_in.doctrack_remarks,
-        is_received             = log_in.is_received or 0,
-        received_at             = log_in.received_at,
-        received_by             = log_in.received_by,
+        user_id=log_in.user_id,
+        action_type=log_in.action_type,
+        decision_result=log_in.decision_result,
+        decision_authority_id=log_in.decision_authority_id,
+        decision_authority_name=log_in.decision_authority_name,
+        doctrack_remarks=log_in.doctrack_remarks,
+        is_received=log_in.is_received or 0,
+        received_at=log_in.received_at,
+        received_by=log_in.received_by,
         # ── Re-assignment fields ───────────────────────────────────
-        reassigned_by_user_id   = log_in.reassigned_by_user_id,
-        reassigned_by_user_name = log_in.reassigned_by_user_name,
-        reassigned_at           = log_in.reassigned_at,
-        reassigned_from_user_id = log_in.reassigned_from_user_id,
-        reassigned_from_user_name = log_in.reassigned_from_user_name,
-        reassigned_to_user_id   = log_in.reassigned_to_user_id,
-        reassigned_to_user_name = log_in.reassigned_to_user_name,
-        reassignment_reason     = log_in.reassignment_reason,
-        reassignment_remarks    = log_in.reassignment_remarks,
+        reassigned_by_user_id=log_in.reassigned_by_user_id,
+        reassigned_by_user_name=log_in.reassigned_by_user_name,
+        reassigned_at=log_in.reassigned_at,
+        reassigned_from_user_id=log_in.reassigned_from_user_id,
+        reassigned_from_user_name=log_in.reassigned_from_user_name,
+        reassigned_to_user_id=log_in.reassigned_to_user_id,
+        reassigned_to_user_name=log_in.reassigned_to_user_name,
+        reassignment_reason=log_in.reassignment_reason,
+        reassignment_remarks=log_in.reassignment_remarks,
         # ── Re-route fields ───────────────────────────────────────
-        rerouted_by_user_id     = log_in.rerouted_by_user_id,
-        rerouted_by_user_name   = log_in.rerouted_by_user_name,
-        rerouted_at             = log_in.rerouted_at,
-        reroute_from_step       = log_in.reroute_from_step,
-        reroute_target_step     = log_in.reroute_target_step,
-        reroute_reason          = log_in.reroute_reason,
-        reroute_remarks         = log_in.reroute_remarks,
-        is_starred              = log_in.is_starred or 0,
-        starred_at              = log_in.starred_at,
+        rerouted_by_user_id=log_in.rerouted_by_user_id,
+        rerouted_by_user_name=log_in.rerouted_by_user_name,
+        rerouted_at=log_in.rerouted_at,
+        reroute_from_step=log_in.reroute_from_step,
+        reroute_target_step=log_in.reroute_target_step,
+        reroute_reason=log_in.reroute_reason,
+        reroute_remarks=log_in.reroute_remarks,
+        is_starred=log_in.is_starred or 0,
+        starred_at=log_in.starred_at,
     )
 
     db.add(db_log)
@@ -184,38 +188,40 @@ def create(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
     return db_log
 
 
-def create_bulk(db: Session, logs_in: List[ApplicationLogCreate]) -> List[ApplicationLogs]:
+def create_bulk(
+    db: Session, logs_in: List[ApplicationLogCreate]
+) -> List[ApplicationLogs]:
     try:
         db_logs = []
 
         for log_in in logs_in:
             db_log = ApplicationLogs(
-                main_db_id              = log_in.main_db_id,
-                application_step        = log_in.application_step,
-                user_name               = log_in.user_name,
-                application_status      = log_in.application_status,
-                application_decision    = log_in.application_decision,
-                application_remarks     = log_in.application_remarks,
-                start_date              = log_in.start_date,
-                accomplished_date       = log_in.accomplished_date,
-                del_index               = log_in.del_index,
-                del_previous            = log_in.del_previous,
-                del_last_index          = log_in.del_last_index,
-                del_thread              = log_in.del_thread,
-                deadline_date           = log_in.deadline_date,
-                working_days            = log_in.working_days,
+                main_db_id=log_in.main_db_id,
+                application_step=log_in.application_step,
+                user_name=log_in.user_name,
+                application_status=log_in.application_status,
+                application_decision=log_in.application_decision,
+                application_remarks=log_in.application_remarks,
+                start_date=log_in.start_date,
+                accomplished_date=log_in.accomplished_date,
+                del_index=log_in.del_index,
+                del_previous=log_in.del_previous,
+                del_last_index=log_in.del_last_index,
+                del_thread=log_in.del_thread,
+                deadline_date=log_in.deadline_date,
+                working_days=log_in.working_days,
                 # ── New fields ─────────────────────────────────────
-                user_id                 = log_in.user_id,
-                action_type             = log_in.action_type,
-                decision_result         = log_in.decision_result,
-                decision_authority_id   = log_in.decision_authority_id,
-                decision_authority_name = log_in.decision_authority_name,
-                is_received             = log_in.is_received or 0,
-                received_at             = log_in.received_at,
-                received_by             = log_in.received_by,
+                user_id=log_in.user_id,
+                action_type=log_in.action_type,
+                decision_result=log_in.decision_result,
+                decision_authority_id=log_in.decision_authority_id,
+                decision_authority_name=log_in.decision_authority_name,
+                is_received=log_in.is_received or 0,
+                received_at=log_in.received_at,
+                received_by=log_in.received_by,
                 # ── Starred fields —
-                is_starred              = log_in.is_starred or 0,
-                starred_at              = log_in.starred_at,
+                is_starred=log_in.is_starred or 0,
+                starred_at=log_in.starred_at,
             )
             db.add(db_log)
             db_logs.append(db_log)
@@ -239,6 +245,7 @@ def create_bulk(db: Session, logs_in: List[ApplicationLogCreate]) -> List[Applic
 # ─────────────────────────────────────────────────────────────────────
 # READ
 # ─────────────────────────────────────────────────────────────────────
+
 
 def get_by_id(db: Session, log_id: int) -> Optional[ApplicationLogs]:
     """Get application log by ID"""
@@ -300,10 +307,10 @@ def get_by_user(db: Session, user_name: str, limit: int = 100) -> List[Applicati
 
 
 def get_by_date_range(
-    db        : Session,
+    db: Session,
     start_date: datetime,
-    end_date  : datetime,
-    step      : Optional[str] = None,
+    end_date: datetime,
+    step: Optional[str] = None,
 ) -> List[ApplicationLogs]:
     """
     Get logs within a date range.
@@ -324,7 +331,10 @@ def get_by_date_range(
 # UPDATE
 # ─────────────────────────────────────────────────────────────────────
 
-def update(db: Session, log_id: int, log_in: ApplicationLogUpdate) -> Optional[ApplicationLogs]:
+
+def update(
+    db: Session, log_id: int, log_in: ApplicationLogUpdate
+) -> Optional[ApplicationLogs]:
     """
     Update an application log.
     If the status changes to COMPLETED, a notification is sent to the
@@ -354,7 +364,7 @@ def update(db: Session, log_id: int, log_in: ApplicationLogUpdate) -> Optional[A
                 db.query(ApplicationLogs)
                 .filter(
                     ApplicationLogs.main_db_id == db_log.main_db_id,
-                    ApplicationLogs.del_index  == db_log.del_previous,
+                    ApplicationLogs.del_index == db_log.del_previous,
                 )
                 .first()
             )
@@ -369,6 +379,7 @@ def update(db: Session, log_id: int, log_in: ApplicationLogUpdate) -> Optional[A
 # ─────────────────────────────────────────────────────────────────────
 # DELETE
 # ─────────────────────────────────────────────────────────────────────
+
 
 def delete(db: Session, log_id: int) -> bool:
     """Delete an application log"""
@@ -411,6 +422,7 @@ def delete_bulk(db: Session, log_ids: List[int]) -> int:
 # UTILITIES
 # ─────────────────────────────────────────────────────────────────────
 
+
 def get_last_index(db: Session, main_db_id: int) -> int:
     """
     Get the highest del_index for a specific application.
@@ -423,8 +435,10 @@ def get_last_index(db: Session, main_db_id: int) -> int:
     )
     return last_index or 0
 
+
 # Helper — ilagay bago ang reassign() function
 _PHT = timezone(timedelta(hours=8))
+
 
 def _now_pht() -> datetime:
     """Return current time in Philippine Standard Time (UTC+8), timezone-naive for DB."""
@@ -454,21 +468,21 @@ def reassign(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
     )
 
     if current_log:
-        current_log.application_status  = "COMPLETED"
-        current_log.del_last_index       = 0
-        current_log.del_thread           = "Close"
-        current_log.action_type          = "REASSIGNMENT"
-        current_log.accomplished_date    = log_in.reassigned_at or _now_pht() 
+        current_log.application_status = "COMPLETED"
+        current_log.del_last_index = 0
+        current_log.del_thread = "Close"
+        current_log.action_type = "REASSIGNMENT"
+        current_log.accomplished_date = log_in.reassigned_at or _now_pht()
         # ── Re-assignment tracking ──
-        current_log.reassigned_by_user_id   = log_in.reassigned_by_user_id
+        current_log.reassigned_by_user_id = log_in.reassigned_by_user_id
         current_log.reassigned_by_user_name = log_in.reassigned_by_user_name
-        current_log.reassigned_at           = log_in.reassigned_at
-        current_log.reassigned_from_user_id   = current_log.user_id   
-        current_log.reassigned_from_user_name = current_log.user_name  
-        current_log.reassigned_to_user_id   = log_in.reassigned_to_user_id
+        current_log.reassigned_at = log_in.reassigned_at
+        current_log.reassigned_from_user_id = current_log.user_id
+        current_log.reassigned_from_user_name = current_log.user_name
+        current_log.reassigned_to_user_id = log_in.reassigned_to_user_id
         current_log.reassigned_to_user_name = log_in.reassigned_to_user_name
-        current_log.reassignment_reason     = log_in.reassignment_reason
-        current_log.reassignment_remarks    = log_in.reassignment_remarks
+        current_log.reassignment_reason = log_in.reassignment_reason
+        current_log.reassignment_remarks = log_in.reassignment_remarks
         db.commit()
         db.refresh(current_log)
 
@@ -478,19 +492,19 @@ def reassign(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
 
     # ── STEP 3: CREATE new log for new assignee ─────────────────────────
     new_log = ApplicationLogs(
-        main_db_id           = log_in.main_db_id,
-        application_step     = log_in.application_step,
-        application_status   = "IN PROGRESS",
-        application_decision = log_in.application_decision,
-        application_remarks  = log_in.application_remarks,
-        del_index            = next_index,
-        del_previous         = last_index,
-        del_last_index       = 1,
-        del_thread           = "Open",
-        start_date           = log_in.reassigned_at or _now_pht(), 
+        main_db_id=log_in.main_db_id,
+        application_step=log_in.application_step,
+        application_status="IN PROGRESS",
+        application_decision=log_in.application_decision,
+        application_remarks=log_in.application_remarks,
+        del_index=next_index,
+        del_previous=last_index,
+        del_last_index=1,
+        del_thread="Open",
+        start_date=log_in.reassigned_at or _now_pht(),
         # ── New assignee ──
-        user_name            = log_in.reassigned_to_user_name,
-        user_id              = log_in.reassigned_to_user_id,
+        user_name=log_in.reassigned_to_user_name,
+        user_id=log_in.reassigned_to_user_id,
     )
 
     db.add(new_log)
@@ -526,19 +540,19 @@ def reroute(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
     )
 
     if current_log:
-        current_log.application_status  = "COMPLETED"
-        current_log.del_last_index       = 0
-        current_log.del_thread           = "Close"
-        current_log.action_type          = "REROUTE"
-        current_log.accomplished_date    = log_in.rerouted_at or _now_pht() 
+        current_log.application_status = "COMPLETED"
+        current_log.del_last_index = 0
+        current_log.del_thread = "Close"
+        current_log.action_type = "REROUTE"
+        current_log.accomplished_date = log_in.rerouted_at or _now_pht()
         # ── Re-route tracking ──
-        current_log.rerouted_by_user_id   = log_in.rerouted_by_user_id
+        current_log.rerouted_by_user_id = log_in.rerouted_by_user_id
         current_log.rerouted_by_user_name = log_in.rerouted_by_user_name
-        current_log.rerouted_at           = log_in.rerouted_at
-        current_log.reroute_from_step     = log_in.reroute_from_step
-        current_log.reroute_target_step   = log_in.reroute_target_step
-        current_log.reroute_reason        = log_in.reroute_reason
-        current_log.reroute_remarks       = log_in.reroute_remarks
+        current_log.rerouted_at = log_in.rerouted_at
+        current_log.reroute_from_step = log_in.reroute_from_step
+        current_log.reroute_target_step = log_in.reroute_target_step
+        current_log.reroute_reason = log_in.reroute_reason
+        current_log.reroute_remarks = log_in.reroute_remarks
         db.commit()
         db.refresh(current_log)
 
@@ -548,19 +562,19 @@ def reroute(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
 
     # ── STEP 3: CREATE new log for target step ──────────────────────────
     new_log = ApplicationLogs(
-        main_db_id           = log_in.main_db_id,
-        application_step     = log_in.reroute_target_step,
-        application_status   = "IN PROGRESS",
-        application_decision = log_in.application_decision,
-        application_remarks  = log_in.application_remarks,
-        del_index            = next_index,
-        del_previous         = last_index,
-        del_last_index       = 1,
-        del_thread           = "Open",
-        start_date           = log_in.rerouted_at or _now_pht(), 
+        main_db_id=log_in.main_db_id,
+        application_step=log_in.reroute_target_step,
+        application_status="IN PROGRESS",
+        application_decision=log_in.application_decision,
+        application_remarks=log_in.application_remarks,
+        del_index=next_index,
+        del_previous=last_index,
+        del_last_index=1,
+        del_thread="Open",
+        start_date=log_in.rerouted_at or _now_pht(),
         # ── Assigned user sa target step ──
-        user_name            = log_in.user_name,
-        user_id              = log_in.user_id,
+        user_name=log_in.user_name,
+        user_id=log_in.user_id,
     )
 
     db.add(new_log)
@@ -571,6 +585,7 @@ def reroute(db: Session, log_in: ApplicationLogCreate) -> ApplicationLogs:
     _notify_assigned_user(db, new_log, dtn)
 
     return new_log
+
 
 def toggle_star(db: Session, log_id: int, star: bool) -> Optional[ApplicationLogs]:
     """Toggle is_starred on a specific application log."""
@@ -584,3 +599,95 @@ def toggle_star(db: Session, log_id: int, star: bool) -> Optional[ApplicationLog
     db.commit()
     db.refresh(db_log)
     return db_log
+
+
+# ── dagdag sa dulo ng file, o kahit saan sa ilalim ng "READ" section ──
+
+
+def get_open_tasks(
+    db: Session,
+    page: int = 1,
+    page_size: int = 100,
+    search: Optional[str] = None,
+    application_step: Optional[str] = None,
+    user_name: Optional[str] = None,
+) -> dict:
+    """
+    Open/active tasks — del_last_index=1 AND del_thread='Open'.
+    Joined against MainDB for DTN / OLD RSN.
+    Used by the Reassignment/Reroute page (task-list view).
+    """
+    from app.models.main_db import MainDB
+
+    query = (
+        db.query(ApplicationLogs, MainDB)
+        .join(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
+        .filter(
+            ApplicationLogs.del_last_index == 1,
+            ApplicationLogs.del_thread == "Open",
+        )
+    )
+
+    if application_step:
+        query = query.filter(ApplicationLogs.application_step == application_step)
+    if user_name:
+        query = query.filter(ApplicationLogs.user_name == user_name)
+    if search:
+        # Support multiple DTNs — comma or newline separated
+        dtn_list = [
+            s.strip() for s in search.replace("\n", ",").split(",") if s.strip()
+        ]
+        if len(dtn_list) == 1:
+            like = f"%{dtn_list[0]}%"
+            query = query.filter(MainDB.DB_DTN.like(like))
+        elif len(dtn_list) > 1:
+            # Exact match para sa bulk-paste — DTNs karaniwang buo/exact
+            query = query.filter(MainDB.DB_DTN.in_(dtn_list))
+
+    total = query.count()
+
+    rows = (
+        query.order_by(ApplicationLogs.updated_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    data = [
+        {
+            "id": log.id,
+            "main_db_id": log.main_db_id,
+            "dtn": str(main.DB_DTN) if main.DB_DTN is not None else None,
+            "old_rsn": (
+                str(main.DB_OLD_RSN) if getattr(main, "DB_OLD_RSN", None) else None
+            ),  # ⚠️ confirm field name
+            "application_step": log.application_step,
+            "user_name": log.user_name,
+            "user_id": log.user_id,
+            "application_status": log.application_status,
+            "updated_at": log.updated_at,
+        }
+        for log, main in rows
+    ]
+
+    return {"data": data, "total": total, "page": page, "page_size": page_size}
+
+
+def get_distinct_steps(db: Session) -> List[str]:
+    """
+    Get all distinct application_step values among OPEN tasks
+    (del_last_index=1, del_thread='Open'). Used for the step filter
+    dropdown so it isn't limited to whatever's on the current page.
+    """
+    rows = (
+        db.query(ApplicationLogs.application_step)
+        .filter(
+            ApplicationLogs.del_last_index == 1,
+            ApplicationLogs.del_thread == "Open",
+            ApplicationLogs.application_step.isnot(None),
+        )
+        .distinct()
+        .order_by(ApplicationLogs.application_step.asc())
+        .all()
+    )
+    return [r[0] for r in rows]
