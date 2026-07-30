@@ -135,7 +135,7 @@ def get_all_records(
     sort_map = {
         "date": func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"),
         "dtn": MainDB.DB_DTN,
-        "user": ApplicationLogs.user_name,
+        "user": User.username,
         "drug": MainDB.DB_PROD_BR_NAME,
         "timeline": ApplicationLogs.application_status,
         "step": ApplicationLogs.application_step,
@@ -175,7 +175,7 @@ def get_all_records(
             {
                 "id": main.DB_ID,
                 "dtn": str(main.DB_DTN) if main.DB_DTN else None,
-                "user_name": log.user_name,
+                "user_name": user.username if user else None,
                 "full_name": full_name,
                 "drug_name": drug_name,
                 "date_received_cent": main.DB_DATE_RECEIVED_CENT,

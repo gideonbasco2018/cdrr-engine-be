@@ -130,3 +130,25 @@ class ApplicationLogResponse(ApplicationLogBase):
 
     class Config:
         from_attributes = True
+
+
+class OpenTaskItem(BaseModel):
+    id: int  # application_logs.id
+    main_db_id: int  # FK → main_db.DB_ID (== mainDbId sa frontend)
+    dtn: Optional[str] = None
+    old_rsn: Optional[str] = None
+    application_step: Optional[str] = None
+    user_name: Optional[str] = None
+    user_id: Optional[int] = None
+    application_status: Optional[str] = None
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class OpenTasksResponse(BaseModel):
+    data: list[OpenTaskItem]
+    total: int
+    page: int
+    page_size: int

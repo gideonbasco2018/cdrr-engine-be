@@ -17,10 +17,7 @@ def get_fda_db_engine():
     if not REMOTE_FDA_ESERVICES_URL:
         raise ValueError("REMOTE_FDA_ESERVICES_URL not configured")
     return create_engine(
-        REMOTE_FDA_ESERVICES_URL,
-        pool_pre_ping=True,
-        pool_recycle=3600,
-        echo=False
+        REMOTE_FDA_ESERVICES_URL, pool_pre_ping=True, pool_recycle=3600, echo=False
     )
 
 
@@ -30,7 +27,7 @@ def create_drug(drug_data: Dict[str, Any]) -> Dict[str, Any]:
     Insert a new drug registration into database
     """
     engine = get_fda_db_engine()
-    
+
     try:
         with engine.connect() as connection:
             query = text("""
@@ -46,21 +43,21 @@ def create_drug(drug_data: Dict[str, Any]) -> Dict[str, Any]:
                     :issuance_date, :expiry_date, :uploaded_by, NOW()
                 )
             """)
-            
+
             connection.execute(query, drug_data)
             connection.commit()
-            
+
             return {"success": True, "message": "Drug created successfully"}
-            
+
     except IntegrityError as e:
-        error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
-        if 'Duplicate entry' in error_msg:
+        error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
+        if "Duplicate entry" in error_msg:
             return {"success": False, "error": "Duplicate registration number"}
         return {"success": False, "error": error_msg}
-        
+
     except Exception as e:
         return {"success": False, "error": str(e)}
-        
+
     finally:
         engine.dispose()
 
@@ -74,7 +71,7 @@ def bulk_create_drugs(drugs_data: List[Dict[str, Any]]) -> Dict[str, Any]:
     successful = 0
     failed = 0
     errors = []
-    
+
     try:
         with engine.connect() as connection:
             for idx, drug_data in enumerate(drugs_data):
@@ -92,45 +89,78 @@ def bulk_create_drugs(drugs_data: List[Dict[str, Any]]) -> Dict[str, Any]:
                             :issuance_date, :expiry_date, :uploaded_by, NOW()
                         )
                     """)
-                    
+
                     connection.execute(query, drug_data)
                     connection.commit()
                     successful += 1
-                    
+
                 except IntegrityError as e:
                     failed += 1
-                    error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
-                    if 'Duplicate entry' in error_msg:
-                        errors.append({
-                            'row': idx + 2,
-                            'registration_number': drug_data.get('registration_number'),
-                            'error': 'Duplicate registration number'
-                        })
+                    error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
+                    if "Duplicate entry" in error_msg:
+                        errors.append(
+                            {
+                                "row": idx + 2,
+                                "registration_number": drug_data.get(
+                                    "registration_number"
+                                ),
+                                "error": "Duplicate registration number",
+                            }
+                        )
                     else:
-                        errors.append({
-                            'row': idx + 2,
-                            'registration_number': drug_data.get('registration_number'),
-                            'error': error_msg
-                        })
+                        errors.append(
+                            {
+                                "row": idx + 2,
+                                "registration_number": drug_data.get(
+                                    "registration_number"
+                                ),
+                                "error": error_msg,
+                            }
+                        )
                     connection.rollback()
-                    
+
                 except Exception as e:
                     failed += 1
-                    errors.append({
-                        'row': idx + 2,
-                        'registration_number': drug_data.get('registration_number', 'N/A'),
-                        'error': str(e)
-                    })
+                    errors.append(
+                        {
+                            "row": idx + 2,
+                            "registration_number": drug_data.get(
+                                "registration_number", "N/A"
+                            ),
+                            "error": str(e),
+                        }
+                    )
                     connection.rollback()
-        
-        return {
-            "successful": successful,
-            "failed": failed,
-            "errors": errors[:10]
-        }
-        
+
+        return {"successful": successful, "failed": failed, "errors": errors[:10]}
+
     finally:
         engine.dispose()
+
+
+# Add near the top of the file, after imports
+SORTABLE_COLUMNS = {
+    "id",
+    "reference_number",
+    "registration_number",
+    "generic_name",
+    "brand_name",
+    "dosage_strength",
+    "dosage_form",
+    "classification",
+    "packaging",
+    "pharmacologic_category",
+    "manufacturer",
+    "country_of_origin",
+    "trader",
+    "importer",
+    "distributor",
+    "app_type",
+    "issuance_date",
+    "expiry_date",
+    "uploaded_by",
+    "date_uploaded",
+}
 
 
 def get_all_drugs(
@@ -144,19 +174,21 @@ def get_all_drugs(
     uploaded_yesterday: bool = False,
     uploaded_this_month: bool = False,
     uploaded_by: Optional[str] = None,
+    sort_by: Optional[str] = None,  # ✅ NEW
+    sort_order: str = "desc",  # ✅ NEW
+    column_filters: Optional[Dict[str, str]] = None,  # ✅ NEW
 ) -> Dict[str, Any]:
     """
-    Get all drug registrations with pagination and search
+    Get all drug registrations with pagination, search, per-column filters, and sorting
     """
     engine = get_fda_db_engine()
-    
+
     try:
         with engine.connect() as connection:
             where_conditions = []
             params = {}
 
             if duplicates_only:
-                # ✅ duplicates_only handles its own filtering
                 where_conditions.append("""
                     (is_canceled IS NULL OR is_canceled = 'N')
                     AND registration_number IS NOT NULL
@@ -173,7 +205,9 @@ def get_all_drugs(
                 """)
             else:
                 if not include_canceled:
-                    where_conditions.append("(is_canceled IS NULL OR is_canceled = 'N')")
+                    where_conditions.append(
+                        "(is_canceled IS NULL OR is_canceled = 'N')"
+                    )
 
                 if expired_only:
                     where_conditions.append("expiry_date < CURDATE()")
@@ -182,7 +216,9 @@ def get_all_drugs(
                     where_conditions.append("DATE(date_uploaded) = CURDATE()")
 
                 if uploaded_yesterday:
-                    where_conditions.append("DATE(date_uploaded) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)")
+                    where_conditions.append(
+                        "DATE(date_uploaded) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)"
+                    )
 
                 if uploaded_this_month:
                     where_conditions.append("""
@@ -190,10 +226,9 @@ def get_all_drugs(
                         AND YEAR(date_uploaded) = YEAR(CURDATE())
                     """)
 
-            # ✅ These apply to ALL tabs including duplicates
             if uploaded_by:
                 where_conditions.append("uploaded_by = :uploaded_by")
-                params['uploaded_by'] = uploaded_by
+                params["uploaded_by"] = uploaded_by
 
             if search:
                 where_conditions.append("""
@@ -202,7 +237,44 @@ def get_all_drugs(
                     OR generic_name LIKE :search 
                     OR brand_name LIKE :search)
                 """)
-                params['search'] = f"%{search}%"
+                params["search"] = f"%{search}%"
+
+            # ✅ UPDATED — per-column filters, kasama na ang date range (issuance_date/expiry_date)
+            DATE_RANGE_COLUMNS = {"issuance_date", "expiry_date"}
+
+            if column_filters:
+                idx = 0
+                for col, value in column_filters.items():
+                    if value in (None, ""):
+                        continue
+
+                    # Check muna kung date range filter (may _from/_to suffix)
+                    matched_range = False
+                    for date_col in DATE_RANGE_COLUMNS:
+                        if col == f"{date_col}_from":
+                            param_name = f"colf_{idx}"
+                            where_conditions.append(f"{date_col} >= :{param_name}")
+                            params[param_name] = value
+                            idx += 1
+                            matched_range = True
+                            break
+                        elif col == f"{date_col}_to":
+                            param_name = f"colf_{idx}"
+                            where_conditions.append(f"{date_col} <= :{param_name}")
+                            params[param_name] = value
+                            idx += 1
+                            matched_range = True
+                            break
+
+                    if matched_range:
+                        continue
+
+                    # Regular text filter (LIKE match) para sa ibang whitelisted columns
+                    if col in SORTABLE_COLUMNS:
+                        param_name = f"colf_{idx}"
+                        where_conditions.append(f"{col} LIKE :{param_name}")
+                        params[param_name] = f"%{value}%"
+                        idx += 1
 
             where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
 
@@ -215,12 +287,16 @@ def get_all_drugs(
             total_result = connection.execute(count_query, params)
             total = total_result.fetchone()[0]
 
-            # Calculate offset
             offset = (page - 1) * page_size
+            params["limit"] = page_size
+            params["offset"] = offset
 
-            # Get paginated data
-            params['limit'] = page_size
-            params['offset'] = offset
+            # ✅ NEW — safe, whitelisted ORDER BY
+            if sort_by and sort_by in SORTABLE_COLUMNS:
+                direction = "ASC" if str(sort_order).lower() == "asc" else "DESC"
+                order_clause = f"{sort_by} {direction}, id {direction}"
+            else:
+                order_clause = "date_modified DESC, id DESC"
 
             data_query = text(f"""
                 SELECT 
@@ -231,7 +307,7 @@ def get_all_drugs(
                     is_canceled, canceled_by, date_canceled, date_modified
                 FROM cdrr_manual.fda_drug_registrations
                 WHERE {where_clause}
-                ORDER BY date_modified DESC, id DESC
+                ORDER BY {order_clause}
                 LIMIT :limit OFFSET :offset
             """)
 
@@ -239,32 +315,34 @@ def get_all_drugs(
 
             drugs = []
             for row in result:
-                drugs.append({
-                    'id': row[0],
-                    'reference_number': row[1],
-                    'registration_number': row[2],
-                    'generic_name': row[3],
-                    'brand_name': row[4],
-                    'dosage_strength': row[5],
-                    'dosage_form': row[6],
-                    'classification': row[7],
-                    'packaging': row[8],
-                    'pharmacologic_category': row[9],
-                    'manufacturer': row[10],
-                    'country_of_origin': row[11],
-                    'trader': row[12],
-                    'importer': row[13],
-                    'distributor': row[14],
-                    'app_type': row[15],
-                    'issuance_date': row[16].isoformat() if row[16] else None,
-                    'expiry_date': row[17].isoformat() if row[17] else None,
-                    'uploaded_by': row[18],
-                    'date_uploaded': row[19].isoformat() if row[19] else None,
-                    'is_canceled': row[20] if row[20] else 'N',
-                    'canceled_by': row[21],
-                    'date_canceled': row[22].isoformat() if row[22] else None,
-                    'date_modified': row[23].isoformat() if row[23] else None,
-                })
+                drugs.append(
+                    {
+                        "id": row[0],
+                        "reference_number": row[1],
+                        "registration_number": row[2],
+                        "generic_name": row[3],
+                        "brand_name": row[4],
+                        "dosage_strength": row[5],
+                        "dosage_form": row[6],
+                        "classification": row[7],
+                        "packaging": row[8],
+                        "pharmacologic_category": row[9],
+                        "manufacturer": row[10],
+                        "country_of_origin": row[11],
+                        "trader": row[12],
+                        "importer": row[13],
+                        "distributor": row[14],
+                        "app_type": row[15],
+                        "issuance_date": row[16].isoformat() if row[16] else None,
+                        "expiry_date": row[17].isoformat() if row[17] else None,
+                        "uploaded_by": row[18],
+                        "date_uploaded": row[19].isoformat() if row[19] else None,
+                        "is_canceled": row[20] if row[20] else "N",
+                        "canceled_by": row[21],
+                        "date_canceled": row[22].isoformat() if row[22] else None,
+                        "date_modified": row[23].isoformat() if row[23] else None,
+                    }
+                )
 
             total_pages = (total + page_size - 1) // page_size
 
@@ -275,7 +353,7 @@ def get_all_drugs(
                 "page_size": page_size,
                 "total_pages": total_pages,
                 "has_next": page < total_pages,
-                "has_prev": page > 1
+                "has_prev": page > 1,
             }
 
     finally:
@@ -287,7 +365,7 @@ def get_drug_by_id(drug_id: int) -> Optional[Dict[str, Any]]:
     Get a specific drug registration by ID
     """
     engine = get_fda_db_engine()
-    
+
     try:
         with engine.connect() as connection:
             query = text("""
@@ -300,40 +378,40 @@ def get_drug_by_id(drug_id: int) -> Optional[Dict[str, Any]]:
                 FROM fda_drug_registrations
                 WHERE id = :drug_id AND (is_canceled IS NULL OR is_canceled = 'N')
             """)
-            
-            result = connection.execute(query, {'drug_id': drug_id})
+
+            result = connection.execute(query, {"drug_id": drug_id})
             row = result.fetchone()
-            
+
             if not row:
                 return None
-            
+
             return {
-                'id': row[0],
-                'reference_number': row[1],
-                'registration_number': row[2],
-                'generic_name': row[3],
-                'brand_name': row[4],
-                'dosage_strength': row[5],
-                'dosage_form': row[6],
-                'classification': row[7],
-                'packaging': row[8],
-                'pharmacologic_category': row[9],
-                'manufacturer': row[10],
-                'country_of_origin': row[11],
-                'trader': row[12],
-                'importer': row[13],
-                'distributor': row[14],
-                'app_type': row[15],
-                'issuance_date': row[16].isoformat() if row[16] else None,
-                'expiry_date': row[17].isoformat() if row[17] else None,
-                'uploaded_by': row[18],
-                'date_uploaded': row[19].isoformat() if row[19] else None,
-                'is_canceled': row[20] if row[20] else 'N',
-                'canceled_by': row[21],
-                'date_canceled': row[22].isoformat() if row[22] else None,
-                'date_modified': row[23].isoformat() if row[23] else None,
+                "id": row[0],
+                "reference_number": row[1],
+                "registration_number": row[2],
+                "generic_name": row[3],
+                "brand_name": row[4],
+                "dosage_strength": row[5],
+                "dosage_form": row[6],
+                "classification": row[7],
+                "packaging": row[8],
+                "pharmacologic_category": row[9],
+                "manufacturer": row[10],
+                "country_of_origin": row[11],
+                "trader": row[12],
+                "importer": row[13],
+                "distributor": row[14],
+                "app_type": row[15],
+                "issuance_date": row[16].isoformat() if row[16] else None,
+                "expiry_date": row[17].isoformat() if row[17] else None,
+                "uploaded_by": row[18],
+                "date_uploaded": row[19].isoformat() if row[19] else None,
+                "is_canceled": row[20] if row[20] else "N",
+                "canceled_by": row[21],
+                "date_canceled": row[22].isoformat() if row[22] else None,
+                "date_modified": row[23].isoformat() if row[23] else None,
             }
-        
+
     finally:
         engine.dispose()
 
@@ -343,7 +421,7 @@ def verify_registration(registration_number: str) -> Dict[str, Any]:
     Verify if a registration number exists and is valid
     """
     engine = get_fda_db_engine()
-    
+
     try:
         with engine.connect() as connection:
             query = text("""
@@ -355,55 +433,51 @@ def verify_registration(registration_number: str) -> Dict[str, Any]:
                 WHERE registration_number = :registration_number 
                 AND (is_canceled IS NULL OR is_canceled = 'N')
             """)
-            
-            result = connection.execute(query, {'registration_number': registration_number})
+
+            result = connection.execute(
+                query, {"registration_number": registration_number}
+            )
             row = result.fetchone()
-            
+
             if not row:
-                return {
-                    "found": False,
-                    "is_valid": False,
-                    "data": None
-                }
-            
+                return {"found": False, "is_valid": False, "data": None}
+
             # Check if expired or canceled
             expiry_date = row[10]
             is_canceled = row[11]
-            
+
             is_expired = False
             if expiry_date and expiry_date < datetime.now().date():
                 is_expired = True
-            
-            is_valid = not is_expired and (is_canceled is None or is_canceled == 'N')
-            
+
+            is_valid = not is_expired and (is_canceled is None or is_canceled == "N")
+
             drug = {
-                'id': row[0],
-                'reference_number': row[1],
-                'registration_number': row[2],
-                'generic_name': row[3],
-                'brand_name': row[4],
-                'dosage_strength': row[5],
-                'dosage_form': row[6],
-                'classification': row[7],
-                'manufacturer': row[8],
-                'country_of_origin': row[9],
-                'expiry_date': row[10].isoformat() if row[10] else None,
-                'is_expired': is_expired,
-                'is_canceled': is_canceled if is_canceled else 'N'
+                "id": row[0],
+                "reference_number": row[1],
+                "registration_number": row[2],
+                "generic_name": row[3],
+                "brand_name": row[4],
+                "dosage_strength": row[5],
+                "dosage_form": row[6],
+                "classification": row[7],
+                "manufacturer": row[8],
+                "country_of_origin": row[9],
+                "expiry_date": row[10].isoformat() if row[10] else None,
+                "is_expired": is_expired,
+                "is_canceled": is_canceled if is_canceled else "N",
             }
-            
-            return {
-                "found": True,
-                "is_valid": is_valid,
-                "data": drug
-            }
-        
+
+            return {"found": True, "is_valid": is_valid, "data": drug}
+
     finally:
         engine.dispose()
 
 
 # ==================== VERIFY REGISTRATION STATUS (NEW) ====================
-def update_registration_status(registration_id: int, update_data: Dict[str, Any]) -> Dict[str, Any]:
+def update_registration_status(
+    registration_id: int, update_data: Dict[str, Any]
+) -> Dict[str, Any]:
     """
     Updates a registration record by its primary key (id).
     Allowed fields: reference_number, registration_number, is_canceled,
@@ -414,8 +488,13 @@ def update_registration_status(registration_id: int, update_data: Dict[str, Any]
     engine = get_fda_db_engine()
 
     ALLOWED_FIELDS = {
-        'reference_number', 'registration_number', 'is_canceled',
-        'canceled_by', 'issuance_date', 'expiry_date', 'date_created',
+        "reference_number",
+        "registration_number",
+        "is_canceled",
+        "canceled_by",
+        "issuance_date",
+        "expiry_date",
+        "date_created",
     }
 
     try:
@@ -424,13 +503,15 @@ def update_registration_status(registration_id: int, update_data: Dict[str, Any]
                 SELECT id FROM fda_drug_registrations
                 WHERE id = :registration_id
             """)
-            result = connection.execute(check_query, {'registration_id': registration_id})
+            result = connection.execute(
+                check_query, {"registration_id": registration_id}
+            )
 
             if not result.fetchone():
                 return {"success": False, "error": "Registration not found"}
 
             set_clauses = []
-            params = {'registration_id': registration_id}
+            params = {"registration_id": registration_id}
 
             for key, value in update_data.items():
                 if key in ALLOWED_FIELDS and value is not None:
@@ -466,7 +547,7 @@ def update_drug(drug_id: int, update_data: Dict[str, Any]) -> Dict[str, Any]:
     Update a drug registration
     """
     engine = get_fda_db_engine()
-    
+
     try:
         with engine.connect() as connection:
             # Check if exists
@@ -474,40 +555,40 @@ def update_drug(drug_id: int, update_data: Dict[str, Any]) -> Dict[str, Any]:
                 SELECT id FROM fda_drug_registrations
                 WHERE id = :drug_id AND (is_canceled IS NULL OR is_canceled = 'N')
             """)
-            result = connection.execute(check_query, {'drug_id': drug_id})
-            
+            result = connection.execute(check_query, {"drug_id": drug_id})
+
             if not result.fetchone():
                 return {"success": False, "error": "Drug not found"}
-            
+
             # Build update query dynamically
             set_clauses = []
-            params = {'drug_id': drug_id}
-            
+            params = {"drug_id": drug_id}
+
             for key, value in update_data.items():
                 if value is not None:
                     set_clauses.append(f"{key} = :{key}")
                     params[key] = value
-            
+
             if not set_clauses:
                 return {"success": False, "error": "No data to update"}
-            
+
             # Always update date_modified
             set_clauses.append("date_modified = NOW()")
-            
+
             update_query = text(f"""
                 UPDATE fda_drug_registrations
                 SET {', '.join(set_clauses)}
                 WHERE id = :drug_id
             """)
-            
+
             connection.execute(update_query, params)
             connection.commit()
-            
+
             return {"success": True, "message": "Drug updated successfully"}
-            
+
     except Exception as e:
         return {"success": False, "error": str(e)}
-        
+
     finally:
         engine.dispose()
 
@@ -518,7 +599,7 @@ def cancel_drug(drug_id: int, canceled_by: str) -> Dict[str, Any]:
     Cancel a drug registration (set is_canceled = 'Y')
     """
     engine = get_fda_db_engine()
-    
+
     try:
         with engine.connect() as connection:
             # Check if exists and not already canceled
@@ -526,15 +607,15 @@ def cancel_drug(drug_id: int, canceled_by: str) -> Dict[str, Any]:
                 SELECT id, is_canceled FROM fda_drug_registrations
                 WHERE id = :drug_id
             """)
-            result = connection.execute(check_query, {'drug_id': drug_id})
+            result = connection.execute(check_query, {"drug_id": drug_id})
             row = result.fetchone()
-            
+
             if not row:
                 return {"success": False, "error": "Drug not found"}
-            
-            if row[1] == 'Y':
+
+            if row[1] == "Y":
                 return {"success": False, "error": "Drug is already canceled"}
-            
+
             # Cancel the drug
             cancel_query = text("""
                 UPDATE fda_drug_registrations
@@ -544,17 +625,19 @@ def cancel_drug(drug_id: int, canceled_by: str) -> Dict[str, Any]:
                     date_modified = NOW()
                 WHERE id = :drug_id
             """)
-            connection.execute(cancel_query, {
-                'drug_id': drug_id,
-                'canceled_by': canceled_by
-            })
+            connection.execute(
+                cancel_query, {"drug_id": drug_id, "canceled_by": canceled_by}
+            )
             connection.commit()
-            
-            return {"success": True, "message": "Drug registration canceled successfully"}
-            
+
+            return {
+                "success": True,
+                "message": "Drug registration canceled successfully",
+            }
+
     except Exception as e:
         return {"success": False, "error": str(e)}
-        
+
     finally:
         engine.dispose()
 
@@ -564,7 +647,7 @@ def restore_drug(drug_id: int) -> Dict[str, Any]:
     Restore a canceled drug registration (set is_canceled = 'N')
     """
     engine = get_fda_db_engine()
-    
+
     try:
         with engine.connect() as connection:
             # Check if exists and is canceled
@@ -572,15 +655,15 @@ def restore_drug(drug_id: int) -> Dict[str, Any]:
                 SELECT id, is_canceled FROM fda_drug_registrations
                 WHERE id = :drug_id
             """)
-            result = connection.execute(check_query, {'drug_id': drug_id})
+            result = connection.execute(check_query, {"drug_id": drug_id})
             row = result.fetchone()
-            
+
             if not row:
                 return {"success": False, "error": "Drug not found"}
-            
-            if row[1] != 'Y':
+
+            if row[1] != "Y":
                 return {"success": False, "error": "Drug is not canceled"}
-            
+
             # Restore the drug
             restore_query = text("""
                 UPDATE fda_drug_registrations
@@ -590,37 +673,39 @@ def restore_drug(drug_id: int) -> Dict[str, Any]:
                     date_modified = NOW()
                 WHERE id = :drug_id
             """)
-            connection.execute(restore_query, {'drug_id': drug_id})
+            connection.execute(restore_query, {"drug_id": drug_id})
             connection.commit()
-            
-            return {"success": True, "message": "Drug registration restored successfully"}
-            
+
+            return {
+                "success": True,
+                "message": "Drug registration restored successfully",
+            }
+
     except Exception as e:
         return {"success": False, "error": str(e)}
-        
+
     finally:
         engine.dispose()
 
 
 # ==================== EXPORT ====================
 def export_all_drugs(
-    search: Optional[str] = None,
-    include_canceled: bool = False
+    search: Optional[str] = None, include_canceled: bool = False
 ) -> Dict[str, Any]:
     """
     Get ALL drug registrations for export (no pagination limit)
     """
     engine = get_fda_db_engine()
-    
+
     try:
         with engine.connect() as connection:
             # Build WHERE clause
             where_conditions = []
             params = {}
-            
+
             if not include_canceled:
                 where_conditions.append("(is_canceled IS NULL OR is_canceled = 'N')")
-            
+
             if search:
                 where_conditions.append("""
                     (registration_number LIKE :search 
@@ -628,10 +713,10 @@ def export_all_drugs(
                     OR generic_name LIKE :search 
                     OR brand_name LIKE :search)
                 """)
-                params['search'] = f"%{search}%"
-            
+                params["search"] = f"%{search}%"
+
             where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
-            
+
             # Get ALL data (no LIMIT)
             data_query = text(f"""
                 SELECT 
@@ -644,49 +729,48 @@ def export_all_drugs(
                 WHERE {where_clause}
                 ORDER BY date_modified DESC, id DESC
             """)
-            
+
             result = connection.execute(data_query, params)
-            
+
             drugs = []
             for row in result:
-                drugs.append({
-                    'id': row[0],
-                    'reference_number': row[1],
-                    'registration_number': row[2],
-                    'generic_name': row[3],
-                    'brand_name': row[4],
-                    'dosage_strength': row[5],
-                    'dosage_form': row[6],
-                    'classification': row[7],
-                    'packaging': row[8],
-                    'pharmacologic_category': row[9],
-                    'manufacturer': row[10],
-                    'country_of_origin': row[11],
-                    'trader': row[12],
-                    'importer': row[13],
-                    'distributor': row[14],
-                    'app_type': row[15],
-                    'issuance_date': row[16].isoformat() if row[16] else None,
-                    'expiry_date': row[17].isoformat() if row[17] else None,
-                    'uploaded_by': row[18],
-                    'date_uploaded': row[19].isoformat() if row[19] else None,
-                    'is_canceled': row[20] if row[20] else 'N',
-                    'canceled_by': row[21],
-                    'date_canceled': row[22].isoformat() if row[22] else None,
-                    'date_modified': row[23].isoformat() if row[23] else None,
-                })
-            
-            return {
-                "drugs": drugs,
-                "total": len(drugs)
-            }
-        
+                drugs.append(
+                    {
+                        "id": row[0],
+                        "reference_number": row[1],
+                        "registration_number": row[2],
+                        "generic_name": row[3],
+                        "brand_name": row[4],
+                        "dosage_strength": row[5],
+                        "dosage_form": row[6],
+                        "classification": row[7],
+                        "packaging": row[8],
+                        "pharmacologic_category": row[9],
+                        "manufacturer": row[10],
+                        "country_of_origin": row[11],
+                        "trader": row[12],
+                        "importer": row[13],
+                        "distributor": row[14],
+                        "app_type": row[15],
+                        "issuance_date": row[16].isoformat() if row[16] else None,
+                        "expiry_date": row[17].isoformat() if row[17] else None,
+                        "uploaded_by": row[18],
+                        "date_uploaded": row[19].isoformat() if row[19] else None,
+                        "is_canceled": row[20] if row[20] else "N",
+                        "canceled_by": row[21],
+                        "date_canceled": row[22].isoformat() if row[22] else None,
+                        "date_modified": row[23].isoformat() if row[23] else None,
+                    }
+                )
+
+            return {"drugs": drugs, "total": len(drugs)}
+
     finally:
         engine.dispose()
 
+
 def bulk_create_drugs_from_dtns(
-    dtn_list: List[int],
-    uploaded_by: Optional[str] = None
+    dtn_list: List[int], uploaded_by: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Bulk insert FDA drug registrations sourced from main_db DTN records.
@@ -714,11 +798,7 @@ def bulk_create_drugs_from_dtns(
         # ── 1. Fetch all DTN records from main_db (local DB) ──────────────
         from app.models.main_db import MainDB
 
-        dtn_records = (
-            local_db.query(MainDB)
-            .filter(MainDB.DB_DTN.in_(dtn_list))
-            .all()
-        )
+        dtn_records = local_db.query(MainDB).filter(MainDB.DB_DTN.in_(dtn_list)).all()
 
         # Map fetched records by DTN for quick lookup
         fetched_dtns = {str(r.DB_DTN): r for r in dtn_records}
@@ -727,11 +807,13 @@ def bulk_create_drugs_from_dtns(
         for dtn in dtn_list:
             if str(dtn) not in fetched_dtns:
                 skipped += 1
-                errors.append({
-                    "dtn": dtn,
-                    "registration_number": None,
-                    "error": "DTN not found in main_db"
-                })
+                errors.append(
+                    {
+                        "dtn": dtn,
+                        "registration_number": None,
+                        "error": "DTN not found in main_db",
+                    }
+                )
 
         # ── 2. Insert each record into fda_drug_registrations ─────────────
         with fda_engine.connect() as connection:
@@ -740,20 +822,23 @@ def bulk_create_drugs_from_dtns(
                 # Skip if no registration number — nothing meaningful to insert
                 if not record.DB_REG_NO or not str(record.DB_REG_NO).strip():
                     skipped += 1
-                    errors.append({
-                        "dtn": record.DB_DTN,
-                        "registration_number": None,
-                        "error": "No registration number on DTN record"
-                    })
+                    errors.append(
+                        {
+                            "dtn": record.DB_DTN,
+                            "registration_number": None,
+                            "error": "No registration number on DTN record",
+                        }
+                    )
                     continue
 
                 # ── Parse issuance_date ────────────────────────────────────
                 issuance_date = None
-                if record.DB_SECPA_ISSUED_ON:  
+                if record.DB_SECPA_ISSUED_ON:
                     raw_issued = str(record.DB_SECPA_ISSUED_ON).strip()
                     for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d-%m-%Y", "%Y/%m/%d"):
                         try:
                             from datetime import datetime as dt
+
                             issuance_date = dt.strptime(raw_issued, fmt).date()
                             break
                         except ValueError:
@@ -761,37 +846,87 @@ def bulk_create_drugs_from_dtns(
 
                 # ── Parse expiry_date ─────────────────────────────────────
                 expiry_date = None
-                if record.DB_SECPA_EXP_DATE: 
+                if record.DB_SECPA_EXP_DATE:
                     raw_expiry = str(record.DB_SECPA_EXP_DATE).strip()
                     for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d-%m-%Y", "%Y/%m/%d"):
                         try:
                             from datetime import datetime as dt
+
                             expiry_date = dt.strptime(raw_expiry, fmt).date()
                             break
                         except ValueError:
                             continue
 
-
                 # ── Map fields ────────────────────────────────────────────
                 drug_data = {
-                    "reference_number":      str(record.DB_DTN) if record.DB_DTN else None,
-                    "registration_number":   str(record.DB_REG_NO).strip(),
-                    "generic_name":          str(record.DB_PROD_GEN_NAME).strip() if record.DB_PROD_GEN_NAME else None,
-                    "brand_name":            str(record.DB_PROD_BR_NAME).strip() if record.DB_PROD_BR_NAME else None,
-                    "dosage_strength":       str(record.DB_PROD_DOS_STR).strip() if record.DB_PROD_DOS_STR else None,
-                    "dosage_form":           str(record.DB_PROD_DOS_FORM).strip() if record.DB_PROD_DOS_FORM else None,
-                    "classification":        str(record.DB_PROD_CLASS_PRESCRIP).strip() if record.DB_PROD_CLASS_PRESCRIP else None,
-                    "packaging":             str(record.DB_PACKAGING).strip() if record.DB_PACKAGING else None,
-                    "pharmacologic_category":str(record.DB_PROD_PHARMA_CAT).strip() if record.DB_PROD_PHARMA_CAT else None,
-                    "manufacturer":          str(record.DB_PROD_MANU).strip() if record.DB_PROD_MANU else None,
-                    "country_of_origin":     str(record.DB_PROD_MANU_COUNTRY).strip() if record.DB_PROD_MANU_COUNTRY else None,
-                    "trader":                str(record.DB_PROD_TRADER).strip() if record.DB_PROD_TRADER else None,
-                    "importer":              str(record.DB_PROD_IMPORTER).strip() if record.DB_PROD_IMPORTER else None,
-                    "distributor":           str(record.DB_PROD_DISTRI).strip() if record.DB_PROD_DISTRI else None,
-                    "app_type":              str(record.DB_APP_TYPE).strip() if record.DB_APP_TYPE else None,
-                    "issuance_date":         issuance_date,
-                    "expiry_date":           expiry_date,
-                    "uploaded_by":           uploaded_by or record.DB_USER_UPLOADER,
+                    "reference_number": str(record.DB_DTN) if record.DB_DTN else None,
+                    "registration_number": str(record.DB_REG_NO).strip(),
+                    "generic_name": (
+                        str(record.DB_PROD_GEN_NAME).strip()
+                        if record.DB_PROD_GEN_NAME
+                        else None
+                    ),
+                    "brand_name": (
+                        str(record.DB_PROD_BR_NAME).strip()
+                        if record.DB_PROD_BR_NAME
+                        else None
+                    ),
+                    "dosage_strength": (
+                        str(record.DB_PROD_DOS_STR).strip()
+                        if record.DB_PROD_DOS_STR
+                        else None
+                    ),
+                    "dosage_form": (
+                        str(record.DB_PROD_DOS_FORM).strip()
+                        if record.DB_PROD_DOS_FORM
+                        else None
+                    ),
+                    "classification": (
+                        str(record.DB_PROD_CLASS_PRESCRIP).strip()
+                        if record.DB_PROD_CLASS_PRESCRIP
+                        else None
+                    ),
+                    "packaging": (
+                        str(record.DB_PACKAGING).strip()
+                        if record.DB_PACKAGING
+                        else None
+                    ),
+                    "pharmacologic_category": (
+                        str(record.DB_PROD_PHARMA_CAT).strip()
+                        if record.DB_PROD_PHARMA_CAT
+                        else None
+                    ),
+                    "manufacturer": (
+                        str(record.DB_PROD_MANU).strip()
+                        if record.DB_PROD_MANU
+                        else None
+                    ),
+                    "country_of_origin": (
+                        str(record.DB_PROD_MANU_COUNTRY).strip()
+                        if record.DB_PROD_MANU_COUNTRY
+                        else None
+                    ),
+                    "trader": (
+                        str(record.DB_PROD_TRADER).strip()
+                        if record.DB_PROD_TRADER
+                        else None
+                    ),
+                    "importer": (
+                        str(record.DB_PROD_IMPORTER).strip()
+                        if record.DB_PROD_IMPORTER
+                        else None
+                    ),
+                    "distributor": (
+                        str(record.DB_PROD_DISTRI).strip()
+                        if record.DB_PROD_DISTRI
+                        else None
+                    ),
+                    "app_type": (
+                        str(record.DB_APP_TYPE).strip() if record.DB_APP_TYPE else None
+                    ),
+                    "issuance_date": issuance_date,
+                    "expiry_date": expiry_date,
+                    "uploaded_by": uploaded_by or record.DB_USER_UPLOADER,
                 }
 
                 try:
@@ -819,26 +954,34 @@ def bulk_create_drugs_from_dtns(
                     connection.rollback()
                     failed += 1
                     error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
-                    errors.append({
-                        "dtn": record.DB_DTN,
-                        "registration_number": drug_data["registration_number"],
-                        "error": "Duplicate registration number" if "Duplicate entry" in error_msg else error_msg
-                    })
+                    errors.append(
+                        {
+                            "dtn": record.DB_DTN,
+                            "registration_number": drug_data["registration_number"],
+                            "error": (
+                                "Duplicate registration number"
+                                if "Duplicate entry" in error_msg
+                                else error_msg
+                            ),
+                        }
+                    )
 
                 except Exception as e:
                     connection.rollback()
                     failed += 1
-                    errors.append({
-                        "dtn": record.DB_DTN,
-                        "registration_number": drug_data.get("registration_number"),
-                        "error": str(e)
-                    })
+                    errors.append(
+                        {
+                            "dtn": record.DB_DTN,
+                            "registration_number": drug_data.get("registration_number"),
+                            "error": str(e),
+                        }
+                    )
 
         return {
             "successful": successful,
             "failed": failed,
             "skipped": skipped,
-            "errors": errors[:10]  # cap to first 10 errors same as existing pattern
+            "errors": errors[:10],  # cap to first 10 errors same as existing pattern
         }
 
     finally:
