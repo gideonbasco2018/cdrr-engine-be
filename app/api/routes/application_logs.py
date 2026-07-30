@@ -357,6 +357,10 @@ def get_logs_by_dtn(
         .all()
     )
 
+    # Override displayed username with the live value from the users table
+    for log in logs:
+        log.user_name = log.user.username if log.user else None
+
     return logs
 
 
