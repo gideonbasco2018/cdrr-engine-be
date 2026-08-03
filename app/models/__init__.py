@@ -17,6 +17,7 @@ from app.models.bulk_upload_log import BulkUploadLog
 from app.models.target_assignment import TargetAssignment
 from app.models.directors_target import DirectorsTarget
 from app.models.unit import Unit
+from app.models.gmp_record import GMPRecord, GMPDelegation, GMPApplicationLogs, GMPFieldAuditLog
 
 __all__ = [
     "MainDB",
@@ -41,4 +42,8 @@ __all__ = [
     "TargetAssignment",
     "DirectorsTarget",
     "Unit",
+    "GMPRecord",
+    "GMPDelegation",
+    "GMPApplicationLogs",
+    "GMPFieldAuditLog",
 ]
