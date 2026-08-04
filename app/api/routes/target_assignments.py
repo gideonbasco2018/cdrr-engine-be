@@ -15,12 +15,20 @@ from app.schemas.target_assignment import (
     TeamMemberOut,
     AllTeamsMemberOut,
     MemberTaskOut,
+    DirectorsTargetCreate,
+    DirectorsTargetBulkCreate,
+    DirectorsTargetOut,
 )
 
 router = APIRouter(
     prefix="/api/target_assignments",
     tags=["Target Assignments "],
 )
+
+
+def _require_director(current_user: User) -> None:
+    # TODO: palitan kung may hiwalay na UserRole.DIRECTOR sa enum niyo.
+    _require_admin(current_user)
 
 
 def _require_admin(current_user: User) -> None:
@@ -190,4 +198,77 @@ def unmark_as_target(
         )
 
     crud_target_assignment.unmark_as_target(db, target)
+    return None
+
+
+# ── POST /api/target-assignments/directors-target/bulk ──────────────
+@router.post(
+    "/target-assignments/directors-target/bulk",
+    response_model=List[DirectorsTargetOut],
+)
+def bulk_mark_as_directors_target(
+    payload: DirectorsTargetBulkCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    _require_director(current_user)
+
+    logs = crud_target_assignment.get_application_logs_by_ids(
+        db, payload.application_log_ids
+    )
+    if not logs:
+        raise HTTPException(status_code=404, detail="No application logs found.")
+
+    found_ids = {log.id for log in logs}
+    missing_ids = set(payload.application_log_ids) - found_ids
+    if missing_ids:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Application logs not found: {sorted(missing_ids)}",
+        )
+
+    return crud_target_assignment.bulk_mark_as_directors_target(
+        db, logs=logs, targeted_by_user_id=current_user.id, payload=payload
+    )
+
+
+# ── POST /api/target-assignments/directors-target ───────────────────
+@router.post(
+    "/target-assignments/directors-target",
+    response_model=DirectorsTargetOut,
+)
+def mark_as_directors_target(
+    payload: DirectorsTargetCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    _require_director(current_user)
+
+    log = crud_target_assignment.get_application_log(db, payload.application_log_id)
+    if not log:
+        raise HTTPException(status_code=404, detail="Application log not found.")
+
+    return crud_target_assignment.mark_as_directors_target(
+        db, log=log, targeted_by_user_id=current_user.id, payload=payload
+    )
+
+
+# ── DELETE /api/target-assignments/directors-target/{application_log_id} ─
+@router.delete(
+    "/target-assignments/directors-target/{application_log_id}", status_code=204
+)
+def unmark_as_directors_target(
+    application_log_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    _require_director(current_user)
+
+    target = crud_target_assignment.get_active_directors_target_by_log(
+        db, application_log_id
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Director's Target not found.")
+
+    crud_target_assignment.unmark_as_directors_target(db, target)
     return None

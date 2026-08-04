@@ -105,6 +105,11 @@ class MemberTaskOut(BaseModel):
     # crud/target_assignment.py for the exact stage weights/rules).
     application_progress_percent: Optional[float] = None
     application_history: List[ApplicationHistoryEntry] = []
+    # ── Director's Target (separate from lead target above) ──────────
+    is_directors_target: bool = False
+    directors_target_start_date: Optional[date] = None
+    directors_target_end_date: Optional[date] = None
+    directors_target_remarks: Optional[str] = None
 
 
 class TeamMemberOut(BaseModel):
@@ -125,3 +130,57 @@ class TeamMemberOut(BaseModel):
 class AllTeamsMemberOut(TeamMemberOut):
     lead_user_id: int
     lead_name: str
+
+
+# ── Director's Target: system-wide, not lead-scoped ──────────────────
+class DirectorsTargetCreate(BaseModel):
+    application_log_id: int
+    target_start_date: date
+    target_end_date: date
+    remarks: Optional[str] = None
+
+    @field_validator("target_end_date")
+    @classmethod
+    def end_date_after_start(cls, v, info):
+        start = info.data.get("target_start_date")
+        if start and v < start:
+            raise ValueError("target_end_date cannot be before target_start_date")
+        return v
+
+
+class DirectorsTargetBulkCreate(BaseModel):
+    application_log_ids: List[int]
+    target_start_date: date
+    target_end_date: date
+    remarks: Optional[str] = None
+
+    @field_validator("application_log_ids")
+    @classmethod
+    def non_empty(cls, v):
+        if not v:
+            raise ValueError("application_log_ids cannot be empty")
+        return v
+
+    @field_validator("target_end_date")
+    @classmethod
+    def end_date_after_start(cls, v, info):
+        start = info.data.get("target_start_date")
+        if start and v < start:
+            raise ValueError("target_end_date cannot be before target_start_date")
+        return v
+
+
+class DirectorsTargetOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    application_log_id: int
+    main_db_id: int
+    member_user_id: Optional[int] = None
+    targeted_by_user_id: int
+    is_active: bool
+    remarks: Optional[str] = None
+    target_start_date: Optional[date] = None
+    target_end_date: Optional[date] = None
+    targeted_at: Optional[datetime] = None
+    untargeted_at: Optional[datetime] = None

@@ -4,7 +4,7 @@ CRUD Operations for Application Logs
 """
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, String
 from typing import Optional, List
 from datetime import datetime, timezone, timedelta
 from app.models.application_logs import ApplicationLogs
@@ -266,7 +266,7 @@ def get_by_main_db_id(db: Session, main_db_id: int) -> List[ApplicationLogs]:
 
 
 def get_by_step(db: Session, main_db_id: int, step: str) -> List[ApplicationLogs]:
-    """Get logs for a specific step (e.g., 'Decking', 'Evaluation')"""
+    """Get logs for a specific workflow step (e.g., 'Decking', 'Evaluation')"""
     return (
         db.query(ApplicationLogs)
         .filter(
@@ -601,9 +601,6 @@ def toggle_star(db: Session, log_id: int, star: bool) -> Optional[ApplicationLog
     return db_log
 
 
-# ── dagdag sa dulo ng file, o kahit saan sa ilalim ng "READ" section ──
-
-
 def get_open_tasks(
     db: Session,
     page: int = 1,
@@ -611,17 +608,28 @@ def get_open_tasks(
     search: Optional[str] = None,
     application_step: Optional[str] = None,
     user_name: Optional[str] = None,
+    dtn_date_from: Optional[str] = None,
+    dtn_date_to: Optional[str] = None,
+    date_received_from: Optional[str] = None,
+    date_received_to: Optional[str] = None,
 ) -> dict:
     """
     Open/active tasks — del_last_index=1 AND del_thread='Open'.
-    Joined against MainDB for DTN / OLD RSN.
-    Used by the Reassignment/Reroute page (task-list view).
+    Joined against MainDB for DTN / OLD RSN, and left-joined against
+    DirectorsTarget (active only) so the list can show which tasks are
+    already marked as Director's Target.
     """
     from app.models.main_db import MainDB
+    from app.models.directors_target import DirectorsTarget
 
     query = (
-        db.query(ApplicationLogs, MainDB)
+        db.query(ApplicationLogs, MainDB, DirectorsTarget)
         .join(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
+        .outerjoin(
+            DirectorsTarget,
+            (DirectorsTarget.application_log_id == ApplicationLogs.id)
+            & (DirectorsTarget.is_active == True),  # noqa: E712
+        )
         .filter(
             ApplicationLogs.del_last_index == 1,
             ApplicationLogs.del_thread == "Open",
@@ -633,7 +641,6 @@ def get_open_tasks(
     if user_name:
         query = query.filter(ApplicationLogs.user_name == user_name)
     if search:
-        # Support multiple DTNs — comma or newline separated
         dtn_list = [
             s.strip() for s in search.replace("\n", ",").split(",") if s.strip()
         ]
@@ -641,8 +648,21 @@ def get_open_tasks(
             like = f"%{dtn_list[0]}%"
             query = query.filter(MainDB.DB_DTN.like(like))
         elif len(dtn_list) > 1:
-            # Exact match para sa bulk-paste — DTNs karaniwang buo/exact
             query = query.filter(MainDB.DB_DTN.in_(dtn_list))
+
+    if dtn_date_from or dtn_date_to:
+        dtn_prefix = func.substring(func.cast(MainDB.DB_DTN, String(20)), 1, 8)
+        if dtn_date_from:
+            query = query.filter(dtn_prefix >= dtn_date_from)
+        if dtn_date_to:
+            query = query.filter(dtn_prefix <= dtn_date_to)
+
+    if date_received_from or date_received_to:
+        received_date = func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%m/%d/%Y")
+        if date_received_from:
+            query = query.filter(received_date >= date_received_from)
+        if date_received_to:
+            query = query.filter(received_date <= date_received_to)
 
     total = query.count()
 
@@ -660,17 +680,43 @@ def get_open_tasks(
             "dtn": str(main.DB_DTN) if main.DB_DTN is not None else None,
             "old_rsn": (
                 str(main.DB_OLD_RSN) if getattr(main, "DB_OLD_RSN", None) else None
-            ),  # ⚠️ confirm field name
+            ),
             "application_step": log.application_step,
             "user_name": log.user_name,
             "user_id": log.user_id,
             "application_status": log.application_status,
+            "date_received_center": main.DB_DATE_RECEIVED_CENT,
             "updated_at": log.updated_at,
+            "is_directors_target": dtarget is not None,
+            "directors_target_start_date": (
+                dtarget.target_start_date if dtarget else None
+            ),
+            "directors_target_end_date": (dtarget.target_end_date if dtarget else None),
+            "directors_target_remarks": (dtarget.remarks if dtarget else None),
         }
-        for log, main in rows
+        for log, main, dtarget in rows
     ]
 
     return {"data": data, "total": total, "page": page, "page_size": page_size}
+
+
+def get_distinct_users(db: Session) -> List[str]:
+    """
+    Get all distinct user_name values among OPEN tasks — for the
+    Current User filter dropdown.
+    """
+    rows = (
+        db.query(ApplicationLogs.user_name)
+        .filter(
+            ApplicationLogs.del_last_index == 1,
+            ApplicationLogs.del_thread == "Open",
+            ApplicationLogs.user_name.isnot(None),
+        )
+        .distinct()
+        .order_by(ApplicationLogs.user_name.asc())
+        .all()
+    )
+    return [r[0] for r in rows]
 
 
 def get_distinct_steps(db: Session) -> List[str]:

@@ -19,6 +19,20 @@ from app.schemas.target_assignment import (
     ApplicationHistoryEntry,
 )
 
+from app.models.directors_target import DirectorsTarget
+from app.schemas.target_assignment import (
+    TargetAssignmentCreate,
+    TargetAssignmentBulkCreate,
+    TeamMemberOut,
+    AllTeamsMemberOut,
+    MemberTaskOut,
+    ApplicationHistoryEntry,
+    DirectorsTargetCreate,
+    DirectorsTargetBulkCreate,
+    DirectorsTargetOut,
+)
+from app.models.directors_target import DirectorsTarget
+
 # Status kinds treated as "terminal" (application is done, one way or
 # another) — used by get_application_progress below. Kept in sync with
 # the frontend's STATUS_KIND_MAP; update both if statuses change.
@@ -248,22 +262,27 @@ def build_application_history_entries(
 # ── Member tasks (flattened application_logs + main_db + target state) ──
 def get_member_tasks(db: Session, member_user_id: int) -> List[MemberTaskOut]:
     rows = (
-        db.query(ApplicationLogs, MainDB, TargetAssignment)
+        db.query(ApplicationLogs, MainDB, TargetAssignment, DirectorsTarget)
         .join(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
         .outerjoin(
             TargetAssignment,
             (TargetAssignment.application_log_id == ApplicationLogs.id)
             & (TargetAssignment.is_active == True),  # noqa: E712
         )
+        .outerjoin(
+            DirectorsTarget,
+            (DirectorsTarget.application_log_id == ApplicationLogs.id)
+            & (DirectorsTarget.is_active == True),  # noqa: E712
+        )
         .filter(ApplicationLogs.user_id == member_user_id)
         .all()
     )
 
-    main_db_ids = list({main.DB_ID for _, main, _ in rows})
+    main_db_ids = list({main.DB_ID for _, main, _, _ in rows})
     history_map = get_application_history_map(db, main_db_ids)
 
     result = []
-    for log, main, target in rows:
+    for log, main, target, dtarget in rows:
         history = history_map.get(main.DB_ID, [])
         result.append(
             MemberTaskOut(
@@ -284,6 +303,14 @@ def get_member_tasks(db: Session, member_user_id: int) -> List[MemberTaskOut]:
                 target_remarks=target.remarks if target else None,
                 application_progress_percent=compute_application_progress(history),
                 application_history=build_application_history_entries(history),
+                is_directors_target=dtarget is not None,
+                directors_target_start_date=(
+                    dtarget.target_start_date if dtarget else None
+                ),
+                directors_target_end_date=(
+                    dtarget.target_end_date if dtarget else None
+                ),
+                directors_target_remarks=dtarget.remarks if dtarget else None,
             )
         )
     return result
@@ -429,3 +456,114 @@ def bulk_mark_as_target(
     for r in results:
         db.refresh(r)
     return results
+
+
+# ── Director's Target mutations ─────────────────────────────────────
+def get_active_directors_target_by_log(
+    db: Session, application_log_id: int
+) -> Optional[DirectorsTarget]:
+    return (
+        db.query(DirectorsTarget)
+        .filter(
+            DirectorsTarget.application_log_id == application_log_id,
+            DirectorsTarget.is_active == True,  # noqa: E712
+        )
+        .first()
+    )
+
+
+def get_directors_target_by_log(
+    db: Session, application_log_id: int
+) -> Optional[DirectorsTarget]:
+    """Fetches the row regardless of is_active — used to decide upsert vs insert."""
+    return (
+        db.query(DirectorsTarget)
+        .filter(DirectorsTarget.application_log_id == application_log_id)
+        .first()
+    )
+
+
+def mark_as_directors_target(
+    db: Session,
+    *,
+    log: ApplicationLogs,
+    targeted_by_user_id: int,
+    payload: DirectorsTargetCreate,
+) -> DirectorsTarget:
+    existing = get_directors_target_by_log(db, payload.application_log_id)
+
+    if existing:
+        existing.is_active = True
+        existing.remarks = payload.remarks
+        existing.target_start_date = payload.target_start_date
+        existing.target_end_date = payload.target_end_date
+        existing.targeted_by_user_id = targeted_by_user_id
+        existing.targeted_at = func.now()
+        existing.untargeted_at = None
+        db.commit()
+        db.refresh(existing)
+        return existing
+
+    new_target = DirectorsTarget(
+        application_log_id=log.id,
+        main_db_id=log.main_db_id,
+        member_user_id=log.user_id,
+        targeted_by_user_id=targeted_by_user_id,
+        remarks=payload.remarks,
+        target_start_date=payload.target_start_date,
+        target_end_date=payload.target_end_date,
+        is_active=True,
+    )
+    db.add(new_target)
+    db.commit()
+    db.refresh(new_target)
+    return new_target
+
+
+def bulk_mark_as_directors_target(
+    db: Session,
+    *,
+    logs: List[ApplicationLogs],
+    targeted_by_user_id: int,
+    payload: DirectorsTargetBulkCreate,
+) -> List[DirectorsTarget]:
+    results: List[DirectorsTarget] = []
+
+    for log in logs:
+        existing = get_directors_target_by_log(db, log.id)
+
+        if existing:
+            existing.is_active = True
+            existing.remarks = payload.remarks
+            existing.target_start_date = payload.target_start_date
+            existing.target_end_date = payload.target_end_date
+            existing.targeted_by_user_id = targeted_by_user_id
+            existing.targeted_at = func.now()
+            existing.untargeted_at = None
+            results.append(existing)
+        else:
+            new_target = DirectorsTarget(
+                application_log_id=log.id,
+                main_db_id=log.main_db_id,
+                member_user_id=log.user_id,
+                targeted_by_user_id=targeted_by_user_id,
+                remarks=payload.remarks,
+                target_start_date=payload.target_start_date,
+                target_end_date=payload.target_end_date,
+                is_active=True,
+            )
+            db.add(new_target)
+            results.append(new_target)
+
+    db.commit()
+    for r in results:
+        db.refresh(r)
+    return results
+
+
+def unmark_as_directors_target(db: Session, target: DirectorsTarget) -> DirectorsTarget:
+    target.is_active = False
+    target.untargeted_at = func.now()
+    db.commit()
+    db.refresh(target)
+    return target
