@@ -133,15 +133,20 @@ class ApplicationLogResponse(ApplicationLogBase):
 
 
 class OpenTaskItem(BaseModel):
-    id: int  # application_logs.id
-    main_db_id: int  # FK → main_db.DB_ID (== mainDbId sa frontend)
+    id: int
+    main_db_id: int
     dtn: Optional[str] = None
     old_rsn: Optional[str] = None
     application_step: Optional[str] = None
     user_name: Optional[str] = None
     user_id: Optional[int] = None
     application_status: Optional[str] = None
+    date_received_center: Optional[str] = None
     updated_at: datetime
+    is_directors_target: bool = False
+    directors_target_start_date: Optional[date] = None
+    directors_target_end_date: Optional[date] = None
+    directors_target_remarks: Optional[str] = None
 
     class Config:
         from_attributes = True

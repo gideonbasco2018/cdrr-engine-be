@@ -213,11 +213,19 @@ def get_open_tasks(
     search: Optional[str] = Query(None),
     application_step: Optional[str] = Query(None),
     user_name: Optional[str] = Query(None),
+    dtn_date_from: Optional[str] = Query(
+        None, description="YYYYMMDD, based on DTN digits 1-8"
+    ),
+    dtn_date_to: Optional[str] = Query(
+        None, description="YYYYMMDD, based on DTN digits 1-8"
+    ),
+    date_received_from: Optional[str] = Query(None, description="YYYY-MM-DD"),
+    date_received_to: Optional[str] = Query(None, description="YYYY-MM-DD"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
     """
-    Task list for Reassignment/Reroute page.
+    Task list for Reassignment/Reroute page and Directors Target.
     Filtered to del_last_index=1, del_thread='Open'.
     """
     return crud_logs.get_open_tasks(
@@ -227,13 +235,13 @@ def get_open_tasks(
         search=search,
         application_step=application_step,
         user_name=user_name,
+        dtn_date_from=dtn_date_from,
+        dtn_date_to=dtn_date_to,
+        date_received_from=date_received_from,
+        date_received_to=date_received_to,
     )
 
 
-# ══════════════════════════════════════════════════════════════════════
-#  NEW — Distinct application_step values among open tasks
-#  GET /api/application-logs/open-tasks/steps
-# ══════════════════════════════════════════════════════════════════════
 @router.get("/open-tasks/steps")
 def get_open_task_steps(
     current_user: User = Depends(get_current_active_user),
@@ -241,6 +249,19 @@ def get_open_task_steps(
 ):
     """Distinct application_step values among open tasks — for the filter dropdown."""
     return {"steps": crud_logs.get_distinct_steps(db)}
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  NEW — Distinct user_name values among open tasks
+#  GET /api/application-logs/open-tasks/users
+# ══════════════════════════════════════════════════════════════════════
+@router.get("/open-tasks/users")
+def get_open_task_users(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Distinct user_name values among open tasks — for the Current User filter dropdown."""
+    return {"users": crud_logs.get_distinct_users(db)}
 
 
 @router.get("/{log_id}", response_model=ApplicationLogResponse)
