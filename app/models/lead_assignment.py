@@ -8,37 +8,42 @@ from app.db.base_class import Base
 
 class LeadAssignment(Base):
     """
-    Generic lead/member assignment table.
-    Supports any role hierarchy: Checker → Evaluator, Supervisor → Evaluator, etc.
+    One row = one member assigned to a Unit under a specific functional
+    role (group_id, from the existing groups table — Checker/Evaluator,
+    Evaluator, Preassessor, Admin Support, etc.).
+
+    The old flat lead_user_id / lead_role columns are gone: the "lead"
+    for every row is now Unit.lead_user_id, shared by all members of
+    that unit — matching one box in the org chart.
     """
+
     __tablename__ = "lead_assignments"
 
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
 
-    # The one who leads/monitors
-    lead_user_id = Column(
-        Integer,
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True
+    unit_id = Column(
+        Integer, ForeignKey("units.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
-    # The one being led/monitored
+    # The one being assigned/monitored
     member_user_id = Column(
-        Integer,
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
-    # Role context of the lead — e.g. "Checker", "Supervisor"
-    lead_role = Column(String(100), nullable=False, index=True)
-
-    # Who created this assignment (Admin)
-    assigned_by_user_id = Column(
+    # Functional role of this member WITHIN the unit — sourced from the
+    # existing groups table (Checker/Evaluator, Evaluator, Preassessor,
+    # Admin Support, Safety & Efficacy, etc.)
+    # ⚠️ CONFIRM: adjust the FK target below if your groups table/model
+    # is named differently (e.g. app/models/group.py -> "groups").
+    group_id = Column(
         Integer,
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True
+        ForeignKey("groups.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+
+    assigned_by_user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
 
     is_active = Column(Boolean, default=True, nullable=False)
@@ -49,14 +54,13 @@ class LeadAssignment(Base):
     unassigned_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
-    lead = relationship("User", foreign_keys=[lead_user_id])
+    unit = relationship("Unit", back_populates="assignments")
     member = relationship("User", foreign_keys=[member_user_id])
+    group = relationship("Group", foreign_keys=[group_id])
     assigned_by = relationship("User", foreign_keys=[assigned_by_user_id])
 
     def __repr__(self):
         return (
-            f"<LeadAssignment("
-            f"lead_id={self.lead_user_id}, "
-            f"member_id={self.member_user_id}, "
-            f"lead_role={self.lead_role})>"
+            f"<LeadAssignment(unit_id={self.unit_id}, "
+            f"member_id={self.member_user_id}, group_id={self.group_id})>"
         )

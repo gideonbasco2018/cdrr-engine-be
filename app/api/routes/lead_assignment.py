@@ -35,9 +35,9 @@ router = APIRouter(
 def list_lead_assignments(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=1000),
-    lead_user_id: Optional[int] = Query(None),
+    unit_id: Optional[int] = Query(None),
     member_user_id: Optional[int] = Query(None),
-    lead_role: Optional[str] = Query(None),    # "Checker" or "Supervisor"
+    group_id: Optional[int] = Query(None),
     is_active: Optional[bool] = Query(None),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
@@ -45,17 +45,18 @@ def list_lead_assignments(
     """
     Get a paginated list of lead assignments.
 
-    Supports filtering by lead user, member user, lead role
-    ("Checker" or "Supervisor"), and active status.
+    Supports filtering by unit, member user, functional role/group
+    within the unit (Checker/Evaluator, Evaluator, Preassessor, etc.),
+    and active status.
     """
     skip = (page - 1) * page_size
     data, total = get_all_lead_assignments(
         db=db,
         skip=skip,
         limit=page_size,
-        lead_user_id=lead_user_id,
+        unit_id=unit_id,
         member_user_id=member_user_id,
-        lead_role=lead_role,
+        group_id=group_id,
         is_active=is_active,
     )
     total_pages = math.ceil(total / page_size) if total > 0 else 0
@@ -87,7 +88,7 @@ def create_assignment(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    """Create a new lead assignment, recorded under the current user."""
+    """Assign a member to a unit under a specific functional role (group)."""
     return create_lead_assignment(
         db=db,
         payload=payload,
@@ -128,8 +129,8 @@ def batch_create_assignments(
     db: Session = Depends(get_db),
 ):
     """
-    Create multiple lead assignments in a single request, all recorded
-    under the current user as the assigner.
+    Assign multiple members to the same unit + functional role in a
+    single request, all recorded under the current user as the assigner.
     """
     return batch_create_lead_assignments(
         db=db,

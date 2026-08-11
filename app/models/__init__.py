@@ -16,6 +16,7 @@ from app.models.application_document import ApplicationDocument
 from app.models.bulk_upload_log import BulkUploadLog
 from app.models.target_assignment import TargetAssignment
 from app.models.directors_target import DirectorsTarget
+from app.models.unit import Unit
 
 __all__ = [
     "MainDB",
@@ -39,4 +40,5 @@ __all__ = [
     "BulkUploadLog",
     "TargetAssignment",
     "DirectorsTarget",
+    "Unit",
 ]

@@ -6,7 +6,11 @@ from typing import Optional, List, Tuple
 from datetime import datetime, timezone, timedelta
 
 from app.models.lead_assignment import LeadAssignment
-from app.schemas.lead_assignment import LeadAssignmentCreate, LeadAssignmentUpdate, LeadAssignmentBatchCreate
+from app.schemas.lead_assignment import (
+    LeadAssignmentCreate,
+    LeadAssignmentUpdate,
+    LeadAssignmentBatchCreate,
+)
 
 PHT = timezone(timedelta(hours=8))
 
@@ -15,25 +19,30 @@ def get_all_lead_assignments(
     db: Session,
     skip: int = 0,
     limit: int = 20,
-    lead_user_id: Optional[int] = None,
+    unit_id: Optional[int] = None,
     member_user_id: Optional[int] = None,
-    lead_role: Optional[str] = None,
+    group_id: Optional[int] = None,
     is_active: Optional[bool] = None,
 ) -> Tuple[List[LeadAssignment], int]:
 
     query = db.query(LeadAssignment)
 
-    if lead_user_id is not None:
-        query = query.filter(LeadAssignment.lead_user_id == lead_user_id)
+    if unit_id is not None:
+        query = query.filter(LeadAssignment.unit_id == unit_id)
     if member_user_id is not None:
         query = query.filter(LeadAssignment.member_user_id == member_user_id)
-    if lead_role is not None:
-        query = query.filter(LeadAssignment.lead_role == lead_role)
+    if group_id is not None:
+        query = query.filter(LeadAssignment.group_id == group_id)
     if is_active is not None:
         query = query.filter(LeadAssignment.is_active == is_active)
 
     total = query.count()
-    data = query.order_by(LeadAssignment.assigned_at.desc()).offset(skip).limit(limit).all()
+    data = (
+        query.order_by(LeadAssignment.assigned_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
 
     return data, total
 
@@ -50,23 +59,27 @@ def create_lead_assignment(
     payload: LeadAssignmentCreate,
     assigned_by_user_id: Optional[int] = None,
 ) -> LeadAssignment:
-    # Prevent duplicate active assignment
-    existing = db.query(LeadAssignment).filter(
-        and_(
-            LeadAssignment.lead_user_id == payload.lead_user_id,
-            LeadAssignment.member_user_id == payload.member_user_id,
-            LeadAssignment.lead_role == payload.lead_role,
-            LeadAssignment.is_active == True,
+    # Prevent duplicate active assignment (same member, same unit, same role)
+    existing = (
+        db.query(LeadAssignment)
+        .filter(
+            and_(
+                LeadAssignment.unit_id == payload.unit_id,
+                LeadAssignment.member_user_id == payload.member_user_id,
+                LeadAssignment.group_id == payload.group_id,
+                LeadAssignment.is_active == True,
+            )
         )
-    ).first()
+        .first()
+    )
 
     if existing:
         return existing  # idempotent — return existing na lang
 
     assignment = LeadAssignment(
-        lead_user_id=payload.lead_user_id,
+        unit_id=payload.unit_id,
         member_user_id=payload.member_user_id,
-        lead_role=payload.lead_role,
+        group_id=payload.group_id,
         remarks=payload.remarks,
         assigned_by_user_id=assigned_by_user_id,
         is_active=True,
@@ -95,6 +108,9 @@ def update_lead_assignment(
     if payload.remarks is not None:
         assignment.remarks = payload.remarks
 
+    if payload.group_id is not None:
+        assignment.group_id = payload.group_id
+
     db.commit()
     db.refresh(assignment)
     return assignment
@@ -112,25 +128,22 @@ def delete_lead_assignment(
     return True
 
 
-def get_member_ids_under_lead(
+def get_member_ids_under_unit(
     db: Session,
-    lead_user_id: int,
-    lead_role: str,
+    unit_id: int,
+    group_id: Optional[int] = None,
 ) -> List[int]:
     """
-    Returns list of member user IDs under a specific lead + role.
-    Used for monitoring queries.
+    Returns list of member user IDs under a specific unit (+ optional
+    role filter). Used for monitoring queries.
     """
-    rows = (
-        db.query(LeadAssignment.member_user_id)
-        .filter(
-            LeadAssignment.lead_user_id == lead_user_id,
-            LeadAssignment.lead_role == lead_role,
-            LeadAssignment.is_active == True,
-        )
-        .all()
+    query = db.query(LeadAssignment.member_user_id).filter(
+        LeadAssignment.unit_id == unit_id,
+        LeadAssignment.is_active == True,
     )
-    return [row[0] for row in rows]
+    if group_id is not None:
+        query = query.filter(LeadAssignment.group_id == group_id)
+    return [row[0] for row in query.all()]
 
 
 def batch_create_lead_assignments(
@@ -141,24 +154,28 @@ def batch_create_lead_assignments(
     created = []
     for member_id in payload.member_user_ids:
         # skip kung may existing na active assignment
-        existing = db.query(LeadAssignment).filter(
-            and_(
-                LeadAssignment.lead_user_id   == payload.lead_user_id,
-                LeadAssignment.member_user_id == member_id,
-                LeadAssignment.lead_role      == payload.lead_role,
-                LeadAssignment.is_active      == True,
+        existing = (
+            db.query(LeadAssignment)
+            .filter(
+                and_(
+                    LeadAssignment.unit_id == payload.unit_id,
+                    LeadAssignment.member_user_id == member_id,
+                    LeadAssignment.group_id == payload.group_id,
+                    LeadAssignment.is_active == True,
+                )
             )
-        ).first()
+            .first()
+        )
         if existing:
             continue
 
         assignment = LeadAssignment(
-            lead_user_id        = payload.lead_user_id,
-            member_user_id      = member_id,
-            lead_role           = payload.lead_role,
-            remarks             = payload.remarks,
-            assigned_by_user_id = assigned_by_user_id,
-            is_active           = True,
+            unit_id=payload.unit_id,
+            member_user_id=member_id,
+            group_id=payload.group_id,
+            remarks=payload.remarks,
+            assigned_by_user_id=assigned_by_user_id,
+            is_active=True,
         )
         db.add(assignment)
         created.append(assignment)

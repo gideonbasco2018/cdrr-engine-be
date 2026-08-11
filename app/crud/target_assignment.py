@@ -1,9 +1,9 @@
 # app/crud/target_assignment.py
-
+from sqlalchemy import func, or_, String, Integer
 from collections import defaultdict
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+
 
 from app.models.user import User
 from app.models.lead_assignment import LeadAssignment
@@ -17,6 +17,7 @@ from app.schemas.target_assignment import (
     AllTeamsMemberOut,
     MemberTaskOut,
     ApplicationHistoryEntry,
+    UnitTaskOut,
 )
 
 from app.models.directors_target import DirectorsTarget
@@ -32,6 +33,7 @@ from app.schemas.target_assignment import (
     DirectorsTargetOut,
 )
 from app.models.directors_target import DirectorsTarget
+from app.models.unit import Unit
 
 # Status kinds treated as "terminal" (application is done, one way or
 # another) — used by get_application_progress below. Kept in sync with
@@ -58,14 +60,17 @@ APPLICATION_STAGE_WEIGHTS = [
 _TERMINAL_RELEASE_STEPS = {"OD-RELEASING", "RELEASING OFFICER"}
 
 
-# ── Lead assignment helpers ─────────────────────────────────────────
+from app.models.unit import Unit  # idagdag sa imports sa taas ng file
+
+
 def get_active_lead_assignment(
     db: Session, lead_user_id: int, member_user_id: int
 ) -> Optional[LeadAssignment]:
     return (
         db.query(LeadAssignment)
+        .join(Unit, LeadAssignment.unit_id == Unit.id)
         .filter(
-            LeadAssignment.lead_user_id == lead_user_id,
+            Unit.lead_user_id == lead_user_id,
             LeadAssignment.member_user_id == member_user_id,
             LeadAssignment.is_active == True,  # noqa: E712
         )
@@ -76,8 +81,9 @@ def get_active_lead_assignment(
 def get_my_team(db: Session, lead_user_id: int) -> List[LeadAssignment]:
     return (
         db.query(LeadAssignment)
+        .join(Unit, LeadAssignment.unit_id == Unit.id)
         .filter(
-            LeadAssignment.lead_user_id == lead_user_id,
+            Unit.lead_user_id == lead_user_id,
             LeadAssignment.is_active == True,  # noqa: E712
         )
         .all()
@@ -88,6 +94,22 @@ def count_member_tasks(db: Session, member_user_id: int) -> int:
     return (
         db.query(func.count(ApplicationLogs.id))
         .filter(ApplicationLogs.user_id == member_user_id)
+        .scalar()
+        or 0
+    )
+
+
+def count_member_directors_targets(db: Session, member_user_id: int) -> int:
+    return (
+        db.query(func.count(DirectorsTarget.id))
+        .join(
+            ApplicationLogs,
+            DirectorsTarget.application_log_id == ApplicationLogs.id,
+        )
+        .filter(
+            ApplicationLogs.user_id == member_user_id,
+            DirectorsTarget.is_active == True,  # noqa: E712
+        )
         .scalar()
         or 0
     )
@@ -123,7 +145,9 @@ def build_team_overview(db: Session, lead_user_id: int) -> List[TeamMemberOut]:
                     if a.member
                     else ""
                 ),
-                lead_role=a.lead_role,
+                lead_role=a.group.name if a.group else "",
+                unit_id=a.unit_id,
+                unit_name=a.unit.name if a.unit else "",
                 assigned_at=a.assigned_at,
                 task_count=count_member_tasks(db, a.member_user_id),
                 target_count=count_member_targets(db, a.member_user_id),
@@ -146,6 +170,7 @@ def build_all_teams_overview(db: Session) -> List[AllTeamsMemberOut]:
 
     result: List[AllTeamsMemberOut] = []
     for a in assignments:
+        unit = a.unit
         result.append(
             AllTeamsMemberOut(
                 lead_assignment_id=a.id,
@@ -155,13 +180,23 @@ def build_all_teams_overview(db: Session) -> List[AllTeamsMemberOut]:
                     if a.member
                     else ""
                 ),
-                lead_role=a.lead_role,
+                lead_role=a.group.name if a.group else "",
+                unit_id=a.unit_id,
+                unit_name=unit.name if unit else "",
                 assigned_at=a.assigned_at,
                 task_count=count_member_tasks(db, a.member_user_id),
                 target_count=count_member_targets(db, a.member_user_id),
-                lead_user_id=a.lead_user_id,
+                directors_target_count=count_member_directors_targets(
+                    db, a.member_user_id
+                ),
+                in_progress_count=count_member_in_progress_tasks(
+                    db, a.member_user_id
+                ),  # ← bago
+                lead_user_id=unit.lead_user_id if unit else None,
                 lead_name=(
-                    f"{a.lead.first_name} {a.lead.surname}".strip() if a.lead else ""
+                    f"{unit.lead.first_name} {unit.lead.surname}".strip()
+                    if unit and unit.lead
+                    else ""
                 ),
             )
         )
@@ -259,8 +294,8 @@ def build_application_history_entries(
     ]
 
 
-# ── Member tasks (flattened application_logs + main_db + target state) ──
 def get_member_tasks(db: Session, member_user_id: int) -> List[MemberTaskOut]:
+
     rows = (
         db.query(ApplicationLogs, MainDB, TargetAssignment, DirectorsTarget)
         .join(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
@@ -281,39 +316,12 @@ def get_member_tasks(db: Session, member_user_id: int) -> List[MemberTaskOut]:
     main_db_ids = list({main.DB_ID for _, main, _, _ in rows})
     history_map = get_application_history_map(db, main_db_ids)
 
-    result = []
-    for log, main, target, dtarget in rows:
-        history = history_map.get(main.DB_ID, [])
-        result.append(
-            MemberTaskOut(
-                log_id=log.id,
-                db_id=main.DB_ID,
-                dtn=main.DB_DTN,
-                brand_name=main.DB_PROD_BR_NAME,
-                step=log.application_step,
-                status=log.application_status,
-                entry_type=main.DB_ENTRY_TYPE or "ORIGINAL",
-                app_type=main.DB_APP_TYPE,
-                date_accomplished=log.accomplished_date,
-                date_received_center=main.DB_DATE_RECEIVED_CENT,
-                is_targeted=target is not None,
-                target_assignment_id=target.id if target else None,
-                target_start_date=target.target_start_date if target else None,
-                target_end_date=target.target_end_date if target else None,
-                target_remarks=target.remarks if target else None,
-                application_progress_percent=compute_application_progress(history),
-                application_history=build_application_history_entries(history),
-                is_directors_target=dtarget is not None,
-                directors_target_start_date=(
-                    dtarget.target_start_date if dtarget else None
-                ),
-                directors_target_end_date=(
-                    dtarget.target_end_date if dtarget else None
-                ),
-                directors_target_remarks=dtarget.remarks if dtarget else None,
-            )
+    return [
+        _build_member_task_out(
+            log, main, target, dtarget, history_map.get(main.DB_ID, [])
         )
-    return result
+        for log, main, target, dtarget in rows
+    ]
 
 
 # ── Target assignment mutations ─────────────────────────────────────
@@ -567,3 +575,470 @@ def unmark_as_directors_target(db: Session, target: DirectorsTarget) -> Director
     db.commit()
     db.refresh(target)
     return target
+
+
+_TERMINAL_STATUSES = _DONE_STATUSES | _STOPPED_STATUSES
+
+
+def _build_member_task_out(log, main, target, dtarget, history) -> MemberTaskOut:
+    return MemberTaskOut(
+        log_id=log.id,
+        db_id=main.DB_ID,
+        dtn=main.DB_DTN,
+        brand_name=main.DB_PROD_BR_NAME,
+        step=log.application_step,
+        status=log.application_status,
+        entry_type=main.DB_ENTRY_TYPE or "ORIGINAL",
+        app_type=main.DB_APP_TYPE,
+        # ── NEW: Product Class + Processing Type — previously missing,
+        #    which is why these columns rendered blank on the FE table.
+        #    ⚠️ CONFIRM the exact MainDB attribute names with Gids/DBA —
+        #    these follow the same DB_<COLUMN> naming convention as the
+        #    other MainDB fields above (DB_PROD_CLASS_PRESCRIP maps to
+        #    prod_class_prescrip, DB_PROCESSING_TYPE maps to
+        #    processing_type). Adjust if the actual model attrs differ. ──
+        prod_class_prescrip=getattr(main, "DB_PROD_CLASS_PRESCRIP", None),
+        processing_type=getattr(main, "DB_PROCESSING_TYPE", None),
+        date_accomplished=log.accomplished_date,
+        date_received_center=main.DB_DATE_RECEIVED_CENT,
+        is_targeted=target is not None,
+        target_assignment_id=target.id if target else None,
+        target_start_date=target.target_start_date if target else None,
+        target_end_date=target.target_end_date if target else None,
+        target_remarks=target.remarks if target else None,
+        application_progress_percent=compute_application_progress(history),
+        application_history=build_application_history_entries(history),
+        is_directors_target=dtarget is not None,
+        directors_target_start_date=(dtarget.target_start_date if dtarget else None),
+        directors_target_end_date=(dtarget.target_end_date if dtarget else None),
+        directors_target_remarks=dtarget.remarks if dtarget else None,
+    )
+
+
+def count_member_in_progress_tasks(db: Session, member_user_id: int) -> int:
+    """
+    Kinokonsidera NULL status bilang 'in progress' din (hindi pa
+    natatapos), hindi lang mga status na hindi galing sa terminal list.
+    """
+    status_expr = func.upper(func.trim(ApplicationLogs.application_status))
+    return (
+        db.query(func.count(ApplicationLogs.id))
+        .filter(
+            ApplicationLogs.user_id == member_user_id,
+            or_(
+                ApplicationLogs.application_status.is_(None),
+                status_expr.notin_(_TERMINAL_STATUSES),
+            ),
+        )
+        .scalar()
+        or 0
+    )
+
+
+# ── Shared server-side filtering/sorting for in-progress task lists ──
+# Used by BOTH get_member_in_progress_tasks_paginated (single member)
+# and get_unit_in_progress_tasks_paginated (whole unit), so filtering
+# behaves identically on both tables and stays accurate regardless of
+# which page is currently loaded — filtering client-side against only
+# the loaded page silently misses matches that live on other pages.
+def _apply_in_progress_task_filters(
+    query,
+    *,
+    dtn: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    step: str | None = None,
+    app_type: str | None = None,
+    product_class: str | None = None,
+    processing_type: str | None = None,
+    entry_type: str | None = None,
+    member_name: str | None = None,
+    directors_target: str | None = None,
+):
+    """
+    Applies every optional filter to the query. All comparisons are
+    case-insensitive "contains" matches (ILIKE), except directors_target
+    (exact state) and the date range.
+
+    NOTE: date_from/date_to compare directly against
+    MainDB.DB_DATE_RECEIVED_CENT as a plain string. This only produces
+    correct chronological ordering if the column is consistently stored
+    as an ISO 'YYYY-MM-DD' string. ⚠️ Please confirm this holds for all
+    rows — if the column can be stored in another format, this needs a
+    real date cast instead of a string comparison.
+    """
+    if dtn:
+        like = f"%{dtn}%"
+        query = query.filter(
+            or_(
+                func.cast(MainDB.DB_DTN, String).ilike(like),
+                MainDB.DB_PROD_BR_NAME.ilike(like),
+            )
+        )
+
+    if date_from:
+        query = query.filter(MainDB.DB_DATE_RECEIVED_CENT >= date_from)
+    if date_to:
+        query = query.filter(MainDB.DB_DATE_RECEIVED_CENT <= date_to)
+
+    if step:
+        query = query.filter(ApplicationLogs.application_step.ilike(f"%{step}%"))
+
+    if app_type:
+        query = query.filter(MainDB.DB_APP_TYPE.ilike(f"%{app_type}%"))
+
+    if product_class:
+        query = query.filter(
+            getattr(MainDB, "DB_PROD_CLASS_PRESCRIP").ilike(f"%{product_class}%")
+        )
+
+    if processing_type:
+        query = query.filter(
+            getattr(MainDB, "DB_PROCESSING_TYPE").ilike(f"%{processing_type}%")
+        )
+
+    if entry_type:
+        # The frontend displays "ORIGINAL" whenever the underlying column
+        # is NULL (see _build_member_task_out), so a search for
+        # "original" must also match NULL rows, not just an exact stored
+        # "ORIGINAL" value, or the row would disappear from the results
+        # even though the UI shows it as a match.
+        like = f"%{entry_type}%"
+        conditions = [MainDB.DB_ENTRY_TYPE.ilike(like)]
+        if entry_type.strip().lower() in "original":
+            conditions.append(MainDB.DB_ENTRY_TYPE.is_(None))
+        query = query.filter(or_(*conditions))
+
+    if member_name:
+        like = f"%{member_name}%"
+        query = query.filter(
+            or_(
+                User.first_name.ilike(like),
+                User.surname.ilike(like),
+                func.concat(User.first_name, " ", User.surname).ilike(like),
+            )
+        )
+
+    if directors_target == "targeted":
+        query = query.filter(DirectorsTarget.id.isnot(None))
+    elif directors_target == "not_targeted":
+        query = query.filter(DirectorsTarget.id.is_(None))
+
+    return query
+
+
+# ── Column map for server-side sorting. Keys match the frontend
+#    TaskTable column keys 1:1, so the FE can send sort_by=<column key>
+#    straight from a header click with no translation table on either
+#    side. ──
+def _sortable_columns():
+    return {
+        "dtn": MainDB.DB_DTN,
+        "date_received_center": MainDB.DB_DATE_RECEIVED_CENT,
+        "prod_class_prescrip": getattr(MainDB, "DB_PROD_CLASS_PRESCRIP", None),
+        "app_type": MainDB.DB_APP_TYPE,
+        "processing_type": getattr(MainDB, "DB_PROCESSING_TYPE", None),
+        "entry_type": MainDB.DB_ENTRY_TYPE,
+        "step": ApplicationLogs.application_step,
+        "member_name": User.first_name,
+    }
+
+
+def _apply_in_progress_task_sort(query, sort_by: str | None, sort_dir: str | None):
+    if not sort_by:
+        return query
+
+    if sort_by == "directors_target":
+        # Sort by whether the row currently has an active Director's
+        # Target (targeted rows first when descending).
+        sort_col = func.coalesce(func.cast(DirectorsTarget.id.isnot(None), Integer), 0)
+    else:
+        sort_col = _sortable_columns().get(sort_by)
+
+    if sort_col is None:
+        return query  # unknown sort_by — ignore instead of erroring
+
+    return query.order_by(sort_col.desc() if sort_dir == "desc" else sort_col.asc())
+
+
+def get_member_in_progress_tasks_paginated(
+    db: Session,
+    member_user_id: int,
+    skip: int = 0,
+    limit: int = 20,
+    *,
+    dtn: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    step: str | None = None,
+    app_type: str | None = None,
+    product_class: str | None = None,
+    processing_type: str | None = None,
+    entry_type: str | None = None,
+    directors_target: str | None = None,
+    sort_by: str | None = None,
+    sort_dir: str | None = None,
+):
+    """
+    Considers NULL status as "in progress" too, not just a status that's
+    outside the terminal list.
+
+    Switched the MainDB join to LEFT (outer) instead of INNER, for the
+    same reason as the unit-wide version below: a task with no matching
+    MainDB row should still show up (with fallback display values)
+    instead of silently disappearing from the list and its count.
+    """
+    status_expr = func.upper(func.trim(ApplicationLogs.application_status))
+    base_query = (
+        db.query(ApplicationLogs, MainDB, TargetAssignment, DirectorsTarget)
+        .outerjoin(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
+        .outerjoin(
+            TargetAssignment,
+            (TargetAssignment.application_log_id == ApplicationLogs.id)
+            & (TargetAssignment.is_active == True),  # noqa: E712
+        )
+        .outerjoin(
+            DirectorsTarget,
+            (DirectorsTarget.application_log_id == ApplicationLogs.id)
+            & (DirectorsTarget.is_active == True),  # noqa: E712
+        )
+        .filter(
+            ApplicationLogs.user_id == member_user_id,
+            or_(
+                ApplicationLogs.application_status.is_(None),
+                status_expr.notin_(_TERMINAL_STATUSES),
+            ),
+        )
+    )
+
+    base_query = _apply_in_progress_task_filters(
+        base_query,
+        dtn=dtn,
+        date_from=date_from,
+        date_to=date_to,
+        step=step,
+        app_type=app_type,
+        product_class=product_class,
+        processing_type=processing_type,
+        entry_type=entry_type,
+        directors_target=directors_target,
+    )
+
+    # Count AFTER filters, BEFORE sort/pagination, so `total` reflects
+    # every matching row across all pages.
+    total = base_query.count()
+
+    base_query = _apply_in_progress_task_sort(base_query, sort_by, sort_dir)
+    if not sort_by:
+        base_query = base_query.order_by(ApplicationLogs.created_at.desc())
+
+    rows = base_query.offset(skip).limit(limit).all()
+
+    main_db_ids = list({main.DB_ID for _, main, _, _ in rows if main is not None})
+    history_map = get_application_history_map(db, main_db_ids)
+
+    result = [
+        _build_member_task_out_safe(
+            log,
+            main,
+            target,
+            dtarget,
+            history_map.get(main.DB_ID if main else None, []),
+        )
+        for log, main, target, dtarget in rows
+    ]
+    return result, total
+
+
+def _group_unit_in_progress(
+    db: Session, unit_id: int, group_col, fallback_label: str = "Unspecified"
+) -> List[dict]:
+    """
+    Reusable grouped-count query — bilang ng in-progress tasks ng isang
+    unit, grouped by kung anong column ang ipasa (step, app type, prod
+    class, processing type). Counts lang, walang task rows na kinukuha.
+    Kailangan ng LEFT JOIN sa MainDB dahil ang app_type/prod_class/
+    processing_type ay nandoon, hindi sa ApplicationLogs.
+    """
+    status_expr = func.upper(func.trim(ApplicationLogs.application_status))
+    rows = (
+        db.query(
+            func.coalesce(group_col, fallback_label).label("label"),
+            func.count(ApplicationLogs.id).label("count"),
+        )
+        .join(LeadAssignment, LeadAssignment.member_user_id == ApplicationLogs.user_id)
+        .outerjoin(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
+        .filter(
+            LeadAssignment.unit_id == unit_id,
+            LeadAssignment.is_active == True,  # noqa: E712
+            or_(
+                ApplicationLogs.application_status.is_(None),
+                status_expr.notin_(_TERMINAL_STATUSES),
+            ),
+        )
+        .group_by(group_col)
+        .order_by(func.count(ApplicationLogs.id).desc())
+        .all()
+    )
+    return [{"label": r.label, "count": r.count} for r in rows]
+
+
+def get_unit_in_progress_summary(db: Session, unit_id: int) -> dict:
+    """
+    Multi-grouping breakdown para sa Directors Diagram: by step, by app
+    type, by product classification, by processing type — lahat sa
+    isang response, para hindi na kailangan 4 hiwalay na tawag mula sa FE.
+    ⚠️ CONFIRM MainDB attr names DB_PROD_CLASS_PRESCRIP / DB_PROCESSING_TYPE
+    sa Gids/DBA — same caveat sa _build_member_task_out sa taas.
+    """
+    return {
+        "by_step": _group_unit_in_progress(
+            db, unit_id, ApplicationLogs.application_step
+        ),
+        "by_app_type": _group_unit_in_progress(db, unit_id, MainDB.DB_APP_TYPE),
+        "by_product_class": _group_unit_in_progress(
+            db, unit_id, getattr(MainDB, "DB_PROD_CLASS_PRESCRIP", None)
+        ),
+        "by_processing_type": _group_unit_in_progress(
+            db, unit_id, getattr(MainDB, "DB_PROCESSING_TYPE", None)
+        ),
+    }
+
+
+def get_unit_in_progress_tasks_paginated(
+    db: Session,
+    unit_id: int,
+    skip: int = 0,
+    limit: int = 20,
+    step: str | None = None,
+    app_type: str | None = None,
+    product_class: str | None = None,
+    processing_type: str | None = None,
+    *,
+    dtn: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    entry_type: str | None = None,
+    member_name: str | None = None,
+    directors_target: str | None = None,
+    sort_by: str | None = None,
+    sort_dir: str | None = None,
+):
+    """
+    All in-progress tasks for an entire unit (all active members),
+    combined into one paginated list. Uses LEFT JOIN to MainDB and User
+    so a row is never silently dropped just because it has no matching
+    MainDB entry or User record — it still appears, with fallback
+    values on the display fields instead.
+
+    Every filter is applied server-side via _apply_in_progress_task_filters
+    so `total` and the returned rows stay accurate no matter which page
+    is requested. Filtering only the current page client-side would
+    under-report matches once there is more than one page.
+    """
+    status_expr = func.upper(func.trim(ApplicationLogs.application_status))
+    base_query = (
+        db.query(ApplicationLogs, MainDB, TargetAssignment, DirectorsTarget, User)
+        .join(
+            LeadAssignment,
+            (LeadAssignment.member_user_id == ApplicationLogs.user_id)
+            & (LeadAssignment.unit_id == unit_id)
+            & (LeadAssignment.is_active == True),  # noqa: E712
+        )
+        .outerjoin(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
+        .outerjoin(User, User.id == ApplicationLogs.user_id)
+        .outerjoin(
+            TargetAssignment,
+            (TargetAssignment.application_log_id == ApplicationLogs.id)
+            & (TargetAssignment.is_active == True),  # noqa: E712
+        )
+        .outerjoin(
+            DirectorsTarget,
+            (DirectorsTarget.application_log_id == ApplicationLogs.id)
+            & (DirectorsTarget.is_active == True),  # noqa: E712
+        )
+        .filter(
+            or_(
+                ApplicationLogs.application_status.is_(None),
+                status_expr.notin_(_TERMINAL_STATUSES),
+            )
+        )
+    )
+
+    base_query = _apply_in_progress_task_filters(
+        base_query,
+        dtn=dtn,
+        date_from=date_from,
+        date_to=date_to,
+        step=step,
+        app_type=app_type,
+        product_class=product_class,
+        processing_type=processing_type,
+        entry_type=entry_type,
+        member_name=member_name,
+        directors_target=directors_target,
+    )
+
+    total = base_query.count()
+
+    base_query = _apply_in_progress_task_sort(base_query, sort_by, sort_dir)
+    if not sort_by:
+        base_query = base_query.order_by(ApplicationLogs.created_at.desc())
+
+    rows = base_query.offset(skip).limit(limit).all()
+
+    main_db_ids = list({main.DB_ID for _, main, _, _, _ in rows if main is not None})
+    history_map = get_application_history_map(db, main_db_ids)
+
+    result = []
+    for log, main, target, dtarget, user in rows:
+        history = history_map.get(main.DB_ID, []) if main else []
+        base = _build_member_task_out_safe(log, main, target, dtarget, history)
+        resolved_member_name = (
+            f"{user.first_name} {user.surname}".strip() if user else None
+        )
+        result.append(
+            UnitTaskOut(
+                **base.model_dump(),
+                member_user_id=log.user_id,
+                member_name=resolved_member_name or "Unknown member",
+            )
+        )
+    return result, total
+
+
+def _build_member_task_out_safe(log, main, target, dtarget, history) -> MemberTaskOut:
+    """
+    Same as _build_member_task_out, but null-safe for `main` — since the
+    join is now LEFT instead of INNER, it's possible for a task to have
+    no matching MainDB row at all.
+    """
+    if main is None:
+        return MemberTaskOut(
+            log_id=log.id,
+            db_id=log.main_db_id or 0,
+            dtn=None,
+            brand_name="(no matching record)",
+            step=log.application_step,
+            status=log.application_status,
+            entry_type="ORIGINAL",
+            app_type=None,
+            prod_class_prescrip=None,
+            processing_type=None,
+            date_accomplished=log.accomplished_date,
+            date_received_center=None,
+            is_targeted=target is not None,
+            target_assignment_id=target.id if target else None,
+            target_start_date=target.target_start_date if target else None,
+            target_end_date=target.target_end_date if target else None,
+            target_remarks=target.remarks if target else None,
+            application_progress_percent=0.0,
+            application_history=[],
+            is_directors_target=dtarget is not None,
+            directors_target_start_date=(
+                dtarget.target_start_date if dtarget else None
+            ),
+            directors_target_end_date=(dtarget.target_end_date if dtarget else None),
+            directors_target_remarks=dtarget.remarks if dtarget else None,
+        )
+    return _build_member_task_out(log, main, target, dtarget, history)
