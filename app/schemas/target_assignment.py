@@ -94,6 +94,13 @@ class MemberTaskOut(BaseModel):
     status: Optional[str] = None
     entry_type: Optional[str] = None
     app_type: Optional[str] = None
+    # ── NEW: added so the Directors Diagram table can show Product Class
+    #    (DB_PROD_CLASS_PRESCRIP) and Processing Type (DB_PROCESSING_TYPE).
+    #    These were requested on the FE but were never wired up here, so
+    #    the API silently omitted them (Pydantic just drops unknown attrs
+    #    instead of erroring — that's why the columns rendered as "—"). ──
+    prod_class_prescrip: Optional[str] = None
+    processing_type: Optional[str] = None
     date_accomplished: Optional[datetime] = None
     date_received_center: Optional[str] = None
     is_targeted: bool = False
@@ -119,17 +126,19 @@ class TeamMemberOut(BaseModel):
     member_user_id: int
     member_name: str
     lead_role: str
+    unit_id: int
+    unit_name: str
     assigned_at: Optional[datetime] = None
     task_count: int = 0
     target_count: int = 0
 
 
 # ── "Every team" view (Monitoring) ───────────────────────────────────
-# Same shape as TeamMemberOut, plus which lead this member reports to —
-# used when an admin browses ALL teams instead of just "my team".
 class AllTeamsMemberOut(TeamMemberOut):
-    lead_user_id: int
-    lead_name: str
+    lead_user_id: Optional[int] = None
+    lead_name: str = ""
+    directors_target_count: int = 0
+    in_progress_count: int = 0
 
 
 # ── Director's Target: system-wide, not lead-scoped ──────────────────
@@ -184,3 +193,37 @@ class DirectorsTargetOut(BaseModel):
     target_end_date: Optional[date] = None
     targeted_at: Optional[datetime] = None
     untargeted_at: Optional[datetime] = None
+
+
+# ── Paginated in-progress-only task list ──────────────────────────
+class MemberTaskListResponse(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    data: List[MemberTaskOut]
+
+
+class UnitSummaryItem(BaseModel):
+    label: str
+    count: int
+
+
+class UnitInProgressSummary(BaseModel):
+    by_step: List[UnitSummaryItem]
+    by_app_type: List[UnitSummaryItem]
+    by_product_class: List[UnitSummaryItem]
+    by_processing_type: List[UnitSummaryItem]
+
+
+class UnitTaskOut(MemberTaskOut):
+    member_user_id: int
+    member_name: str
+
+
+class UnitTaskListResponse(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    data: List[UnitTaskOut]

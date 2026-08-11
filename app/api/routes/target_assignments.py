@@ -1,5 +1,5 @@
 # app/api/routes/target_assignments.py
-
+import math
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -18,6 +18,9 @@ from app.schemas.target_assignment import (
     DirectorsTargetCreate,
     DirectorsTargetBulkCreate,
     DirectorsTargetOut,
+    MemberTaskListResponse,
+    UnitInProgressSummary,
+    UnitTaskListResponse,
 )
 
 router = APIRouter(
@@ -27,7 +30,8 @@ router = APIRouter(
 
 
 def _require_director(current_user: User) -> None:
-    # TODO: palitan kung may hiwalay na UserRole.DIRECTOR sa enum niyo.
+    # TODO: replace with a dedicated UserRole.DIRECTOR check once that
+    # role exists in the enum.
     _require_admin(current_user)
 
 
@@ -272,3 +276,120 @@ def unmark_as_directors_target(
 
     crud_target_assignment.unmark_as_directors_target(db, target)
     return None
+
+
+@router.get(
+    "/lead-assignments/all-teams/{member_user_id}/tasks/in-progress",
+    response_model=MemberTaskListResponse,
+)
+def get_all_teams_member_in_progress_tasks(
+    member_user_id: int,
+    page: int = 1,
+    page_size: int = 20,
+    dtn: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    step: str | None = None,
+    app_type: str | None = None,
+    product_class: str | None = None,
+    processing_type: str | None = None,
+    entry_type: str | None = None,
+    directors_target: str | None = None,
+    sort_by: str | None = None,
+    sort_dir: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    _require_admin(current_user)
+    skip = (page - 1) * page_size
+    data, total = crud_target_assignment.get_member_in_progress_tasks_paginated(
+        db,
+        member_user_id,
+        skip=skip,
+        limit=page_size,
+        dtn=dtn,
+        date_from=date_from,
+        date_to=date_to,
+        step=step,
+        app_type=app_type,
+        product_class=product_class,
+        processing_type=processing_type,
+        entry_type=entry_type,
+        directors_target=directors_target,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+    )
+    total_pages = math.ceil(total / page_size) if total else 0
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "data": data,
+    }
+
+
+@router.get(
+    "/lead-assignments/all-teams/{unit_id}/in-progress-summary",
+    response_model=UnitInProgressSummary,
+)
+def get_unit_in_progress_summary(
+    unit_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    _require_admin(current_user)
+    return crud_target_assignment.get_unit_in_progress_summary(db, unit_id)
+
+
+@router.get(
+    "/lead-assignments/all-teams/units/{unit_id}/tasks/in-progress",
+    response_model=UnitTaskListResponse,
+)
+def get_unit_in_progress_tasks(
+    unit_id: int,
+    page: int = 1,
+    page_size: int = 20,
+    step: str | None = None,
+    app_type: str | None = None,
+    product_class: str | None = None,
+    processing_type: str | None = None,
+    dtn: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    entry_type: str | None = None,
+    member_name: str | None = None,
+    directors_target: str | None = None,
+    sort_by: str | None = None,
+    sort_dir: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    _require_admin(current_user)
+    skip = (page - 1) * page_size
+    data, total = crud_target_assignment.get_unit_in_progress_tasks_paginated(
+        db,
+        unit_id,
+        skip=skip,
+        limit=page_size,
+        step=step,
+        app_type=app_type,
+        product_class=product_class,
+        processing_type=processing_type,
+        dtn=dtn,
+        date_from=date_from,
+        date_to=date_to,
+        entry_type=entry_type,
+        member_name=member_name,
+        directors_target=directors_target,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+    )
+    total_pages = math.ceil(total / page_size) if total else 0
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "data": data,
+    }

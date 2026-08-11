@@ -34,6 +34,7 @@ from app.api.routes import (
     application_document,
     duplicate_record,
     target_assignments,
+    units,
 )
 
 api_router = APIRouter()
@@ -67,3 +68,4 @@ api_router.include_router(frp_monitoring.router)
 api_router.include_router(application_document.router)
 api_router.include_router(duplicate_record.router)
 api_router.include_router(target_assignments.router)
+api_router.include_router(units.router)

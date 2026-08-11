@@ -6,7 +6,7 @@ from datetime import datetime
 
 
 # ---------------------
-# Nested User Info
+# Nested brief shapes
 # ---------------------
 class UserBrief(BaseModel):
     id: int
@@ -19,13 +19,31 @@ class UserBrief(BaseModel):
         from_attributes = True
 
 
+class GroupBrief(BaseModel):
+    id: int
+    name: str
+
+    class Config:
+        from_attributes = True
+
+
+class UnitBrief(BaseModel):
+    id: int
+    name: str
+    lead: Optional[UserBrief] = None
+    qa_admin: Optional[UserBrief] = None
+
+    class Config:
+        from_attributes = True
+
+
 # ---------------------
 # Create
 # ---------------------
 class LeadAssignmentCreate(BaseModel):
-    lead_user_id: int
+    unit_id: int
     member_user_id: int
-    lead_role: str                  # "Checker" or "Supervisor"
+    group_id: int  # functional role within the unit
     remarks: Optional[str] = None
 
 
@@ -35,6 +53,7 @@ class LeadAssignmentCreate(BaseModel):
 class LeadAssignmentUpdate(BaseModel):
     is_active: Optional[bool] = None
     remarks: Optional[str] = None
+    group_id: Optional[int] = None  # re-tag role without recreating the row
 
 
 # ---------------------
@@ -42,18 +61,19 @@ class LeadAssignmentUpdate(BaseModel):
 # ---------------------
 class LeadAssignmentResponse(BaseModel):
     id: int
-    lead_user_id: int
+    unit_id: int
     member_user_id: int
-    lead_role: str
+    group_id: int
     is_active: bool
     remarks: Optional[str] = None
     assigned_at: datetime
     unassigned_at: Optional[datetime] = None
     assigned_by_user_id: Optional[int] = None
 
-    # Nested user info
-    lead: Optional[UserBrief] = None
+    # Nested info
+    unit: Optional[UnitBrief] = None
     member: Optional[UserBrief] = None
+    group: Optional[GroupBrief] = None
     assigned_by: Optional[UserBrief] = None
 
     class Config:
@@ -70,8 +90,12 @@ class LeadAssignmentListResponse(BaseModel):
     total_pages: int
     data: List[LeadAssignmentResponse]
 
+
+# ---------------------
+# Batch create — one unit + one role, maraming members
+# ---------------------
 class LeadAssignmentBatchCreate(BaseModel):
-    lead_user_id:    int
-    lead_role:       str          # "Checker" | "Supervisor"
-    member_user_ids: List[int]    # maraming evaluators
-    remarks:         Optional[str] = None
+    unit_id: int
+    group_id: int  # same functional role for all members
+    member_user_ids: List[int]
+    remarks: Optional[str] = None
