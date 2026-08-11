@@ -50,10 +50,8 @@ def upgrade() -> None:
         op.f("ix_units_qa_admin_user_id"), "units", ["qa_admin_user_id"], unique=False
     )
 
-    # FK muna bago index
-    op.drop_constraint(
-        "lead_assignments_ibfk_2", "lead_assignments", type_="foreignkey"
-    )
+    # NOTE: lead_assignments_ibfk_2 (FK on lead_user_id) doesn't exist in this
+    # environment's schema — skipping the drop since there's nothing to drop.
     op.drop_index(
         op.f("ix_lead_assignments_lead_user_id"), table_name="lead_assignments"
     )
