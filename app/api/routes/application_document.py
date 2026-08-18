@@ -23,10 +23,14 @@ from app.schemas.application_document import (
     BatchUploadResponse,
     BatchUploadResult,
 )
+
+
 from app.schemas.bulk_upload_log import (
     BulkUploadLogCreate,
     BulkUploadLogListResponse,
     UploaderListResponse,
+    BulkUploadLogStatsResponse,
+    BulkUploadLogDateSummaryResponse,
 )
 
 from app.services.google_drive import (
@@ -864,23 +868,17 @@ def get_all_upload_logs(
     db_entry_type: str | None = None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
-    limit: int = 100,
-    offset: int = 0,
+    limit: int = 10,  # now the number of BATCHES per page, not rows
+    offset: int = 0,  # batch offset
     db: Session = Depends(get_db),
 ):
     """
-    General view of all upload logs (success + failed),
-    across all batches — with optional filters:
-      - status: "success" | "failed"
-      - uploaded_by: exact match on uploader's username
-      - db_dtn: partial match
-      - db_entry_type: exact match
-      - date_from / date_to: inclusive range filter on `created_at`.
-        Accepts any ISO-8601 datetime string (FastAPI/Pydantic parses it
-        automatically), e.g. "2026-07-08T00:00:00.000".
-    Most recent first. Used by the "Upload Logs" tab on the frontend.
+    Batch-level pagination: `limit`/`offset` refer to the number of
+    BATCHES (not individual log rows). All logs belonging to the
+    selected batches are returned in full (no row-level limit), so a
+    batch is never split across pages on the frontend.
     """
-    logs = crud_log.get_logs(
+    batch_ids = crud_log.get_batch_ids_paginated(
         db,
         status=status,
         uploaded_by_user_name=uploaded_by,
@@ -891,7 +889,7 @@ def get_all_upload_logs(
         limit=limit,
         offset=offset,
     )
-    total = crud_log.count_logs(
+    total_batches = crud_log.count_distinct_batches(
         db,
         status=status,
         uploaded_by_user_name=uploaded_by,
@@ -900,13 +898,68 @@ def get_all_upload_logs(
         date_from=date_from,
         date_to=date_to,
     )
-    return BulkUploadLogListResponse(data=logs, total=total)
+    logs = crud_log.get_logs_by_batch_ids(db, batch_ids)
+
+    return BulkUploadLogListResponse(
+        data=logs,
+        total=total_batches,
+        total_logs=len(logs),
+    )
 
 
 @router.get("/upload-folder/logs-uploaders", response_model=UploaderListResponse)
 def get_upload_log_uploaders(db: Session = Depends(get_db)):
     """List of all distinct uploader names — for the filter dropdown."""
     return UploaderListResponse(uploaders=crud_log.get_distinct_uploaders(db))
+
+
+@router.get("/upload-folder/logs/stats", response_model=BulkUploadLogStatsResponse)
+def get_upload_logs_stats(
+    db_dtn: str | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    db: Session = Depends(get_db),
+):
+    """Global summary counts (batches / success / failed) for the
+    Batch Summary tab's top badges — ignores pagination entirely."""
+    return crud_log.get_summary_stats(
+        db, db_dtn=db_dtn, date_from=date_from, date_to=date_to
+    )
+
+
+@router.get(
+    "/upload-folder/logs/by-date", response_model=BulkUploadLogDateSummaryResponse
+)
+def get_upload_logs_by_date(
+    uploaded_by: str | None = None,
+    db_dtn: str | None = None,
+    db_entry_type: str | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    limit: int = 30,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+):
+    """One summary row per calendar day — used by the Batch Summary tab."""
+    rows = crud_log.get_date_summary_paginated(
+        db,
+        uploaded_by_user_name=uploaded_by,
+        db_dtn=db_dtn,
+        db_entry_type=db_entry_type,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit,
+        offset=offset,
+    )
+    total_days = crud_log.count_distinct_days(
+        db,
+        uploaded_by_user_name=uploaded_by,
+        db_dtn=db_dtn,
+        db_entry_type=db_entry_type,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    return BulkUploadLogDateSummaryResponse(data=rows, total=total_days)
 
 
 @router.get("/upload-folder/logs/{batch_id}", response_model=BulkUploadLogListResponse)
