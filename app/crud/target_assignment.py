@@ -1,9 +1,9 @@
 # app/crud/target_assignment.py
+from datetime import date
 from sqlalchemy import func, or_, String, Integer
 from collections import defaultdict
 from typing import List, Optional
 from sqlalchemy.orm import Session
-
 
 from app.models.user import User
 from app.models.lead_assignment import LeadAssignment
@@ -47,7 +47,15 @@ _STOPPED_STATUSES = {"CANCELLED", "CANCELED", "REJECTED", "DENIED"}
 APPLICATION_STAGE_WEIGHTS = [
     {"key": "quality_evaluation", "weight": 40, "step_names": ["Quality Evaluation"]},
     {"key": "checker", "weight": 10, "step_names": ["Checking"]},
-    {"key": "supervisor", "weight": 10, "step_names": ["PRSDD Compliance"]},
+    # ⚠️ CONFIRMED via DB query (2026-08): the literal application_step
+    # value stored for this stage is "Supervisor", not "PRSDD Compliance".
+    # Kept "PRSDD Compliance" alongside it in case older/other rows still
+    # use that spelling — harmless if it never matches.
+    {
+        "key": "supervisor",
+        "weight": 10,
+        "step_names": ["Supervisor", "PRSDD Compliance"],
+    },
     {"key": "qa_admin", "weight": 10, "step_names": ["PRSDD Chief Admin"]},
     {"key": "lrd_chief_admin", "weight": 10, "step_names": ["LRD Chief Admin"]},
     {"key": "od_receiving", "weight": 10, "step_names": ["OD-Receiving"]},
@@ -100,15 +108,117 @@ def count_member_tasks(db: Session, member_user_id: int) -> int:
 
 
 def count_member_directors_targets(db: Session, member_user_id: int) -> int:
+    # Count directly off DirectorsTarget.member_user_id (captured at
+    # targeting time) instead of joining through ApplicationLogs.id —
+    # joining via application_log_id undercounts once the step changes
+    # (new log id), and joining via main_db_id would OVERcount since an
+    # application has multiple ApplicationLogs rows (one per step)
+    # sharing the same main_db_id.
     return (
         db.query(func.count(DirectorsTarget.id))
-        .join(
-            ApplicationLogs,
-            DirectorsTarget.application_log_id == ApplicationLogs.id,
+        .filter(
+            DirectorsTarget.member_user_id == member_user_id,
+            DirectorsTarget.is_active == True,  # noqa: E712
         )
+        .scalar()
+        or 0
+    )
+
+
+# Steps that mark the "Supervisor" stage of an application (see
+# APPLICATION_STAGE_WEIGHTS, key="supervisor"). Kept as a separate
+# lookup here — instead of hardcoding the literal step name twice — so
+# renaming a step in APPLICATION_STAGE_WEIGHTS keeps this in sync
+# automatically.
+_SUPERVISOR_STAGE_STEPS = {
+    n.strip().upper()
+    for stage in APPLICATION_STAGE_WEIGHTS
+    if stage["key"] == "supervisor"
+    for n in stage["step_names"]
+}
+
+
+def count_member_directors_targets_completed(db: Session, member_user_id: int) -> int:
+    """
+    USED FOR THE PER-MEMBER BADGE (e.g. "2/2" on a member's card).
+
+    Counts this member's active Director's Targets where THIS MEMBER
+    THEMSELVES completed their OWN assigned part of that application —
+    i.e. there exists an ApplicationLogs row for that application
+    (main_db_id) where user_id is THIS member AND its status is "done"
+    (COMPLETED/CLOSED/RELEASED) — regardless of WHICH step that was.
+
+    This reflects "the member finished their part and forwarded it,"
+    not whether the application overall, or any specific stage, is done.
+    """
+    status_expr = func.upper(func.trim(ApplicationLogs.application_status))
+
+    member_done_main_db_ids_subq = (
+        db.query(ApplicationLogs.main_db_id)
         .filter(
             ApplicationLogs.user_id == member_user_id,
+            status_expr.in_(_DONE_STATUSES),
+        )
+        .distinct()
+        .subquery()
+    )
+
+    return (
+        db.query(func.count(DirectorsTarget.id))
+        .filter(
+            DirectorsTarget.member_user_id == member_user_id,
             DirectorsTarget.is_active == True,  # noqa: E712
+            DirectorsTarget.main_db_id.in_(
+                db.query(member_done_main_db_ids_subq.c.main_db_id)
+            ),
+        )
+        .scalar()
+        or 0
+    )
+
+
+def count_member_directors_targets_supervisor_completed(
+    db: Session, member_user_id: int
+) -> int:
+    """
+    USED FOR THE TEAM/UNIT TARGET BADGE (e.g. "1/5 team target"),
+    summed across every member of the unit on the frontend.
+
+    Counts this member's active Director's Targets where THIS MEMBER
+    THEMSELVES completed SPECIFICALLY the Supervisor stage (see
+    _SUPERVISOR_STAGE_STEPS) of that application — i.e. there exists an
+    ApplicationLogs row for that application where BOTH:
+      - user_id is THIS member, AND
+      - application_step is the Supervisor stage, AND
+      - application_status is "done"
+
+    Both conditions (ownership AND specific stage) must hold together —
+    a member completing some OTHER step does not count, and someone
+    ELSE completing the Supervisor step on the same application does
+    not count either.
+    """
+    status_expr = func.upper(func.trim(ApplicationLogs.application_status))
+    step_expr = func.upper(func.trim(ApplicationLogs.application_step))
+
+    member_supervisor_done_main_db_ids_subq = (
+        db.query(ApplicationLogs.main_db_id)
+        .filter(
+            ApplicationLogs.user_id == member_user_id,
+            step_expr.in_(_SUPERVISOR_STAGE_STEPS),
+            status_expr.in_(_DONE_STATUSES),
+        )
+        .distinct()
+        .subquery()
+    )
+
+    return (
+        db.query(func.count(DirectorsTarget.id))
+        .filter(
+            DirectorsTarget.member_user_id == member_user_id,
+            DirectorsTarget.is_active == True,  # noqa: E712
+            DirectorsTarget.main_db_id.in_(
+                db.query(member_supervisor_done_main_db_ids_subq.c.main_db_id)
+            ),
         )
         .scalar()
         or 0
@@ -189,9 +299,13 @@ def build_all_teams_overview(db: Session) -> List[AllTeamsMemberOut]:
                 directors_target_count=count_member_directors_targets(
                     db, a.member_user_id
                 ),
-                in_progress_count=count_member_in_progress_tasks(
+                directors_target_completed_count=count_member_directors_targets_completed(
                     db, a.member_user_id
-                ),  # ← bago
+                ),
+                directors_target_supervisor_completed_count=count_member_directors_targets_supervisor_completed(
+                    db, a.member_user_id
+                ),
+                in_progress_count=count_member_in_progress_tasks(db, a.member_user_id),
                 lead_user_id=unit.lead_user_id if unit else None,
                 lead_name=(
                     f"{unit.lead.first_name} {unit.lead.surname}".strip()
@@ -301,12 +415,17 @@ def get_member_tasks(db: Session, member_user_id: int) -> List[MemberTaskOut]:
         .join(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
         .outerjoin(
             TargetAssignment,
-            (TargetAssignment.application_log_id == ApplicationLogs.id)
+            # Match by main_db_id (the application), NOT application_log_id
+            # (one step's log row). A step transition creates a NEW
+            # ApplicationLogs row with a new id, so matching on
+            # application_log_id makes the target "disappear" the moment
+            # the task advances to its next step.
+            (TargetAssignment.main_db_id == ApplicationLogs.main_db_id)
             & (TargetAssignment.is_active == True),  # noqa: E712
         )
         .outerjoin(
             DirectorsTarget,
-            (DirectorsTarget.application_log_id == ApplicationLogs.id)
+            (DirectorsTarget.main_db_id == ApplicationLogs.main_db_id)
             & (DirectorsTarget.is_active == True),  # noqa: E712
         )
         .filter(ApplicationLogs.user_id == member_user_id)
@@ -467,26 +586,29 @@ def bulk_mark_as_target(
 
 
 # ── Director's Target mutations ─────────────────────────────────────
-def get_active_directors_target_by_log(
-    db: Session, application_log_id: int
+def get_active_directors_target_by_main_db(
+    db: Session, main_db_id: int
 ) -> Optional[DirectorsTarget]:
+    # Looks up by main_db_id (the application) instead of
+    # application_log_id (one step's row), so the target is found no
+    # matter which step the application is currently on.
     return (
         db.query(DirectorsTarget)
         .filter(
-            DirectorsTarget.application_log_id == application_log_id,
+            DirectorsTarget.main_db_id == main_db_id,
             DirectorsTarget.is_active == True,  # noqa: E712
         )
         .first()
     )
 
 
-def get_directors_target_by_log(
-    db: Session, application_log_id: int
+def get_directors_target_by_main_db(
+    db: Session, main_db_id: int
 ) -> Optional[DirectorsTarget]:
     """Fetches the row regardless of is_active — used to decide upsert vs insert."""
     return (
         db.query(DirectorsTarget)
-        .filter(DirectorsTarget.application_log_id == application_log_id)
+        .filter(DirectorsTarget.main_db_id == main_db_id)
         .first()
     )
 
@@ -498,9 +620,15 @@ def mark_as_directors_target(
     targeted_by_user_id: int,
     payload: DirectorsTargetCreate,
 ) -> DirectorsTarget:
-    existing = get_directors_target_by_log(db, payload.application_log_id)
+    # Look up any existing target for this APPLICATION (main_db_id), not
+    # just this specific log row — otherwise re-targeting an application
+    # that already has a target from an earlier step creates a duplicate
+    # row instead of updating the existing one.
+    existing = get_directors_target_by_main_db(db, log.main_db_id)
 
     if existing:
+        existing.application_log_id = log.id  # keep pointing at the current step
+        existing.member_user_id = log.user_id
         existing.is_active = True
         existing.remarks = payload.remarks
         existing.target_start_date = payload.target_start_date
@@ -538,9 +666,12 @@ def bulk_mark_as_directors_target(
     results: List[DirectorsTarget] = []
 
     for log in logs:
-        existing = get_directors_target_by_log(db, log.id)
+        # Same main_db_id-based lookup as mark_as_directors_target above.
+        existing = get_directors_target_by_main_db(db, log.main_db_id)
 
         if existing:
+            existing.application_log_id = log.id
+            existing.member_user_id = log.user_id
             existing.is_active = True
             existing.remarks = payload.remarks
             existing.target_start_date = payload.target_start_date
@@ -794,12 +925,12 @@ def get_member_in_progress_tasks_paginated(
         .outerjoin(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
         .outerjoin(
             TargetAssignment,
-            (TargetAssignment.application_log_id == ApplicationLogs.id)
+            (TargetAssignment.main_db_id == ApplicationLogs.main_db_id)
             & (TargetAssignment.is_active == True),  # noqa: E712
         )
         .outerjoin(
             DirectorsTarget,
-            (DirectorsTarget.application_log_id == ApplicationLogs.id)
+            (DirectorsTarget.main_db_id == ApplicationLogs.main_db_id)
             & (DirectorsTarget.is_active == True),  # noqa: E712
         )
         .filter(
@@ -949,12 +1080,12 @@ def get_unit_in_progress_tasks_paginated(
         .outerjoin(User, User.id == ApplicationLogs.user_id)
         .outerjoin(
             TargetAssignment,
-            (TargetAssignment.application_log_id == ApplicationLogs.id)
+            (TargetAssignment.main_db_id == ApplicationLogs.main_db_id)
             & (TargetAssignment.is_active == True),  # noqa: E712
         )
         .outerjoin(
             DirectorsTarget,
-            (DirectorsTarget.application_log_id == ApplicationLogs.id)
+            (DirectorsTarget.main_db_id == ApplicationLogs.main_db_id)
             & (DirectorsTarget.is_active == True),  # noqa: E712
         )
         .filter(
@@ -1042,3 +1173,235 @@ def _build_member_task_out_safe(log, main, target, dtarget, history) -> MemberTa
             directors_target_remarks=dtarget.remarks if dtarget else None,
         )
     return _build_member_task_out(log, main, target, dtarget, history)
+
+
+# ── Directors Monitoring — org-wide snapshot + detailed list ────────
+def get_directors_target_overview_summary(db: Session) -> dict:
+    """
+    Org-wide snapshot of every active Director's Target, for the
+    Directors Monitoring tab. Buckets each target into completed /
+    overdue / on_track, plus a per-unit breakdown.
+
+    - "completed": same milestone used by the per-unit "team target"
+      badge on the Directors Diagram (the owning member has a
+      Supervisor-stage row marked done) — kept consistent across both
+      views on purpose.
+    - "overdue": target_end_date has passed and it is NOT completed.
+    - "on_track": everything else (not yet due, not yet completed).
+    """
+    today = date.today()
+    status_expr = func.upper(func.trim(ApplicationLogs.application_status))
+    step_expr = func.upper(func.trim(ApplicationLogs.application_step))
+
+    supervisor_done_pairs = set(
+        db.query(ApplicationLogs.main_db_id, ApplicationLogs.user_id)
+        .filter(
+            step_expr.in_(_SUPERVISOR_STAGE_STEPS),
+            status_expr.in_(_DONE_STATUSES),
+        )
+        .distinct()
+        .all()
+    )
+
+    rows = (
+        db.query(DirectorsTarget, LeadAssignment, Unit)
+        .outerjoin(
+            LeadAssignment,
+            (LeadAssignment.member_user_id == DirectorsTarget.member_user_id)
+            & (LeadAssignment.is_active == True),  # noqa: E712
+        )
+        .outerjoin(Unit, LeadAssignment.unit_id == Unit.id)
+        .filter(DirectorsTarget.is_active == True)  # noqa: E712
+        .all()
+    )
+
+    total = completed = overdue = on_track = 0
+    by_unit: dict[str, dict] = {}
+
+    for target, _lead_assignment, unit in rows:
+        total += 1
+        unit_name = unit.name if unit else "Unassigned"
+        bucket = by_unit.setdefault(
+            unit_name,
+            {
+                "unit_name": unit_name,
+                "total": 0,
+                "completed": 0,
+                "overdue": 0,
+                "on_track": 0,
+            },
+        )
+        bucket["total"] += 1
+
+        is_completed = (
+            target.main_db_id,
+            target.member_user_id,
+        ) in supervisor_done_pairs
+        is_overdue = (
+            not is_completed
+            and target.target_end_date is not None
+            and target.target_end_date < today
+        )
+
+        if is_completed:
+            completed += 1
+            bucket["completed"] += 1
+        elif is_overdue:
+            overdue += 1
+            bucket["overdue"] += 1
+        else:
+            on_track += 1
+            bucket["on_track"] += 1
+
+    return {
+        "total": total,
+        "completed": completed,
+        "overdue": overdue,
+        "on_track": on_track,
+        "by_unit": sorted(by_unit.values(), key=lambda u: u["total"], reverse=True),
+    }
+
+
+def get_directors_targets_list_paginated(
+    db: Session,
+    skip: int = 0,
+    limit: int = 20,
+    *,
+    dtn: str | None = None,
+    unit_id: int | None = None,
+    member_name: str | None = None,
+    completion_status: str | None = None,  # "completed" | "overdue" | "on_track"
+    sort_by: str | None = None,
+    sort_dir: str | None = None,
+):
+    """
+    Full detailed list of every active Director's Target across the
+    whole org, for the Directors Monitoring tab. Each row includes the
+    application's current step/status, its completion bucket
+    (completed / overdue / on_track — same definitions as
+    get_directors_target_overview_summary), and days remaining/overdue.
+
+    Filtering, sorting, and pagination happen in Python after one bulk
+    fetch — acceptable here since this is an occasional director
+    dashboard, not a high-traffic endpoint, and it avoids fighting
+    SQLAlchemy over a completion status that depends on computed
+    history rather than a plain column.
+    """
+    today = date.today()
+    status_expr = func.upper(func.trim(ApplicationLogs.application_status))
+    step_expr = func.upper(func.trim(ApplicationLogs.application_step))
+
+    supervisor_done_pairs = set(
+        db.query(ApplicationLogs.main_db_id, ApplicationLogs.user_id)
+        .filter(
+            step_expr.in_(_SUPERVISOR_STAGE_STEPS),
+            status_expr.in_(_DONE_STATUSES),
+        )
+        .distinct()
+        .all()
+    )
+
+    query = (
+        db.query(DirectorsTarget, MainDB, User, Unit)
+        .outerjoin(MainDB, DirectorsTarget.main_db_id == MainDB.DB_ID)
+        .outerjoin(User, User.id == DirectorsTarget.member_user_id)
+        .outerjoin(
+            LeadAssignment,
+            (LeadAssignment.member_user_id == DirectorsTarget.member_user_id)
+            & (LeadAssignment.is_active == True),  # noqa: E712
+        )
+        .outerjoin(Unit, LeadAssignment.unit_id == Unit.id)
+        .filter(DirectorsTarget.is_active == True)  # noqa: E712
+    )
+
+    if dtn:
+        like = f"%{dtn}%"
+        query = query.filter(
+            or_(
+                func.cast(MainDB.DB_DTN, String).ilike(like),
+                MainDB.DB_PROD_BR_NAME.ilike(like),
+            )
+        )
+    if unit_id:
+        query = query.filter(Unit.id == unit_id)
+    if member_name:
+        like = f"%{member_name}%"
+        query = query.filter(
+            or_(
+                User.first_name.ilike(like),
+                User.surname.ilike(like),
+                func.concat(User.first_name, " ", User.surname).ilike(like),
+            )
+        )
+
+    rows = query.all()
+
+    main_db_ids = list({main.DB_ID for _, main, _, _ in rows if main is not None})
+    history_map = get_application_history_map(db, main_db_ids)
+
+    enriched = []
+    for target, main, user, unit in rows:
+        history = history_map.get(main.DB_ID, []) if main else []
+        latest = history[-1] if history else None
+
+        is_completed = (
+            target.main_db_id,
+            target.member_user_id,
+        ) in supervisor_done_pairs
+        is_overdue = (
+            not is_completed
+            and target.target_end_date is not None
+            and target.target_end_date < today
+        )
+        bucket = (
+            "completed" if is_completed else ("overdue" if is_overdue else "on_track")
+        )
+
+        days_remaining = None
+        if target.target_end_date is not None:
+            days_remaining = (target.target_end_date - today).days
+
+        enriched.append(
+            {
+                "target_id": target.id,
+                "log_id": target.application_log_id,
+                "dtn": main.DB_DTN if main else None,
+                "brand_name": main.DB_PROD_BR_NAME if main else None,
+                "unit_name": unit.name if unit else "Unassigned",
+                "member_name": (
+                    f"{user.first_name} {user.surname}".strip() if user else "Unknown"
+                ),
+                "current_step": latest.application_step if latest else None,
+                "current_status": latest.application_status if latest else None,
+                "target_start_date": target.target_start_date,
+                "target_end_date": target.target_end_date,
+                "days_remaining": days_remaining,
+                "completion_status": bucket,
+                "remarks": target.remarks,
+                "targeted_at": target.targeted_at,
+            }
+        )
+
+    if completion_status:
+        enriched = [e for e in enriched if e["completion_status"] == completion_status]
+
+    total = len(enriched)
+
+    sort_map = {
+        "dtn": lambda e: (e["dtn"] or 0),
+        "unit_name": lambda e: (e["unit_name"] or ""),
+        "member_name": lambda e: (e["member_name"] or ""),
+        "current_step": lambda e: (e["current_step"] or ""),
+        "target_end_date": lambda e: (e["target_end_date"] or date.max),
+        "days_remaining": lambda e: (
+            e["days_remaining"] if e["days_remaining"] is not None else 999999
+        ),
+        "completion_status": lambda e: e["completion_status"],
+    }
+    if sort_by and sort_by in sort_map:
+        enriched.sort(key=sort_map[sort_by], reverse=(sort_dir == "desc"))
+    else:
+        enriched.sort(key=lambda e: e["targeted_at"] or date.min, reverse=True)
+
+    page_rows = enriched[skip : skip + limit]
+    return page_rows, total

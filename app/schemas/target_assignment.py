@@ -138,6 +138,15 @@ class AllTeamsMemberOut(TeamMemberOut):
     lead_user_id: Optional[int] = None
     lead_name: str = ""
     directors_target_count: int = 0
+    # Used for the PER-MEMBER badge — targets where this member
+    # completed their own part (any step). See
+    # count_member_directors_targets_completed.
+    directors_target_completed_count: int = 0
+    # Used for the TEAM/UNIT target total — targets where this member
+    # completed SPECIFICALLY the Supervisor stage. See
+    # count_member_directors_targets_supervisor_completed. Summed across
+    # all members of a unit on the frontend to get the unit's total.
+    directors_target_supervisor_completed_count: int = 0
     in_progress_count: int = 0
 
 
@@ -227,3 +236,45 @@ class UnitTaskListResponse(BaseModel):
     page_size: int
     total_pages: int
     data: List[UnitTaskOut]
+
+
+# ── Directors Monitoring — org-wide overview + detailed list ────────
+class DirectorsTargetUnitSummary(BaseModel):
+    unit_name: str
+    total: int
+    completed: int
+    overdue: int
+    on_track: int
+
+
+class DirectorsTargetOverviewSummary(BaseModel):
+    total: int
+    completed: int
+    overdue: int
+    on_track: int
+    by_unit: List[DirectorsTargetUnitSummary]
+
+
+class DirectorsTargetDetailOut(BaseModel):
+    target_id: int
+    log_id: int
+    dtn: Optional[int] = None
+    brand_name: Optional[str] = None
+    unit_name: str
+    member_name: str
+    current_step: Optional[str] = None
+    current_status: Optional[str] = None
+    target_start_date: Optional[date] = None
+    target_end_date: Optional[date] = None
+    days_remaining: Optional[int] = None
+    completion_status: str  # "completed" | "overdue" | "on_track"
+    remarks: Optional[str] = None
+    targeted_at: Optional[datetime] = None
+
+
+class DirectorsTargetListResponse(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+    data: List[DirectorsTargetDetailOut]
