@@ -21,6 +21,8 @@ from app.schemas.target_assignment import (
     MemberTaskListResponse,
     UnitInProgressSummary,
     UnitTaskListResponse,
+    DirectorsTargetOverviewSummary,
+    DirectorsTargetListResponse,
 )
 
 router = APIRouter(
@@ -268,8 +270,17 @@ def unmark_as_directors_target(
 ):
     _require_director(current_user)
 
-    target = crud_target_assignment.get_active_directors_target_by_log(
-        db, application_log_id
+    # The frontend sends whichever log_id is CURRENTLY on screen, which
+    # may not be the log_id the target was originally created against
+    # (the application may have moved to a new step/log row since then).
+    # Resolve to main_db_id first so the target is found regardless of
+    # which step it's currently on.
+    log = crud_target_assignment.get_application_log(db, application_log_id)
+    if not log:
+        raise HTTPException(status_code=404, detail="Application log not found.")
+
+    target = crud_target_assignment.get_active_directors_target_by_main_db(
+        db, log.main_db_id
     )
     if not target:
         raise HTTPException(status_code=404, detail="Director's Target not found.")
@@ -382,6 +393,57 @@ def get_unit_in_progress_tasks(
         entry_type=entry_type,
         member_name=member_name,
         directors_target=directors_target,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+    )
+    total_pages = math.ceil(total / page_size) if total else 0
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "data": data,
+    }
+
+
+@router.get(
+    "/lead-assignments/directors-targets/overview",
+    response_model=DirectorsTargetOverviewSummary,
+)
+def get_directors_targets_overview(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    _require_director(current_user)
+    return crud_target_assignment.get_directors_target_overview_summary(db)
+
+
+@router.get(
+    "/lead-assignments/directors-targets/list",
+    response_model=DirectorsTargetListResponse,
+)
+def get_directors_targets_list(
+    page: int = 1,
+    page_size: int = 20,
+    dtn: str | None = None,
+    unit_id: int | None = None,
+    member_name: str | None = None,
+    completion_status: str | None = None,
+    sort_by: str | None = None,
+    sort_dir: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    _require_director(current_user)
+    skip = (page - 1) * page_size
+    data, total = crud_target_assignment.get_directors_targets_list_paginated(
+        db,
+        skip=skip,
+        limit=page_size,
+        dtn=dtn,
+        unit_id=unit_id,
+        member_name=member_name,
+        completion_status=completion_status,
         sort_by=sort_by,
         sort_dir=sort_dir,
     )
