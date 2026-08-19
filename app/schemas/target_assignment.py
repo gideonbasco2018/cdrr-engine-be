@@ -131,6 +131,8 @@ class TeamMemberOut(BaseModel):
     assigned_at: Optional[datetime] = None
     task_count: int = 0
     target_count: int = 0
+    in_progress_count: int = 0
+    completed_count: int = 0
 
 
 # ── "Every team" view (Monitoring) ───────────────────────────────────

@@ -68,7 +68,7 @@ APPLICATION_STAGE_WEIGHTS = [
 _TERMINAL_RELEASE_STEPS = {"OD-RELEASING", "RELEASING OFFICER"}
 
 
-from app.models.unit import Unit  # idagdag sa imports sa taas ng file
+from app.models.unit import Unit  # add this to the imports at the top of the file
 
 
 def get_active_lead_assignment(
@@ -105,6 +105,77 @@ def count_member_tasks(db: Session, member_user_id: int) -> int:
         .scalar()
         or 0
     )
+
+
+# ── Bulk/batched counts — ONE grouped query per metric regardless of
+# team size, instead of looping a per-member query N times. Used by
+# build_team_overview so the my-team endpoint stays fast as teams grow. ──
+
+
+def get_member_task_counts_map(db: Session, member_user_ids: List[int]) -> dict:
+    if not member_user_ids:
+        return {}
+    rows = (
+        db.query(ApplicationLogs.user_id, func.count(ApplicationLogs.id))
+        .filter(ApplicationLogs.user_id.in_(member_user_ids))
+        .group_by(ApplicationLogs.user_id)
+        .all()
+    )
+    return {uid: count for uid, count in rows}
+
+
+def get_member_in_progress_counts_map(db: Session, member_user_ids: List[int]) -> dict:
+    if not member_user_ids:
+        return {}
+    status_expr = func.upper(func.trim(ApplicationLogs.application_status))
+    rows = (
+        db.query(ApplicationLogs.user_id, func.count(ApplicationLogs.id))
+        .filter(
+            ApplicationLogs.user_id.in_(member_user_ids),
+            or_(
+                ApplicationLogs.application_status.is_(None),
+                status_expr.notin_(_TERMINAL_STATUSES),
+            ),
+        )
+        .group_by(ApplicationLogs.user_id)
+        .all()
+    )
+    return {uid: count for uid, count in rows}
+
+
+def get_member_completed_counts_map(db: Session, member_user_ids: List[int]) -> dict:
+    if not member_user_ids:
+        return {}
+    status_expr = func.upper(func.trim(ApplicationLogs.application_status))
+    rows = (
+        db.query(ApplicationLogs.user_id, func.count(ApplicationLogs.id))
+        .filter(
+            ApplicationLogs.user_id.in_(member_user_ids),
+            status_expr.in_(_DONE_STATUSES),
+        )
+        .group_by(ApplicationLogs.user_id)
+        .all()
+    )
+    return {uid: count for uid, count in rows}
+
+
+def get_member_target_counts_map(db: Session, member_user_ids: List[int]) -> dict:
+    if not member_user_ids:
+        return {}
+    rows = (
+        db.query(ApplicationLogs.user_id, func.count(TargetAssignment.id))
+        .join(
+            TargetAssignment,
+            TargetAssignment.application_log_id == ApplicationLogs.id,
+        )
+        .filter(
+            ApplicationLogs.user_id.in_(member_user_ids),
+            TargetAssignment.is_active == True,  # noqa: E712
+        )
+        .group_by(ApplicationLogs.user_id)
+        .all()
+    )
+    return {uid: count for uid, count in rows}
 
 
 def count_member_directors_targets(db: Session, member_user_id: int) -> int:
@@ -243,6 +314,12 @@ def count_member_targets(db: Session, member_user_id: int) -> int:
 
 def build_team_overview(db: Session, lead_user_id: int) -> List[TeamMemberOut]:
     assignments = get_my_team(db, lead_user_id)
+    member_ids = [a.member_user_id for a in assignments]
+
+    task_counts = get_member_task_counts_map(db, member_ids)
+    target_counts = get_member_target_counts_map(db, member_ids)
+    in_progress_counts = get_member_in_progress_counts_map(db, member_ids)
+    completed_counts = get_member_completed_counts_map(db, member_ids)
 
     result: List[TeamMemberOut] = []
     for a in assignments:
@@ -259,8 +336,10 @@ def build_team_overview(db: Session, lead_user_id: int) -> List[TeamMemberOut]:
                 unit_id=a.unit_id,
                 unit_name=a.unit.name if a.unit else "",
                 assigned_at=a.assigned_at,
-                task_count=count_member_tasks(db, a.member_user_id),
-                target_count=count_member_targets(db, a.member_user_id),
+                task_count=task_counts.get(a.member_user_id, 0),
+                target_count=target_counts.get(a.member_user_id, 0),
+                in_progress_count=in_progress_counts.get(a.member_user_id, 0),
+                completed_count=completed_counts.get(a.member_user_id, 0),
             )
         )
     return result
@@ -277,6 +356,33 @@ def get_all_active_lead_assignments(db: Session) -> List[LeadAssignment]:
 
 def build_all_teams_overview(db: Session) -> List[AllTeamsMemberOut]:
     assignments = get_all_active_lead_assignments(db)
+    member_ids = [a.member_user_id for a in assignments]
+
+    # ── Bulk fetch: fixed number of queries
+    task_counts = get_member_task_counts_map(db, member_ids)
+    target_counts = get_member_target_counts_map(db, member_ids)
+    in_progress_counts = get_member_in_progress_counts_map(db, member_ids)
+
+    dtarget_rows = get_member_directors_target_rows(db, member_ids)
+    done_pairs = get_member_done_main_db_pairs(db, member_ids)
+    supervisor_done_pairs = get_member_supervisor_done_main_db_pairs(db, member_ids)
+
+    dtarget_by_member = defaultdict(list)
+    for dt in dtarget_rows:
+        dtarget_by_member[dt.member_user_id].append(dt)
+
+    directors_target_counts = {
+        uid: len(rows) for uid, rows in dtarget_by_member.items()
+    }
+    directors_target_completed_counts = {}
+    directors_target_supervisor_completed_counts = {}
+    for uid, rows in dtarget_by_member.items():
+        directors_target_completed_counts[uid] = sum(
+            1 for dt in rows if (uid, dt.main_db_id) in done_pairs
+        )
+        directors_target_supervisor_completed_counts[uid] = sum(
+            1 for dt in rows if (uid, dt.main_db_id) in supervisor_done_pairs
+        )
 
     result: List[AllTeamsMemberOut] = []
     for a in assignments:
@@ -294,18 +400,16 @@ def build_all_teams_overview(db: Session) -> List[AllTeamsMemberOut]:
                 unit_id=a.unit_id,
                 unit_name=unit.name if unit else "",
                 assigned_at=a.assigned_at,
-                task_count=count_member_tasks(db, a.member_user_id),
-                target_count=count_member_targets(db, a.member_user_id),
-                directors_target_count=count_member_directors_targets(
-                    db, a.member_user_id
+                task_count=task_counts.get(a.member_user_id, 0),
+                target_count=target_counts.get(a.member_user_id, 0),
+                directors_target_count=directors_target_counts.get(a.member_user_id, 0),
+                directors_target_completed_count=directors_target_completed_counts.get(
+                    a.member_user_id, 0
                 ),
-                directors_target_completed_count=count_member_directors_targets_completed(
-                    db, a.member_user_id
+                directors_target_supervisor_completed_count=directors_target_supervisor_completed_counts.get(
+                    a.member_user_id, 0
                 ),
-                directors_target_supervisor_completed_count=count_member_directors_targets_supervisor_completed(
-                    db, a.member_user_id
-                ),
-                in_progress_count=count_member_in_progress_tasks(db, a.member_user_id),
+                in_progress_count=in_progress_counts.get(a.member_user_id, 0),
                 lead_user_id=unit.lead_user_id if unit else None,
                 lead_name=(
                     f"{unit.lead.first_name} {unit.lead.surname}".strip()
@@ -317,7 +421,6 @@ def build_all_teams_overview(db: Session) -> List[AllTeamsMemberOut]:
     return result
 
 
-# ── Application progress (approximation — see module docstring note) ──
 def get_application_history_map(db: Session, main_db_ids: List[int]) -> dict:
     """
     One query for ALL application_logs belonging to the given main_db_ids,
@@ -748,8 +851,8 @@ def _build_member_task_out(log, main, target, dtarget, history) -> MemberTaskOut
 
 def count_member_in_progress_tasks(db: Session, member_user_id: int) -> int:
     """
-    Kinokonsidera NULL status bilang 'in progress' din (hindi pa
-    natatapos), hindi lang mga status na hindi galing sa terminal list.
+    NULL status is also treated as 'in progress' (not yet done), not
+    just statuses that fall outside the terminal list.
     """
     status_expr = func.upper(func.trim(ApplicationLogs.application_status))
     return (
@@ -985,11 +1088,11 @@ def _group_unit_in_progress(
     db: Session, unit_id: int, group_col, fallback_label: str = "Unspecified"
 ) -> List[dict]:
     """
-    Reusable grouped-count query — bilang ng in-progress tasks ng isang
-    unit, grouped by kung anong column ang ipasa (step, app type, prod
-    class, processing type). Counts lang, walang task rows na kinukuha.
-    Kailangan ng LEFT JOIN sa MainDB dahil ang app_type/prod_class/
-    processing_type ay nandoon, hindi sa ApplicationLogs.
+    Reusable grouped-count query — counts a unit's in-progress tasks,
+    grouped by whichever column is passed in (step, app type, product
+    class, processing type). Counts only — no task rows are fetched.
+    Needs a LEFT JOIN to MainDB since app_type/prod_class/processing_type
+    live there, not on ApplicationLogs.
     """
     status_expr = func.upper(func.trim(ApplicationLogs.application_status))
     rows = (
@@ -1016,11 +1119,11 @@ def _group_unit_in_progress(
 
 def get_unit_in_progress_summary(db: Session, unit_id: int) -> dict:
     """
-    Multi-grouping breakdown para sa Directors Diagram: by step, by app
-    type, by product classification, by processing type — lahat sa
-    isang response, para hindi na kailangan 4 hiwalay na tawag mula sa FE.
+    Multi-grouping breakdown for the Directors Diagram: by step, by app
+    type, by product classification, by processing type — all in one
+    response, so the FE doesn't need 4 separate calls.
     ⚠️ CONFIRM MainDB attr names DB_PROD_CLASS_PRESCRIP / DB_PROCESSING_TYPE
-    sa Gids/DBA — same caveat sa _build_member_task_out sa taas.
+    with Gids/DBA — same caveat as _build_member_task_out above.
     """
     return {
         "by_step": _group_unit_in_progress(
@@ -1405,3 +1508,62 @@ def get_directors_targets_list_paginated(
 
     page_rows = enriched[skip : skip + limit]
     return page_rows, total
+
+
+def get_member_directors_target_rows(
+    db: Session, member_user_ids: List[int]
+) -> List[DirectorsTarget]:
+    if not member_user_ids:
+        return []
+    return (
+        db.query(DirectorsTarget)
+        .filter(
+            DirectorsTarget.member_user_id.in_(member_user_ids),
+            DirectorsTarget.is_active == True,  # noqa: E712
+        )
+        .all()
+    )
+
+
+def get_member_done_main_db_pairs(db: Session, member_user_ids: List[int]) -> set:
+    """
+    Set of (user_id, main_db_id) pairs where the member has a 'done'
+    status on that application — regardless of which step.
+    """
+    if not member_user_ids:
+        return set()
+    status_expr = func.upper(func.trim(ApplicationLogs.application_status))
+    rows = (
+        db.query(ApplicationLogs.user_id, ApplicationLogs.main_db_id)
+        .filter(
+            ApplicationLogs.user_id.in_(member_user_ids),
+            status_expr.in_(_DONE_STATUSES),
+        )
+        .distinct()
+        .all()
+    )
+    return set(rows)
+
+
+def get_member_supervisor_done_main_db_pairs(
+    db: Session, member_user_ids: List[int]
+) -> set:
+    """
+    Set of (user_id, main_db_id) pairs where SPECIFICALLY the Supervisor
+    stage was marked 'done' by that member.
+    """
+    if not member_user_ids:
+        return set()
+    status_expr = func.upper(func.trim(ApplicationLogs.application_status))
+    step_expr = func.upper(func.trim(ApplicationLogs.application_step))
+    rows = (
+        db.query(ApplicationLogs.user_id, ApplicationLogs.main_db_id)
+        .filter(
+            ApplicationLogs.user_id.in_(member_user_ids),
+            step_expr.in_(_SUPERVISOR_STAGE_STEPS),
+            status_expr.in_(_DONE_STATUSES),
+        )
+        .distinct()
+        .all()
+    )
+    return set(rows)
