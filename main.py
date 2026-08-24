@@ -42,6 +42,8 @@ from app.api.routes import (
     gmp_record,
     gmp_analytics,
     gmp_dashboard,
+    oauth,
+    cpr_applications,
 )
 
 # ── Scheduler setup ───────────────────────────────────────────────────
@@ -144,6 +146,9 @@ app.include_router(units.router)
 app.include_router(gmp_record.router)
 app.include_router(gmp_analytics.router)
 app.include_router(gmp_dashboard.router)
+app.include_router(oauth.router)
+app.include_router(cpr_applications.router)
+
 
 @app.get("/")
 def root():

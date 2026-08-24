@@ -1,4 +1,5 @@
-# app/models/users.py
+# app/models/user.py
+import uuid
 from sqlalchemy.sql import func
 from sqlalchemy import (
     Column,
@@ -14,7 +15,6 @@ import enum
 from sqlalchemy.dialects.mysql import TINYINT
 
 
-# Define Role Enum
 class UserRole(str, enum.Enum):
     USER = "User"
     ADMIN = "Admin"
@@ -29,7 +29,15 @@ class User(Base):
     # login identifiers
     email = Column(String(255), nullable=False, unique=True, index=True)
     username = Column(String(100), nullable=False, unique=True, index=True)
-    hashed_password = Column(String(255), nullable=False)
+    hashed_password = Column(String(255), nullable=True)
+
+    # OAuth identifiers
+    oauth_provider = Column(
+        String(50), nullable=True
+    )  # e.g. "google"; null = local account
+    oauth_sub = Column(
+        String(255), nullable=True, unique=True, index=True
+    )  # stable Google "sub" claim
 
     # personal info
     first_name = Column(String(100), nullable=False)
@@ -43,18 +51,13 @@ class User(Base):
     # access request
     access_request = Column(String(255), nullable=True)
 
-    # 🔗 ASSOCIATION OBJECT RELATIONSHIP
     user_groups = relationship(
         "UserGroup", back_populates="user", cascade="all, delete-orphan"
     )
-
-    # 🔁 CONVENIENCE MANY-TO-MANY (read-only)
     groups = relationship("Group", secondary="user_groups", viewonly=True)
 
-    # status
     is_active = Column(Boolean, default=True)
 
-    # timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
@@ -72,7 +75,15 @@ class User(Base):
     profile_picture_url = Column(String(500), nullable=True)
     profile_picture_drive_id = Column(String(255), nullable=True)
 
-    # 🔙 Backward compatibility (KEEP SAFE)
+    # NEW: secondary UUID identifier
+    user_uuid = Column(
+        String(36),
+        unique=True,
+        index=True,
+        nullable=True,  # nullable muna dahil may existing rows na walang value
+        default=lambda: str(uuid.uuid4()),
+    )
+
     @property
     def group_id(self):
         return self.groups[0].id if self.groups else None

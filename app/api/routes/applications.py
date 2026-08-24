@@ -10,7 +10,7 @@ from app.schemas.applications import ApplicationItem, ApplicationsResponse
 import app.crud.applications as crud_my_apps
 
 router = APIRouter(
-    prefix="/applications",
+    prefix="/api/applications",
     tags=["Applications"],
 )
 

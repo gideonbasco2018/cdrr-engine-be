@@ -35,6 +35,12 @@ from app.api.routes import (
     duplicate_record,
     target_assignments,
     units,
+    gmp_analytics,
+    gmp_dashboard,
+    gmp_record,
+    gmp_upload,
+    oauth,
+    cpr_applications,
 )
 
 api_router = APIRouter()
@@ -69,3 +75,8 @@ api_router.include_router(application_document.router)
 api_router.include_router(duplicate_record.router)
 api_router.include_router(target_assignments.router)
 api_router.include_router(units.router)
+api_router.include_router(gmp_analytics.router)
+api_router.include_router(gmp_dashboard.router)
+api_router.include_router(gmp_record.router)
+api_router.include_router(oauth.router)
+api_router.include_router(cpr_applications.router)
