@@ -19,6 +19,14 @@ def _get_dtn(log) -> str:
         return f"LOG#{log.id}"
 
 
+def _get_gmp_dtn(log) -> str:
+    """Extract DTN string from the related GMPRecord."""
+    try:
+        return str(log.gmp_record.GMP_DTN)
+    except Exception:
+        return f"GMPLOG#{log.id}"
+
+
 def run_deadline_notifications():
     """
     Main cron function — called daily at 8:00 AM (Asia/Manila).
@@ -87,6 +95,62 @@ def run_deadline_notifications():
 
         if to_create_urgent:
             created_count += crud_notif.bulk_create_notifications(db, to_create_urgent)
+
+        # ── GMP Type 1: 3 working days away ──────────────────────────────
+        gmp_approaching = crud_notif.get_gmp_approaching_deadline_logs(db, working_days_away=3)
+        print(f"  GMP approaching (3 working days): {len(gmp_approaching)} record(s)")
+
+        gmp_to_create = []
+        for log in gmp_approaching:
+            dtn = _get_gmp_dtn(log)
+
+            if not log.user_name:
+                continue
+            if crud_notif.already_notified_today(db, log.user_name, dtn, title_like="3 Days"):
+                print(f"  [SKIP] {log.user_name} / {dtn} — already notified")
+                continue
+
+            gmp_to_create.append(NotificationCreate(
+                user_name  = log.user_name,
+                title      = "⏰ GMP Compliance Deadline in 3 Working Days",
+                message    = (
+                    f"GMP DTN {dtn} has a compliance deadline on "
+                    f"{log.deadline_date.strftime('%b %d, %Y')}. "
+                    f"Please complete the required action before the deadline."
+                ),
+                link_dtn   = dtn,
+            ))
+
+        if gmp_to_create:
+            created_count += crud_notif.bulk_create_notifications(db, gmp_to_create)
+
+        # ── GMP Type 2: Due TODAY ─────────────────────────────────────────
+        gmp_due_today = crud_notif.get_gmp_due_today_logs(db)
+        print(f"  GMP due today: {len(gmp_due_today)} record(s)")
+
+        gmp_to_create_urgent = []
+        for log in gmp_due_today:
+            dtn = _get_gmp_dtn(log)
+
+            if not log.user_name:
+                continue
+            if crud_notif.already_notified_today(db, log.user_name, dtn, title_like="TODAY"):
+                print(f"  [SKIP] {log.user_name} / {dtn} — already notified (today)")
+                continue
+
+            gmp_to_create_urgent.append(NotificationCreate(
+                user_name  = log.user_name,
+                title      = "🚨 GMP Compliance Deadline is TODAY",
+                message    = (
+                    f"GMP DTN {dtn} compliance deadline is TODAY "
+                    f"({log.deadline_date.strftime('%b %d, %Y')}). "
+                    f"Immediate action is required."
+                ),
+                link_dtn   = dtn,
+            ))
+
+        if gmp_to_create_urgent:
+            created_count += crud_notif.bulk_create_notifications(db, gmp_to_create_urgent)
 
         print(f"[DeadlineChecker] Done — {created_count} notification(s) created.")
 

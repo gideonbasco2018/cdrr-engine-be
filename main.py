@@ -39,6 +39,9 @@ from app.api.routes import (
     duplicate_record,
     target_assignments,
     units,
+    gmp_record,
+    gmp_analytics,
+    gmp_dashboard,
 )
 
 # ── Scheduler setup ───────────────────────────────────────────────────
@@ -138,7 +141,9 @@ app.include_router(application_document.router)
 app.include_router(duplicate_record.router)
 app.include_router(target_assignments.router)
 app.include_router(units.router)
-
+app.include_router(gmp_record.router)
+app.include_router(gmp_analytics.router)
+app.include_router(gmp_dashboard.router)
 
 @app.get("/")
 def root():
