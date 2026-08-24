@@ -1,3 +1,4 @@
+# app/models/__init__.py
 from app.models.main_db import MainDB
 from app.models.application_delegation import ApplicationDelegation
 from app.models.application_logs import ApplicationLogs
@@ -17,7 +18,16 @@ from app.models.bulk_upload_log import BulkUploadLog
 from app.models.target_assignment import TargetAssignment
 from app.models.directors_target import DirectorsTarget
 from app.models.unit import Unit
-from app.models.gmp_record import GMPRecord, GMPDelegation, GMPApplicationLogs, GMPFieldAuditLog
+from app.models.gmp_record import (
+    GMPRecord,
+    GMPDelegation,
+    GMPApplicationLogs,
+    GMPFieldAuditLog,
+)
+from app.models.oauth_otp import OAuthOTP
+from app.models.cpr_app_history import CPRAppHistory
+from app.models.cpr_app_parties import CPRAppParty
+from app.models.cpr_application import CPRApplication
 
 __all__ = [
     "MainDB",
@@ -46,4 +56,8 @@ __all__ = [
     "GMPDelegation",
     "GMPApplicationLogs",
     "GMPFieldAuditLog",
-] 
+    "OAuthOTP",
+    "CPRAppHistory",
+    "CPRAppParty",
+    "CPRApplication",
+]

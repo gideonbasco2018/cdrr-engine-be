@@ -10,7 +10,30 @@ from alembic import context
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.db.base_class import Base
-from app.models import MainDB, User, application_logs, group, user_groups
+
+from app.models.main_db import MainDB
+from app.models.application_delegation import ApplicationDelegation
+from app.models.application_logs import ApplicationLogs
+from app.models.user import User
+from app.models.group import Group
+from app.models.user_groups import UserGroup
+from app.models.menu_permissions import MenuItem, menu_group_permissions
+from app.models.cdrr_report import CDRRReport, FROOReport, CDRRSecondary
+from app.models.field_audit_log import ApplicationFieldAuditLog
+from app.models.notification import Notification
+from app.models.bulk_upload_history_records import BulkUploadHistoryRecord
+from app.models.bulk_upload_history import BulkUploadHistory
+from app.models.closed_tasks import ClosedTask
+from app.models.lead_assignment import LeadAssignment
+from app.models.application_document import ApplicationDocument
+from app.models.bulk_upload_log import BulkUploadLog
+from app.models.target_assignment import TargetAssignment
+from app.models.directors_target import DirectorsTarget
+from app.models.unit import Unit
+from app.models.oauth_otp import OAuthOTP
+from app.models.cpr_app_history import CPRAppHistory
+from app.models.cpr_app_parties import CPRAppParty
+from app.models.cpr_application import CPRApplication
 
 config = context.config
 
@@ -19,7 +42,8 @@ database_url = os.getenv("DATABASE_URL")
 if not database_url:
     raise RuntimeError("DATABASE_URL is not set")
 
-config.set_main_option("sqlalchemy.url", database_url)
+# config.set_main_option("sqlalchemy.url", database_url)
+config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
 # Logging config
 if config.config_file_name is not None:
