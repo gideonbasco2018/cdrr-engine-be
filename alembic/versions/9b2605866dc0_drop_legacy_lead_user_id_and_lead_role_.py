@@ -25,10 +25,17 @@ def upgrade() -> None:
     existing_columns = {
         col["name"] for col in inspector.get_columns("lead_assignments")
     }
+    existing_fks = {
+        fk["name"] for fk in inspector.get_foreign_keys("lead_assignments")
+    }
 
     # ── drop legacy columns (conditional: some envs already had these
     #    dropped manually outside of alembic, e.g. dev) ──
     if "lead_user_id" in existing_columns:
+        if "lead_assignments_ibfk_2" in existing_fks:
+            op.drop_constraint(
+                "lead_assignments_ibfk_2", "lead_assignments", type_="foreignkey"
+            )
         op.drop_column("lead_assignments", "lead_user_id")
     if "lead_role" in existing_columns:
         op.drop_column("lead_assignments", "lead_role")
