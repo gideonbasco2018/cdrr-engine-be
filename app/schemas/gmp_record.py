@@ -217,6 +217,10 @@ class GMPAddIssuanceRequest(BaseModel):
     type_of_issuance: str
 
 
+class GMPReopenRequest(BaseModel):
+    related_dtn: str
+
+
 class GMPIssuanceFieldsUpdate(BaseModel):
     type_of_issuance: Optional[str] = None
     certificate_number: Optional[str] = None

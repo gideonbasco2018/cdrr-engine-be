@@ -15,6 +15,8 @@ from sqlalchemy import func, and_, or_
 from typing import Optional, List, Tuple, Dict, Any
 from datetime import datetime, timezone, timedelta
 from app.models.gmp_record import GMPApplicationLogs, GMPRecord
+from app.crud.notification import create_notification, already_notified_today
+from app.schemas.notification import NotificationCreate
 
 _PHT = timezone(timedelta(hours=8))
 
@@ -22,6 +24,85 @@ _PHT = timezone(timedelta(hours=8))
 def _now() -> datetime:
     """Current time in Philippine Standard Time, timezone-naive for DB storage."""
     return datetime.now(_PHT).replace(tzinfo=None)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Notification helper
+# ─────────────────────────────────────────────────────────────────────────────
+# Mirrors app/crud/application_logs.py's _notify_assigned_user, adapted for the
+# GMP workflow's step names. app_log_id is intentionally left unset — the
+# Notification.app_log_id FK points at application_logs.id, not
+# gmp_application_logs.id, so setting it here would either violate the FK or
+# (silently) point at the wrong table. link_dtn is enough for the bell to
+# deep-link back to the record.
+
+_GMP_ASSIGNED_TITLES = {
+    "Decking": "📋 New GMP Decking Task",
+    "Evaluator": "🔬 New GMP Evaluator Task",
+    "Checker": "✅ New GMP Checker Task",
+    "QA Admin": "🏢 New GMP QA Admin Task",
+    "LRD Chief Admin": "🏛️ New GMP LRD Chief Admin Task",
+    "OD Receiving": "📥 New GMP OD Receiving Task",
+    "OD Releasing": "📤 New GMP OD Releasing Task",
+    "FROO": "🔗 New GMP FROO Task",
+}
+
+_GMP_ASSIGNED_MESSAGES = {
+    "Decking": "DTN {dtn} has been decked and assigned to you for processing.",
+    "Evaluator": "You have been assigned a GMP Evaluator task for DTN: {dtn}.",
+    "Checker": "You have been assigned a GMP Checker task for DTN: {dtn}.",
+    "QA Admin": "You have been assigned a GMP QA Admin task for DTN: {dtn}.",
+    "LRD Chief Admin": "You have been assigned a GMP LRD Chief Admin task for DTN: {dtn}.",
+    "OD Receiving": "You have been assigned a GMP OD Receiving task for DTN: {dtn}.",
+    "OD Releasing": "You have been assigned a GMP OD Releasing task for DTN: {dtn}.",
+    "FROO": "DTN {dtn} requires FROO processing.",
+}
+
+
+def get_gmp_dtn(db: Session, gmp_record_id: int) -> str:
+    """Fetch the DTN string from the parent GMPRecord, falling back to the raw ID."""
+    try:
+        record = db.query(GMPRecord).filter(GMPRecord.GMP_ID == gmp_record_id).first()
+        if record and record.GMP_DTN is not None:
+            return str(record.GMP_DTN)
+    except Exception:
+        pass
+    return str(gmp_record_id)
+
+
+def _notify_gmp_assigned(db: Session, log_obj: GMPApplicationLogs, dtn: str) -> None:
+    """
+    Create a notification for the user who was just assigned an IN PROGRESS
+    GMP task. Silently skips on any error so it never breaks the main flow.
+    """
+    try:
+        if log_obj.application_status != "IN PROGRESS":
+            return
+        if not log_obj.user_name:
+            return
+
+        step = log_obj.application_step or ""
+        title = _GMP_ASSIGNED_TITLES.get(step, f"📌 New GMP Task: {step}")
+        msg = _GMP_ASSIGNED_MESSAGES.get(
+            step,
+            f"You have a new GMP task for DTN: {dtn}.",
+        ).format(dtn=dtn)
+
+        # One notification per user + DTN + step per day
+        if already_notified_today(db, log_obj.user_name, dtn, title_like=step):
+            return
+
+        create_notification(
+            db,
+            NotificationCreate(
+                user_name=log_obj.user_name,
+                title=title,
+                message=msg,
+                link_dtn=dtn,
+            ),
+        )
+    except Exception:
+        pass  # notification failure must never crash the main operation
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -118,6 +199,30 @@ def get_tasks_for_user(
         log.all_issuance_types = sorted(issuance_by_dtn.get(dtn, []))
 
     return logs, total
+
+def get_task_counts_for_users(db: Session, usernames: List[str]) -> Dict[str, int]:
+    """
+    Same open-task criteria as get_task_count_for_user(), for a batch of
+    usernames in one query — used by the Bulk Deck modal's evaluator checklist
+    to show each evaluator's current workload without an N+1 request per name.
+    Usernames with zero open tasks are simply absent from the returned dict.
+    """
+    if not usernames:
+        return {}
+    rows = (
+        db.query(GMPApplicationLogs.user_name, func.count(GMPApplicationLogs.id))
+        .join(GMPRecord, GMPApplicationLogs.gmp_record_id == GMPRecord.GMP_ID)
+        .filter(
+            GMPApplicationLogs.user_name.in_(usernames),
+            GMPApplicationLogs.del_thread == "Open",
+            GMPApplicationLogs.del_last_index == 1,
+            or_(GMPRecord.GMP_REFERENCE_NO.is_(None), GMPRecord.GMP_REFERENCE_NO.like("%-01")),
+        )
+        .group_by(GMPApplicationLogs.user_name)
+        .all()
+    )
+    return {name: count for name, count in rows}
+
 
 def get_task_count_for_user(db: Session, username: str) -> int:
     """
@@ -271,7 +376,24 @@ def advance_step(
     db.refresh(current_log)
 
     if not next_step_label:
-        # Final step — no new log needed
+        # Final step — the workflow ends here (e.g. "Disapprove" at Decking/
+        # QA Admin/LRD Chief Admin, per GMP_ACTION_ROUTES in gmp_record.py).
+        # Clear the record's current step — it is no longer actively at any
+        # step — and, for a Disapprove action specifically, mark the record
+        # itself DISAPPROVED. Without this, GMP_CURRENT_STEP was left
+        # pointing at the step the record was disapproved from forever,
+        # which made it read as permanently "IN PROGRESS"/"on process" in
+        # both the Queue Table (getEffectiveStatus()) and every GMP
+        # analytics query that checks for an open current step. Other
+        # terminal actions (e.g. OD Releasing's release) already set
+        # GMP_APP_STATUS themselves via a prior record update from the
+        # frontend, so we don't overwrite it here.
+        record = db.query(GMPRecord).filter(GMPRecord.GMP_ID == gmp_record_id).first()
+        if record:
+            record.GMP_CURRENT_STEP = None
+            if action == "Disapprove":
+                record.GMP_APP_STATUS = "DISAPPROVED"
+            db.commit()
         return current_log
 
     # Get next del_index
@@ -317,6 +439,10 @@ def advance_step(
 
     db.commit()
     db.refresh(new_log)
+
+    dtn = get_gmp_dtn(db, gmp_record_id)
+    _notify_gmp_assigned(db, new_log, dtn)
+
     return new_log
 
 
@@ -411,6 +537,10 @@ def reassign(
     db.add(new_log)
     db.commit()
     db.refresh(new_log)
+
+    dtn = get_gmp_dtn(db, gmp_record_id)
+    _notify_gmp_assigned(db, new_log, dtn)
+
     return new_log
 
 
@@ -505,6 +635,10 @@ def reroute(
 
     db.commit()
     db.refresh(new_log)
+
+    dtn = get_gmp_dtn(db, gmp_record_id)
+    _notify_gmp_assigned(db, new_log, dtn)
+
     return new_log
 
 

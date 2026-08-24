@@ -197,3 +197,36 @@ def get_due_today_logs(db: Session):
         )
         .all()
     )
+
+
+def get_gmp_approaching_deadline_logs(db: Session, working_days_away: int = 3):
+    """GMP equivalent of get_approaching_deadline_logs — same criteria, gmp_application_logs table."""
+    from app.models.gmp_record import GMPApplicationLogs
+
+    today       = date.today()
+    target_date = _add_working_days(today, working_days_away)
+
+    return (
+        db.query(GMPApplicationLogs)
+        .filter(
+            GMPApplicationLogs.application_status  == "IN PROGRESS",
+            GMPApplicationLogs.deadline_date       == target_date,
+            GMPApplicationLogs.deadline_date.isnot(None),
+        )
+        .all()
+    )
+
+
+def get_gmp_due_today_logs(db: Session):
+    """GMP equivalent of get_due_today_logs — same criteria, gmp_application_logs table."""
+    from app.models.gmp_record import GMPApplicationLogs
+
+    today = date.today()
+    return (
+        db.query(GMPApplicationLogs)
+        .filter(
+            GMPApplicationLogs.application_status == "IN PROGRESS",
+            GMPApplicationLogs.deadline_date      == today,
+        )
+        .all()
+    )

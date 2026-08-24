@@ -7,6 +7,8 @@ from typing import Optional, List, Tuple, Dict
 from datetime import datetime, timezone, timedelta
 from app.models.gmp_record import GMPRecord, GMPDelegation, GMPApplicationLogs, GMPFieldAuditLog
 from app.schemas.gmp_record import GMPRecordCreate, GMPRecordUpdate
+from app.crud.notification import create_notification, already_notified_today
+from app.schemas.notification import NotificationCreate
 
 # A record's GMP_APP_STATUS can be stale/blank while it's actively moving
 # through the workflow — the reliable "still in progress" signal is an open
@@ -55,9 +57,19 @@ GMP_LOG_STEPS = [
     ("LRD Chief Admin", 5),
     ("OD Receiving",    6),
     ("OD Releasing",    7),
+    ("FROO",            8),
 ]
 
 GMP_STEP_DEL_INDEX: Dict[str, int] = {label: idx for label, idx in GMP_LOG_STEPS}
+
+# FROO's step label (group id 37) and the action it takes to hand the NFI back
+# to the Evaluator. OD Releasing no longer routes new records here (the
+# workflow now always ends at OD Releasing — see resolve_next_step below);
+# this route entry is kept only so records already mid-detour (an open or
+# completed FROO log from before this change) can still be advanced back to
+# the Evaluator and finish out normally instead of getting stuck.
+GMP_FROO_STEP = "FROO"
+GMP_FROO_ACTION = "Forwarded to CDRR FGMP"
 
 # ── Explicit action → next-step routing table ─────────────────────────────────
 # Keyed by (current_step, action) exactly as sent from the frontend
@@ -101,8 +113,25 @@ GMP_ACTION_ROUTES: Dict[tuple, Optional[str]] = {
     ("OD Receiving", "Endorsed to OD - Releasing"):   "OD Releasing",
     ("OD Receiving", "Return to LRD Chief Admin"):    "LRD Chief Admin",
 
+    # OD Releasing is now always the end of the workflow, for every issuance
+    # type — it used to redirect NFI issuance types on to FROO instead of
+    # terminating (see resolve_next_step() below); that detour has been
+    # removed.
     ("OD Releasing", "Scanned, Stamped and Forwarded to AFO Records"): None,
+
+    # Kept only so records already mid-FROO-detour (opened before this change
+    # removed the redirect) can still be advanced back to the Evaluator and
+    # finish out normally instead of getting stuck.
+    (GMP_FROO_STEP, GMP_FROO_ACTION): "Evaluator",
 }
+
+
+def resolve_next_step(current_step: str, action: str) -> Tuple[bool, Optional[str]]:
+    """Returns (is_valid_route, next_step_label)."""
+    route_key = (current_step, action)
+    if route_key not in GMP_ACTION_ROUTES:
+        return False, None
+    return True, GMP_ACTION_ROUTES[route_key]
 
 GMP_AUDIT_EXCLUDED_FIELDS = {
     "GMP_ID", "GMP_DATE_EXCEL_UPLOAD", "GMP_TRASH_DATE_ENCODED", "GMP_USER_UPLOADER",
@@ -244,6 +273,9 @@ def get_gmp_record(db: Session, record_id: int) -> Optional[GMPRecord]:
 # siblings are visible via the Reference Number tabs inside WorkflowModal,
 # not as their own queue rows. Records with no GMP_REFERENCE_NO at all
 # (shouldn't exist post-migration, but tolerated) are treated as primary too.
+# (reopen_gmp_to_decking() reopens a record in place rather than creating a
+# new reference number, so there's no other source of non-'-01' records that
+# carry their own real workflow — this stays a simple suffix check.)
 def _primary_only(query):
     return query.filter(
         or_(GMPRecord.GMP_REFERENCE_NO.is_(None), GMPRecord.GMP_REFERENCE_NO.like("%-01"))
@@ -294,6 +326,45 @@ def get_gmp_records(
     upload_date_to    = filters.get("upload_date_to")
     date_received_from = filters.get("date_received_from")
     date_received_to   = filters.get("date_received_to")
+
+    # Extra per-column text filters — Advanced Filters modal fields that
+    # aren't already covered by the sidebar quick filters or the fields
+    # above. Each is a simple "contains" match on its GMPRecord column.
+    TEXT_FIELD_COLUMNS = {
+        "reference_no":                 GMPRecord.GMP_REFERENCE_NO,
+        "lto_number":                   GMPRecord.GMP_LTO_NUMBER,
+        "address":                      GMPRecord.GMP_LTO_ADDRESS,
+        "foreign_manufacturer":         GMPRecord.GMP_FOREIGN_MANUFACTURER,
+        "foreign_manufacturer_address": GMPRecord.GMP_FOREIGN_MANUFACTURER_ADDRESS,
+        "secpa_number":                 GMPRecord.GMP_SECPA_NUMBER,
+        "certificate_number":           GMPRecord.GMP_CERTIFICATE_NUMBER,
+        "certificate_validity":         GMPRecord.GMP_CERTIFICATE_VALIDITY,
+        "decision":                     GMPRecord.GMP_DECISION,
+        "processed_time":               GMPRecord.GMP_PROCESSED_TIME,
+        "timeline":                     GMPRecord.GMP_TIMELINE,
+        "remarks":                      GMPRecord.GMP_REMARKS,
+        "product_line":                 GMPRecord.GMP_PRODUCT_LINE,
+    }
+    for filter_key, column in TEXT_FIELD_COLUMNS.items():
+        value = filters.get(filter_key)
+        if value:
+            query = query.filter(column.like(f"%{value}%"))
+
+    # Extra per-column date-range filters — same "_from"/"_to" pattern as
+    # upload_date / date_received above.
+    DATE_RANGE_COLUMNS = {
+        "released_date":                 GMPRecord.GMP_RELEASED_DATE,
+        "end_date":                      GMPRecord.GMP_END_DATE,
+        "date_printed":                  GMPRecord.GMP_DATE_PRINTED,
+        "compliance_docs_date_received": GMPRecord.GMP_COMPLIANCE_DOCS_DATE_RECEIVED,
+    }
+    for filter_key, column in DATE_RANGE_COLUMNS.items():
+        from_value = filters.get(f"{filter_key}_from")
+        to_value   = filters.get(f"{filter_key}_to")
+        if from_value:
+            query = query.filter(column >= from_value)
+        if to_value:
+            query = query.filter(column <= to_value)
 
     if tab == "decked":
         decked_ids = _decked_subquery(db)
@@ -434,6 +505,7 @@ def get_gmp_records(
     # from_attributes reads it via getattr() and raises AttributeError on a
     # record that never got it set, which every non-"main" record would be.
     issuances_by_dtn: Dict[int, List[dict]] = {}
+    related_dtn_by_dtn: Dict[int, str] = {}
     if view == "main":
         dtns_on_page = {r.GMP_DTN for r in records if r.GMP_DTN}
         if dtns_on_page:
@@ -441,6 +513,7 @@ def get_gmp_records(
                 db.query(
                     GMPRecord.GMP_DTN, GMPRecord.GMP_REFERENCE_NO, GMPRecord.GMP_TYPE_OF_ISSUANCE,
                     GMPRecord.GMP_CERTIFICATE_NUMBER, GMPRecord.GMP_CERTIFICATE_VALIDITY, GMPRecord.GMP_SECPA_NUMBER,
+                    GMPRecord.GMP_RELATED_DTN,
                 )
                 .filter(
                     GMPRecord.GMP_DTN.in_(dtns_on_page),
@@ -449,14 +522,24 @@ def get_gmp_records(
                 .order_by(GMPRecord.GMP_REFERENCE_NO.asc())
                 .all()
             )
-            for dtn, ref_no, issuance, cert_no, cert_val, secpa in sibling_rows:
+            for dtn, ref_no, issuance, cert_no, cert_val, secpa, related_dtn in sibling_rows:
                 issuances_by_dtn.setdefault(dtn, []).append({
                     "reference_no": ref_no, "type_of_issuance": issuance,
                     "certificate_number": cert_no, "certificate_validity": cert_val,
                     "secpa_number": secpa,
                 })
+                # The primary ('-01') reference is what "Per DTN" displays, but
+                # Related DTN is sometimes only entered on a sibling reference
+                # (e.g. via Add Issuance or a follow-up NFI/FROO branch) — fall
+                # back to the first sibling that actually has one set, so the
+                # rolled-up row doesn't show "—" when the data exists elsewhere
+                # in the same DTN family.
+                if related_dtn and dtn not in related_dtn_by_dtn:
+                    related_dtn_by_dtn[dtn] = related_dtn
     for r in records:
         r.all_issuances = issuances_by_dtn.get(r.GMP_DTN, [])
+        if not r.GMP_RELATED_DTN and r.GMP_DTN in related_dtn_by_dtn:
+            r.GMP_RELATED_DTN = related_dtn_by_dtn[r.GMP_DTN]
 
     return records, total
 
@@ -486,6 +569,8 @@ def create_gmp_record(
     data = record.model_dump(exclude_unset=True)
     if "GMP_DATE_EXCEL_UPLOAD" not in data or data["GMP_DATE_EXCEL_UPLOAD"] is None:
         data["GMP_DATE_EXCEL_UPLOAD"] = _now()
+    if data.get("GMP_DTN") and not data.get("GMP_REFERENCE_NO"):
+        data["GMP_REFERENCE_NO"] = _next_reference_no(db, data["GMP_DTN"])
     db_record = GMPRecord(**data)
     db.add(db_record)
     db.commit()
@@ -733,6 +818,13 @@ def add_gmp_issuance(
     the original's, kept in sync going forward whenever the primary advances
     (see advance_step in app/crud/gmp_logs.py) or any shared field changes
     (see _sync_to_siblings above).
+
+    Also drops a system entry (action_type="ISSUANCE_ADDED") onto the
+    PRIMARY record's own Application Logs timeline recording when this
+    happened and what was added — the new sibling has no logs of its own to
+    carry that date/time, so without this the addition would be invisible in
+    the Application Logs modal / WorkflowModal Step 3 (see log_field_changes
+    below for the separate, lower-level field-audit-trail entry).
     """
     original = get_gmp_record(db, record_id)
     if not original or not original.GMP_DTN:
@@ -765,6 +857,38 @@ def add_gmp_issuance(
     db.commit()
     db.refresh(new_record)
 
+    # ── System log entry on the PRIMARY record — this is what actually
+    # surfaces the "date/time added" in the Application Logs timeline. Closed
+    # immediately (del_thread="Close") so it's purely informational and never
+    # competes with the record's real single "Open" thread.
+    last_index = (
+        db.query(func.max(GMPApplicationLogs.del_index))
+        .filter(GMPApplicationLogs.gmp_record_id == record_id)
+        .scalar()
+    ) or 0
+    now = _now()
+    db.add(GMPApplicationLogs(
+        gmp_record_id=record_id,
+        application_step=original.GMP_CURRENT_STEP,
+        application_status="COMPLETED",
+        application_decision="",
+        application_remarks=f"Type of Issuance Added: {type_of_issuance} (Ref {new_record.GMP_REFERENCE_NO})",
+        action_type="ISSUANCE_ADDED",
+        start_date=now,
+        accomplished_date=now,
+        del_index=last_index + 1,
+        del_previous=last_index if last_index > 0 else None,
+        del_last_index=0,
+        del_thread="Close",
+        user_name=user_name,
+        user_id=user_id,
+        is_received=0,
+        is_starred=0,
+        sent_by_user_id=user_id,
+        sent_by_user_name=user_name,
+    ))
+    db.commit()
+
     after = {f: getattr(new_record, f) for f in data.keys()}
     after.update(cert_data)
     after["GMP_TYPE_OF_ISSUANCE"] = type_of_issuance
@@ -772,6 +896,99 @@ def add_gmp_issuance(
     log_field_changes(db, new_record.GMP_ID, {f: None for f in after.keys()}, after,
                       action_type="CREATE", user_name=user_name, user_id=user_id)
     return new_record
+
+
+# ── Reopen a finished application back to Decking ──────────────────────────
+def reopen_gmp_to_decking(
+    db: Session,
+    record_id: int,
+    related_dtn: str,
+    user_name: Optional[str] = None,
+    user_id: Optional[int] = None,
+) -> Optional[GMPRecord]:
+    """
+    Reopen a finished application back to Decking — used when a follow-up DTN
+    (e.g. the physical inspection that results from an NFI) comes back in and
+    THIS SAME application needs to continue, rather than spawning a new
+    record under a new reference number (that duplicated the record instead
+    of reopening it — see the previous version of this function).
+
+    Nothing is copied and no new GMPRecord/reference number is created: it's
+    the same GMP_ID, so its field and log history is already exactly where
+    it should be. This just:
+      1. Records the Related DTN on the record itself.
+      2. Clears GMP_APP_STATUS (was a terminal value like "RELEASED") and
+         Type of Issuance / certificate fields (the follow-up may resolve to
+         a different issuance type — picked fresh at Decking, same as
+         add_gmp_issuance leaves them for a new sibling reference number).
+      3. Opens a new "Decking" / IN PROGRESS log (like the Evaluator "For
+         Compliance" self-loop does — closed history stays, a fresh entry is
+         appended), which is what makes the record read as back in progress
+         and puts it in front of whoever decks it next via the normal Deck
+         Application action.
+    """
+    record = get_gmp_record(db, record_id)
+    if not record or not record.GMP_DTN:
+        return None
+
+    before = {
+        "GMP_RELATED_DTN": record.GMP_RELATED_DTN,
+        "GMP_APP_STATUS": record.GMP_APP_STATUS,
+        "GMP_CURRENT_STEP": record.GMP_CURRENT_STEP,
+        "GMP_TYPE_OF_ISSUANCE": record.GMP_TYPE_OF_ISSUANCE,
+        "GMP_CERTIFICATE_NUMBER": record.GMP_CERTIFICATE_NUMBER,
+        "GMP_CERTIFICATE_VALIDITY": record.GMP_CERTIFICATE_VALIDITY,
+        "GMP_SECPA_NUMBER": record.GMP_SECPA_NUMBER,
+    }
+    record.GMP_RELATED_DTN = related_dtn
+    record.GMP_APP_STATUS = None
+    record.GMP_CURRENT_STEP = "Decking"
+    record.GMP_TYPE_OF_ISSUANCE = None
+    record.GMP_CERTIFICATE_NUMBER = None
+    record.GMP_CERTIFICATE_VALIDITY = None
+    record.GMP_SECPA_NUMBER = None
+    db.commit()
+    db.refresh(record)
+
+    last_index = (
+        db.query(func.max(GMPApplicationLogs.del_index))
+        .filter(GMPApplicationLogs.gmp_record_id == record_id)
+        .scalar()
+    ) or 0
+    now = _now()
+    db.add(GMPApplicationLogs(
+        gmp_record_id=record_id,
+        application_step="Decking",
+        application_status="IN PROGRESS",
+        application_decision="",
+        application_remarks=f"Application reopened — Related DTN {related_dtn}.",
+        start_date=now,
+        del_index=last_index + 1,
+        del_previous=last_index if last_index > 0 else None,
+        del_last_index=1,
+        del_thread="Open",
+        user_name=user_name,
+        user_id=user_id,
+        is_received=0,
+        is_starred=0,
+        sent_by_user_id=user_id,
+        sent_by_user_name=user_name,
+    ))
+    db.commit()
+    db.refresh(record)
+
+    after = {
+        "GMP_RELATED_DTN": related_dtn,
+        "GMP_APP_STATUS": None,
+        "GMP_CURRENT_STEP": "Decking",
+        "GMP_TYPE_OF_ISSUANCE": None,
+        "GMP_CERTIFICATE_NUMBER": None,
+        "GMP_CERTIFICATE_VALIDITY": None,
+        "GMP_SECPA_NUMBER": None,
+    }
+    log_field_changes(db, record_id, before, after, action_type="UPDATE",
+                      user_name=user_name, user_id=user_id)
+    return record
 
 
 # ── Assign evaluator ──────────────────────────────────────────────────────────
@@ -788,6 +1005,23 @@ def assign_evaluator(
     db.refresh(db_record)
     log_field_changes(db, record_id, before, {"GMP_EVALUATOR": evaluator_name},
                       action_type="UPDATE", user_name=user_name, user_id=user_id)
+
+    if evaluator_name and db_record.GMP_DTN is not None:
+        try:
+            dtn = str(db_record.GMP_DTN)
+            if not already_notified_today(db, evaluator_name, dtn, title_like="Evaluator Assignment"):
+                create_notification(
+                    db,
+                    NotificationCreate(
+                        user_name=evaluator_name,
+                        title="🔬 New GMP Evaluator Assignment",
+                        message=f"You have been assigned as evaluator for DTN: {dtn}.",
+                        link_dtn=dtn,
+                    ),
+                )
+        except Exception:
+            pass  # notification failure must never crash the main operation
+
     return db_record
 
 

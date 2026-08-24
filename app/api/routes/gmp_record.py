@@ -12,12 +12,13 @@ from app.schemas.gmp_record import (
     GMPRecordSummary, GMPApplicationLogResponse, GMPFieldAuditLogResponse,
     GMPAdvanceStepRequest, GMPTaskListResponse,
     GMPApplicationLogUpdate, GMPReassignRequest, GMPRerouteRequest,
-    GMPAddIssuanceRequest, GMPIssuanceFieldsUpdate,
+    GMPAddIssuanceRequest, GMPIssuanceFieldsUpdate, GMPReopenRequest,
 )
 from app.crud import gmp_record as crud
 from app.crud import gmp_logs
 from app.crud.gmp_record import (
-    get_gmp_records, get_gmp_logs, GMP_LOG_STEPS, GMP_STEP_DEL_INDEX, GMP_ACTION_ROUTES,
+    get_gmp_records, get_gmp_logs, GMP_LOG_STEPS, GMP_STEP_DEL_INDEX,
+    resolve_next_step,
 )
 from app.models.gmp_record import GMPRecord
 from app.core.deps import get_current_active_user
@@ -55,6 +56,161 @@ def download_template():
     )
 
 
+# ── Export filtered records (static — must be before /{record_id}) ───────────
+# Mirrors main_db.py's /export-filtered: same filter set as the list endpoint
+# above (GET /), just with skip=0 and a high limit so every matching record —
+# not only the current page — comes back, then streamed out as .xlsx. Reuses
+# GMP_COLUMN_MAPPING (Excel header → GMPRecord field) from gmp_upload.py so
+# the export's columns always match what the upload template expects.
+@router.get("/export-filtered", summary="Export filtered GMP records to Excel")
+def export_filtered_records(
+    search: Optional[str] = Query(None),
+    dtns: Optional[str] = Query(None, description="Comma-separated DTN numbers"),
+    tab: Optional[str] = Query(None),
+    view: Optional[str] = Query(None),
+    duplicates_only: Optional[bool] = Query(None),
+    app_status: Optional[str] = Query(None),
+    est_category: Optional[str] = Query(None),
+    pics_nonpics: Optional[str] = Query(None),
+    transaction_type: Optional[str] = Query(None),
+    type_of_issuance: Optional[str] = Query(None),
+    current_step: Optional[str] = Query(None),
+    evaluator: Optional[str] = Query(None),
+    dtn: Optional[int] = Query(None),
+    related_dtn: Optional[str] = Query(None),
+    lto_company: Optional[str] = Query(None),
+    uploaded_by: Optional[str] = Query(None),
+    upload_date_from: Optional[str] = Query(None),
+    upload_date_to: Optional[str] = Query(None),
+    date_received_from: Optional[str] = Query(None),
+    date_received_to: Optional[str] = Query(None),
+    reference_no: Optional[str] = Query(None),
+    lto_number: Optional[str] = Query(None),
+    address: Optional[str] = Query(None),
+    foreign_manufacturer: Optional[str] = Query(None),
+    foreign_manufacturer_address: Optional[str] = Query(None),
+    secpa_number: Optional[str] = Query(None),
+    certificate_number: Optional[str] = Query(None),
+    certificate_validity: Optional[str] = Query(None),
+    decision: Optional[str] = Query(None),
+    processed_time: Optional[str] = Query(None),
+    timeline: Optional[str] = Query(None),
+    remarks: Optional[str] = Query(None),
+    product_line: Optional[str] = Query(None),
+    released_date_from: Optional[str] = Query(None),
+    released_date_to: Optional[str] = Query(None),
+    end_date_from: Optional[str] = Query(None),
+    end_date_to: Optional[str] = Query(None),
+    date_printed_from: Optional[str] = Query(None),
+    date_printed_to: Optional[str] = Query(None),
+    compliance_docs_date_received_from: Optional[str] = Query(None),
+    compliance_docs_date_received_to: Optional[str] = Query(None),
+    sort_by: str = Query("GMP_DATE_EXCEL_UPLOAD"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
+    db: Session = Depends(get_db),
+):
+    from app.api.routes.gmp_upload import GMP_COLUMN_MAPPING
+    from openpyxl import Workbook
+    from openpyxl.cell import WriteOnlyCell
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    parsed_dtns = []
+    if dtns:
+        for raw in dtns.split(","):
+            raw = raw.strip()
+            if raw.isdigit():
+                parsed_dtns.append(int(raw))
+
+    filters = {
+        "tab": tab, "view": view, "duplicates_only": duplicates_only, "app_status": app_status, "est_category": est_category,
+        "pics_nonpics": pics_nonpics, "transaction_type": transaction_type,
+        "type_of_issuance": type_of_issuance, "current_step": current_step,
+        "evaluator": evaluator, "dtn": dtn,
+        "dtns": parsed_dtns if parsed_dtns else None,
+        "related_dtn": related_dtn,
+        "lto_company": lto_company,
+        "uploaded_by": uploaded_by,
+        "upload_date_from": upload_date_from,
+        "upload_date_to": upload_date_to,
+        "date_received_from": date_received_from,
+        "date_received_to": date_received_to,
+        "reference_no": reference_no,
+        "lto_number": lto_number,
+        "address": address,
+        "foreign_manufacturer": foreign_manufacturer,
+        "foreign_manufacturer_address": foreign_manufacturer_address,
+        "secpa_number": secpa_number,
+        "certificate_number": certificate_number,
+        "certificate_validity": certificate_validity,
+        "decision": decision,
+        "processed_time": processed_time,
+        "timeline": timeline,
+        "remarks": remarks,
+        "product_line": product_line,
+        "released_date_from": released_date_from,
+        "released_date_to": released_date_to,
+        "end_date_from": end_date_from,
+        "end_date_to": end_date_to,
+        "date_printed_from": date_printed_from,
+        "date_printed_to": date_printed_to,
+        "compliance_docs_date_received_from": compliance_docs_date_received_from,
+        "compliance_docs_date_received_to": compliance_docs_date_received_to,
+    }
+
+    records, total = get_gmp_records(
+        db=db, skip=0, limit=100000, search=search,
+        filters=filters, sort_by=sort_by, sort_order=sort_order,
+    )
+
+    if not records:
+        raise HTTPException(status_code=404, detail="No records found to export")
+
+    HEADERS = ["Reference No.", "Current Step"] + list(GMP_COLUMN_MAPPING.keys())
+    FIELDS = list(GMP_COLUMN_MAPPING.values())
+
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet("GMP Records")
+
+    header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=10)
+    header_align = Alignment(horizontal="center", vertical="center")
+
+    for col_idx in range(1, len(HEADERS) + 1):
+        ws.column_dimensions[get_column_letter(col_idx)].width = 22
+
+    header_cells = []
+    for h in HEADERS:
+        c = WriteOnlyCell(ws, value=h)
+        c.fill = header_fill
+        c.font = header_font
+        c.alignment = header_align
+        header_cells.append(c)
+    ws.append(header_cells)
+
+    for record in records:
+        values = [record.GMP_REFERENCE_NO, record.GMP_CURRENT_STEP]
+        for field in FIELDS:
+            value = getattr(record, field, None)
+            values.append(str(value) if value is not None else None)
+        ws.append(values)
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    from datetime import datetime as _dt
+    filename = f"gmp_records_export_{_dt.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Total-Records": str(total),
+        },
+    )
+
+
 # ── List records ──────────────────────────────────────────────────────────────
 @router.get("/", response_model=GMPRecordListResponse)
 def get_gmp_queue(
@@ -80,6 +236,29 @@ def get_gmp_queue(
     upload_date_to: Optional[str] = Query(None),
     date_received_from: Optional[str] = Query(None),
     date_received_to: Optional[str] = Query(None),
+    # Extra per-column Advanced Filters fields — see TEXT_FIELD_COLUMNS /
+    # DATE_RANGE_COLUMNS in app/crud/gmp_record.py::get_gmp_records.
+    reference_no: Optional[str] = Query(None),
+    lto_number: Optional[str] = Query(None),
+    address: Optional[str] = Query(None),
+    foreign_manufacturer: Optional[str] = Query(None),
+    foreign_manufacturer_address: Optional[str] = Query(None),
+    secpa_number: Optional[str] = Query(None),
+    certificate_number: Optional[str] = Query(None),
+    certificate_validity: Optional[str] = Query(None),
+    decision: Optional[str] = Query(None),
+    processed_time: Optional[str] = Query(None),
+    timeline: Optional[str] = Query(None),
+    remarks: Optional[str] = Query(None),
+    product_line: Optional[str] = Query(None),
+    released_date_from: Optional[str] = Query(None),
+    released_date_to: Optional[str] = Query(None),
+    end_date_from: Optional[str] = Query(None),
+    end_date_to: Optional[str] = Query(None),
+    date_printed_from: Optional[str] = Query(None),
+    date_printed_to: Optional[str] = Query(None),
+    compliance_docs_date_received_from: Optional[str] = Query(None),
+    compliance_docs_date_received_to: Optional[str] = Query(None),
     sort_by: str = Query("GMP_DATE_EXCEL_UPLOAD"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     db: Session = Depends(get_db),
@@ -105,6 +284,27 @@ def get_gmp_queue(
         "upload_date_to": upload_date_to,
         "date_received_from": date_received_from,
         "date_received_to": date_received_to,
+        "reference_no": reference_no,
+        "lto_number": lto_number,
+        "address": address,
+        "foreign_manufacturer": foreign_manufacturer,
+        "foreign_manufacturer_address": foreign_manufacturer_address,
+        "secpa_number": secpa_number,
+        "certificate_number": certificate_number,
+        "certificate_validity": certificate_validity,
+        "decision": decision,
+        "processed_time": processed_time,
+        "timeline": timeline,
+        "remarks": remarks,
+        "product_line": product_line,
+        "released_date_from": released_date_from,
+        "released_date_to": released_date_to,
+        "end_date_from": end_date_from,
+        "end_date_to": end_date_to,
+        "date_printed_from": date_printed_from,
+        "date_printed_to": date_printed_to,
+        "compliance_docs_date_received_from": compliance_docs_date_received_from,
+        "compliance_docs_date_received_to": compliance_docs_date_received_to,
     }
 
     records, total = get_gmp_records(
@@ -240,6 +440,19 @@ def get_my_gmp_task_count(
         return {"count": 0}
     count = gmp_logs.get_task_count_for_user(db, username)
     return {"count": count}
+
+
+# ── Task counts for a batch of users (static — must be before /{record_id}) ──
+# Powers the Bulk Deck modal's evaluator checklist, which shows each
+# evaluator's current open-task count next to their name so staff can weigh
+# workload before the preset split assigns applications to them.
+@router.get("/tasks/task-counts")
+def get_gmp_task_counts(
+    usernames: str = Query(..., description="Comma-separated usernames"),
+    db: Session = Depends(get_db),
+):
+    names = [u.strip() for u in usernames.split(",") if u.strip()]
+    return gmp_logs.get_task_counts_for_users(db, names)
 
 
 # ── Mark task received (static prefix /logs/ — must be before /{record_id}) ───
@@ -378,6 +591,27 @@ def add_issuance(
     return new_record
 
 
+# ── Reopen to Decking (same record — no new reference number) ────────────────
+@router.post("/{record_id}/reopen", response_model=GMPRecordResponse)
+def reopen_to_decking(
+    record_id: int,
+    req: GMPReopenRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    new_record = crud.reopen_gmp_to_decking(
+        db, record_id, req.related_dtn,
+        user_name=getattr(current_user, "username", None),
+        user_id=getattr(current_user, "id", None),
+    )
+    if not new_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"GMP record {record_id} not found or has no DTN to reopen under.",
+        )
+    return new_record
+
+
 # ── Sibling reference numbers under the same DTN ──────────────────────────────
 @router.get("/{record_id}/siblings", response_model=List[GMPRecordResponse])
 def get_siblings(record_id: int, db: Session = Depends(get_db)):
@@ -453,8 +687,12 @@ def advance_step(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    route_key = (req.current_step, req.action)
-    if route_key not in GMP_ACTION_ROUTES:
+    record = db.query(GMPRecord).filter(GMPRecord.GMP_ID == record_id).first()
+    if not record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Record {record_id} not found")
+
+    is_valid_route, next_step_label = resolve_next_step(req.current_step, req.action)
+    if not is_valid_route:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
@@ -464,7 +702,6 @@ def advance_step(
             ),
         )
 
-    next_step_label = GMP_ACTION_ROUTES[route_key]
     next_del_index = GMP_STEP_DEL_INDEX.get(next_step_label) if next_step_label else None
 
     new_log = gmp_logs.advance_step(
