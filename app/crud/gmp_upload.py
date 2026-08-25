@@ -1,4 +1,4 @@
-# app/api/routes/gmp_upload.py
+# app/crud/gmp_upload.py
 """
 GMP Excel template builder and upload parser.
 Mirrors the exact pattern used in main_db.py:

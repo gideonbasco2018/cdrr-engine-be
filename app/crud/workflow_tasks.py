@@ -170,14 +170,22 @@ def get_logs_joined_with_main_db(
         "DB_APP_STATUS",
     }
 
+    # A secondary sort key on the primary key is required — without it, rows
+    # that tie on the primary sort column (e.g. many logs sharing the same
+    # created_at) come back in a non-deterministic order on every request,
+    # which made "select all" + generate transmittal look randomized.
     if sort_by in LOG_SORT_FIELDS and hasattr(ApplicationLogs, sort_by):
         col = getattr(ApplicationLogs, sort_by)
-        query = query.order_by(desc(col) if sort_order == "desc" else col)
+        query = query.order_by(
+            desc(col) if sort_order == "desc" else col, ApplicationLogs.id
+        )
     elif sort_by in MAIN_DB_SORT_FIELDS and hasattr(MainDB, sort_by):
         col = getattr(MainDB, sort_by)
-        query = query.order_by(desc(col) if sort_order == "desc" else col)
+        query = query.order_by(
+            desc(col) if sort_order == "desc" else col, ApplicationLogs.id
+        )
     else:
-        query = query.order_by(desc(ApplicationLogs.created_at))
+        query = query.order_by(desc(ApplicationLogs.created_at), ApplicationLogs.id)
 
     logs = query.offset(skip).limit(limit).all()
 

@@ -481,17 +481,23 @@ def get_gmp_records(
         "GMP_DATE_LRD_CHIEF_END",
         "GMP_DATE_OD_RECEIVING_END", "GMP_DATE_OD_RELEASING_END",
     ]
+    # A secondary sort key on the primary key is required — without it, rows
+    # that tie on the primary sort column come back in a non-deterministic
+    # order on every request (see same fix in crud/workflow_tasks.py).
     if sort_by in delegation_sort_fields:
         query = query.outerjoin(GMPDelegation, GMPRecord.GMP_ID == GMPDelegation.GMP_MAIN_ID)
         col = getattr(GMPDelegation, sort_by)
         query = query.order_by(
-            nullslast(desc(col)) if sort_order.lower() == "desc" else nullslast(col)
+            nullslast(desc(col)) if sort_order.lower() == "desc" else nullslast(col),
+            GMPRecord.GMP_ID,
         )
     elif hasattr(GMPRecord, sort_by):
         col = getattr(GMPRecord, sort_by)
-        query = query.order_by(desc(col) if sort_order.lower() == "desc" else col)
+        query = query.order_by(
+            desc(col) if sort_order.lower() == "desc" else col, GMPRecord.GMP_ID
+        )
     else:
-        query = query.order_by(desc(GMPRecord.GMP_DATE_EXCEL_UPLOAD))
+        query = query.order_by(desc(GMPRecord.GMP_DATE_EXCEL_UPLOAD), GMPRecord.GMP_ID)
 
     query = query.options(joinedload(GMPRecord.gmp_delegation))
     records = query.offset(skip).limit(limit).all()
