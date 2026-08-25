@@ -38,7 +38,6 @@ from app.api.routes import (
     gmp_analytics,
     gmp_dashboard,
     gmp_record,
-    gmp_upload,
     oauth,
     cpr_applications,
 )
