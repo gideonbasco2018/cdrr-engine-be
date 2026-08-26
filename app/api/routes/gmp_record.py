@@ -47,7 +47,7 @@ def _full_name(user) -> Optional[str]:
 # ── Template download (static — must be before /{record_id}) ─────────────────
 @router.get("/template", summary="Download GMP Excel upload template")
 def download_template():
-    from app.api.routes.gmp_upload import _build_template_workbook
+    from app.crud.gmp_upload import _build_template_workbook
     output = _build_template_workbook()
     return StreamingResponse(
         output,
@@ -60,7 +60,7 @@ def download_template():
 # Mirrors main_db.py's /export-filtered: same filter set as the list endpoint
 # above (GET /), just with skip=0 and a high limit so every matching record —
 # not only the current page — comes back, then streamed out as .xlsx. Reuses
-# GMP_COLUMN_MAPPING (Excel header → GMPRecord field) from gmp_upload.py so
+# GMP_COLUMN_MAPPING (Excel header → GMPRecord field) from crud/gmp_upload.py so
 # the export's columns always match what the upload template expects.
 @router.get("/export-filtered", summary="Export filtered GMP records to Excel")
 def export_filtered_records(
@@ -109,7 +109,7 @@ def export_filtered_records(
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     db: Session = Depends(get_db),
 ):
-    from app.api.routes.gmp_upload import GMP_COLUMN_MAPPING
+    from app.crud.gmp_upload import GMP_COLUMN_MAPPING
     from openpyxl import Workbook
     from openpyxl.cell import WriteOnlyCell
     from openpyxl.styles import Font, PatternFill, Alignment
@@ -820,7 +820,7 @@ async def upload_gmp_excel(
 ):
     import pandas as pd
     import numpy as np
-    from app.api.routes.gmp_upload import (
+    from app.crud.gmp_upload import (
         GMP_COLUMN_MAPPING, GMP_LOG_STEPS_EXCEL, _parse_date
     )
     from app.models.gmp_record import GMPDelegation, GMPApplicationLogs
@@ -864,7 +864,7 @@ async def upload_gmp_excel(
 
         try:
             # ── Core GMPRecord fields ─────────────────────────────────────────
-            from app.api.routes.gmp_upload import _parse_date as _parse_upload_date
+            from app.crud.gmp_upload import _parse_date as _parse_upload_date
 
             DATE_DB_COLUMNS = {
                 "GMP_DATE_RECEIVED", "GMP_RELEASED_DATE", "GMP_END_DATE",
@@ -932,7 +932,7 @@ async def upload_gmp_excel(
                 "OD Releasing": ("GMP_OD_RELEASING", "GMP_OD_RELEASING_DECISION", "GMP_OD_RELEASING_REMARKS", "GMP_DATE_OD_RELEASING_END"),
             }
             # Keys here now match both GMP_LOG_STEPS_EXCEL's step_label values
-            # (app/api/routes/gmp_upload.py) AND GMPDelegation's column names
+            # (app/crud/gmp_upload.py) AND GMPDelegation's column names
             # (app/models/gmp_record.py) — "Quality Evaluator"/"QA Supervisor"/
             # the "Decker" 2nd-pass label no longer exist anywhere in this chain.
 

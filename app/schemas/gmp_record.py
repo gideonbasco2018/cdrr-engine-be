@@ -285,6 +285,7 @@ class GMPTaskResponse(BaseModel):
     del_thread: Optional[str] = None
     is_read: Optional[int] = None
     is_starred: Optional[int] = None
+    starred_at: Optional[datetime] = None
     is_received: Optional[int] = None
     received_at: Optional[datetime] = None
     received_by: Optional[str] = None
