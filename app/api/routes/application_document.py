@@ -52,6 +52,8 @@ router = APIRouter(
 # MAX_FILE_SIZE = 5 * 1024 * 1024
 # ── 200 MB hard limit ─────────────────────────────────────────────────
 MAX_FILE_SIZE = 200 * 1024 * 1024
+# ── GMP folder uploads allow larger files (500 MB) ───────────────────
+GMP_MAX_FILE_SIZE = 500 * 1024 * 1024
 
 ALLOWED_MIME_TYPES = {
     "application/pdf",
@@ -1072,9 +1074,14 @@ async def upload_single_folder_file(
         _log("failed", error_msg, content_type)
         return BatchUploadResult(filename=filename, success=False, error=error_msg)
 
+    max_size = (
+        GMP_MAX_FILE_SIZE
+        if (db_entry_type or "").strip().upper() == "GMP"
+        else MAX_FILE_SIZE
+    )
     file_bytes = await file.read()
-    if len(file_bytes) > MAX_FILE_SIZE:
-        error_msg = "File exceeds the 200 MB limit."
+    if len(file_bytes) > max_size:
+        error_msg = f"File exceeds the {max_size // (1024 * 1024)} MB limit."
         _log("failed", error_msg, content_type, len(file_bytes))
         return BatchUploadResult(filename=filename, success=False, error=error_msg)
 
