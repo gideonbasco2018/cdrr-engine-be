@@ -23,6 +23,7 @@ from app.schemas.target_assignment import (
     UnitTaskListResponse,
     DirectorsTargetOverviewSummary,
     DirectorsTargetListResponse,
+    UnitSummaryMemberItem,
 )
 
 router = APIRouter(
@@ -73,6 +74,29 @@ def get_member_tasks(
             detail="This user is not on your team.",
         )
     return crud_target_assignment.get_member_tasks(db, member_user_id)
+
+
+# ── GET /api/lead-assignments/my-team/{member_user_id}/tasks/targeted ─
+# Lightweight — only tasks with an active TargetAssignment. Used by the
+# Team Diagram, which only ever displays targeted tasks as cards.
+@router.get(
+    "/lead-assignments/my-team/{member_user_id}/tasks/targeted",
+    response_model=List[MemberTaskOut],
+)
+def get_member_targeted_tasks(
+    member_user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    is_my_member = crud_target_assignment.get_active_lead_assignment(
+        db, lead_user_id=current_user.id, member_user_id=member_user_id
+    )
+    if not is_my_member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This user is not on your team.",
+        )
+    return crud_target_assignment.get_member_targeted_tasks(db, member_user_id)
 
 
 # ── GET /api/lead-assignments/all-teams ─────────────────────────────
@@ -351,6 +375,29 @@ def get_unit_in_progress_summary(
 ):
     _require_admin(current_user)
     return crud_target_assignment.get_unit_in_progress_summary(db, unit_id)
+
+
+@router.get(
+    "/lead-assignments/all-teams/units/{unit_id}/in-progress-summary-by-member",
+    response_model=List[UnitSummaryMemberItem],
+)
+def get_unit_in_progress_summary_by_member(
+    unit_id: int,
+    group_by: str,
+    label: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    _require_admin(current_user)
+    try:
+        return crud_target_assignment.get_unit_in_progress_member_breakdown(
+            db, unit_id, group_by, label
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid group_by. Expected one of: step, app_type, product_class, processing_type.",
+        )
 
 
 @router.get(
