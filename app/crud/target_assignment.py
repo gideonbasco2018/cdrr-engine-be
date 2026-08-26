@@ -546,6 +546,65 @@ def get_member_tasks(db: Session, member_user_id: int) -> List[MemberTaskOut]:
     ]
 
 
+def get_member_targeted_tasks(db: Session, member_user_id: int) -> List[MemberTaskOut]:
+    """
+    Lightweight variant of get_member_tasks — returns ONLY tasks that
+    currently have an active TargetAssignment for this member, instead
+    of every application_logs row the member has ever touched.
+
+    Used by the Team Diagram, which only ever renders TARGETED tasks
+    as cards (member stats like Total/Completed/In Progress come from
+    the member's own count fields on `team`, not from this list). The
+    full-history fetch was needlessly slow — 500KB+ for a member with
+    a long history — for data that was immediately filtered down to a
+    handful of rows on the frontend anyway.
+
+    A TargetAssignment is scoped to an APPLICATION (main_db_id), not a
+    step — but ApplicationLogs has one row per step, and this member
+    may have touched the application at more than one step. Joining
+    directly on main_db_id would return one row per matching step,
+    duplicating the card for the same targeted application. Dedupe
+    down to the most recent ApplicationLogs row per main_db_id so each
+    targeted application shows exactly one card, reflecting its
+    current step/status.
+    """
+    rows = (
+        db.query(ApplicationLogs, MainDB, TargetAssignment, DirectorsTarget)
+        .join(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
+        .join(
+            TargetAssignment,
+            (TargetAssignment.main_db_id == ApplicationLogs.main_db_id)
+            & (TargetAssignment.is_active == True),  # noqa: E712
+        )
+        .outerjoin(
+            DirectorsTarget,
+            (DirectorsTarget.main_db_id == ApplicationLogs.main_db_id)
+            & (DirectorsTarget.is_active == True),  # noqa: E712
+        )
+        .filter(ApplicationLogs.user_id == member_user_id)
+        .order_by(ApplicationLogs.main_db_id, ApplicationLogs.created_at.desc())
+        .all()
+    )
+
+    # Keep only the first (= most recent, due to the order_by above)
+    # row per main_db_id.
+    deduped = {}
+    for log, main, target, dtarget in rows:
+        if main.DB_ID not in deduped:
+            deduped[main.DB_ID] = (log, main, target, dtarget)
+    rows = list(deduped.values())
+
+    main_db_ids = [main.DB_ID for _, main, _, _ in rows]
+    history_map = get_application_history_map(db, main_db_ids)
+
+    return [
+        _build_member_task_out(
+            log, main, target, dtarget, history_map.get(main.DB_ID, [])
+        )
+        for log, main, target, dtarget in rows
+    ]
+
+
 # ── Target assignment mutations ─────────────────────────────────────
 def get_application_log(
     db: Session, application_log_id: int
@@ -1115,6 +1174,68 @@ def _group_unit_in_progress(
         .all()
     )
     return [{"label": r.label, "count": r.count} for r in rows]
+
+
+# ── Column map for the per-label member breakdown — same 4 groupings
+#    as get_unit_in_progress_summary, but keyed by the short names the
+#    frontend sends (matches SUMMARY_TAB_TO_COLUMN on the FE). ──
+def _unit_summary_group_column(group_by: str):
+    return {
+        "step": ApplicationLogs.application_step,
+        "app_type": MainDB.DB_APP_TYPE,
+        "product_class": getattr(MainDB, "DB_PROD_CLASS_PRESCRIP", None),
+        "processing_type": getattr(MainDB, "DB_PROCESSING_TYPE", None),
+    }.get(group_by)
+
+
+def get_unit_in_progress_member_breakdown(
+    db: Session, unit_id: int, group_by: str, label: str
+) -> List[dict]:
+    """
+    Per-member counts for ONE specific bar of the unit's in-progress
+    breakdown — e.g. group_by="step", label="Quality Evaluation" ->
+    [{"member_name": "Nepsy Ucag", "count": 12}, ...].
+
+    Mirrors _group_unit_in_progress's filtering (same unit scope, same
+    "in progress" definition, same coalesce-to-fallback-label matching)
+    but grouped by member instead of by the breakdown column, and
+    additionally filtered down to just the one label that was hovered.
+    """
+    group_col = _unit_summary_group_column(group_by)
+    if group_col is None:
+        raise ValueError(f"Unknown group_by: {group_by}")
+
+    fallback_label = "Unspecified"
+    status_expr = func.upper(func.trim(ApplicationLogs.application_status))
+
+    rows = (
+        db.query(
+            User.id.label("user_id"),
+            User.first_name,
+            User.surname,
+            func.count(ApplicationLogs.id).label("count"),
+        )
+        .join(LeadAssignment, LeadAssignment.member_user_id == ApplicationLogs.user_id)
+        .join(User, User.id == ApplicationLogs.user_id)
+        .outerjoin(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
+        .filter(
+            LeadAssignment.unit_id == unit_id,
+            LeadAssignment.is_active == True,  # noqa: E712
+            or_(
+                ApplicationLogs.application_status.is_(None),
+                status_expr.notin_(_TERMINAL_STATUSES),
+            ),
+            func.coalesce(group_col, fallback_label) == label,
+        )
+        .group_by(User.id, User.first_name, User.surname)
+        .order_by(func.count(ApplicationLogs.id).desc())
+        .all()
+    )
+
+    return [
+        {"member_name": f"{r.first_name} {r.surname}".strip(), "count": r.count}
+        for r in rows
+    ]
 
 
 def get_unit_in_progress_summary(db: Session, unit_id: int) -> dict:

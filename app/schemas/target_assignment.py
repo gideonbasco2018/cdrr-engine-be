@@ -220,6 +220,11 @@ class UnitSummaryItem(BaseModel):
     count: int
 
 
+class UnitSummaryMemberItem(BaseModel):
+    member_name: str
+    count: int
+
+
 class UnitInProgressSummary(BaseModel):
     by_step: List[UnitSummaryItem]
     by_app_type: List[UnitSummaryItem]
