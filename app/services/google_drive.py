@@ -38,6 +38,12 @@ def _get_credentials() -> service_account.Credentials:
 # upload touches Drive ~4 times. Cache one service PER THREAD: sync FastAPI
 # endpoints run in a bounded worker pool, so this ends up being a handful of
 # reused clients instead of one rebuilt per Drive call.
+#
+# NOTE: only safe if every caller is a sync `def` endpoint / worker thread
+# (FastAPI's threadpool) or a dedicated worker thread (Celery/RQ). If any
+# `async def` route calls these functions directly without
+# run_in_threadpool/asyncio.to_thread, it runs on the event loop thread and
+# could share this cached client across concurrent coroutines unsafely.
 _thread_local = threading.local()
 
 
@@ -51,7 +57,7 @@ def _build_service():
 
 
 def folder_exists(folder_id: str) -> bool:
-    """I-verify kung buhay pa (hindi na-delete/hindi trashed) ang isang Drive folder ID."""
+    """Check whether a Drive folder ID is still alive (not deleted / not trashed)."""
     if not folder_id:
         return False
     try:
@@ -68,10 +74,9 @@ def folder_exists(folder_id: str) -> bool:
 
 def find_file_in_folder(filename: str, folder_id: str) -> Optional[str]:
     """
-    Hanapin ang file ID kung may existing (hindi pa trashed) na file na
-    PAREHONG PANGALAN sa loob ng isang partikular na Drive folder.
-    Ginagamit para ma-detect kung dapat i-overwrite/update na lang sa
-    halip na gumawa ng duplicate.
+    Find the file ID of an existing (not trashed) file with the SAME NAME
+    inside a specific Drive folder. Used to detect whether we should
+    overwrite/update instead of creating a duplicate.
     """
     if not folder_id:
         return None
@@ -108,10 +113,10 @@ def upload_file_to_drive(
     existing_file_id: Optional[str] = None,
 ) -> dict:
     """
-    Laging gumagawa ng BAGONG file sa Drive (bagong file_id) sa bawat upload —
-    tinatanggal ang luma pagkatapos ng successful upload. Ginagawa ito para
-    iwasan ang Google Drive thumbnail cache/regeneration delay na nangyayari
-    kapag pareho lang ang file_id na ina-overwrite.
+    Always creates a NEW file in Drive (new file_id) on every upload —
+    deletes the old one after a successful upload. This avoids the Google
+    Drive thumbnail cache/regeneration delay that happens when overwriting
+    the same file_id.
     """
     service = _build_service()
     folder_id = folder_id or os.getenv("GOOGLE_DRIVE_FOLDER_ID")
@@ -138,12 +143,24 @@ def upload_file_to_drive(
         .execute()
     )
 
-    # NOTE: no per-file "anyone: reader" permission here anymore — it's an
-    # extra Drive round-trip on every single upload. The permission is set
-    # once on each folder when it's created (see _find_or_create_child_folder),
-    # and Drive permissions are inherited by everything inside.
+    # IMPORTANT: kept intentionally, per-file, on EVERY upload. Do not remove
+    # in favor of folder-level-only permissions unless a backfill has been run
+    # against all pre-existing folders AND _find_or_create_child_folder verifies
+    # permission on the existing-folder path too (not just newly-created ones).
+    # Without both of those, uploads into any pre-existing folder silently lose
+    # public access — no exception is raised, the link is just inaccessible.
+    try:
+        service.permissions().create(
+            fileId=created["id"],
+            body={"role": "reader", "type": "anyone"},
+            supportsAllDrives=True,
+        ).execute()
+    except Exception as exc:
+        print(
+            f"[GDrive] failed to set 'anyone' permission on file {created['id']}: {exc}"
+        )
 
-    # Tanggalin ang lumang file matapos ang successful na bagong upload
+    # Delete the old file after the successful new upload
     if existing_file_id:
         try:
             service.files().delete(
@@ -209,20 +226,7 @@ def _find_or_create_child_folder(
         .create(body=folder_metadata, fields="id", supportsAllDrives=True)
         .execute()
     )
-    folder_id = folder["id"]
-
-    # Make the folder link-viewable once, here — files uploaded into it inherit
-    # this, so upload_file_to_drive no longer sets a permission per file.
-    try:
-        service.permissions().create(
-            fileId=folder_id,
-            body={"role": "reader", "type": "anyone"},
-            supportsAllDrives=True,
-        ).execute()
-    except Exception as exc:
-        print(f"[GDrive] failed to set 'anyone' permission on folder {folder_id}: {exc}")
-
-    return folder_id
+    return folder["id"]
 
 
 def get_or_create_application_folder(
@@ -231,29 +235,29 @@ def get_or_create_application_folder(
     doc_category: Optional[str] = None,
 ) -> str:
     """
-    Gumawa (o hanapin) ng nested folder: ROOT / db_entry_type / db_dtn / [doc_category]
-    Returns yung folder_id ng pinaka-loob na folder.
+    Create (or find) a nested folder: ROOT / db_entry_type / db_dtn / [doc_category]
+    Returns the folder_id of the innermost folder.
 
-    NOTE: Existing function — HINDI ginalaw ang behavior. Ginawa na lang siyang
-    thin wrapper sa ibaba papuntang bagong `get_or_create_folder_path`, pero
-    parehas pa rin ang input/output kontrata niya.
+    NOTE: Existing function — behavior NOT changed. It's now just a thin
+    wrapper around the new `get_or_create_folder_path` below, but keeps the
+    same input/output contract.
     """
     category_parts = [doc_category] if doc_category and doc_category.strip() else []
     return get_or_create_folder_path(db_entry_type, db_dtn, category_parts)
 
 
-# ── BAGO: generalized version na sumusuporta sa arbitrary-depth na subfolders ──
+# ── NEW: generalized version that supports arbitrary-depth subfolders ──
 def get_or_create_folder_path(
     db_entry_type: str,
     db_dtn: str,
     category_parts: Optional[list[str]] = None,
 ) -> str:
     """
-    Gumawa (o hanapin) ng nested folder: ROOT / db_entry_type / db_dtn / cat1 / cat2 / ...
-    Suporta na sa multi-level na subfolders (galing sa buong-folder upload,
-    kung saan hindi natin alam kung ilang level ang nested subfolders).
+    Create (or find) a nested folder: ROOT / db_entry_type / db_dtn / cat1 / cat2 / ...
+    Now supports multi-level subfolders (for whole-folder uploads, where we
+    don't know how many levels of nested subfolders there are).
 
-    Returns yung folder_id ng pinaka-loob (deepest) na folder.
+    Returns the folder_id of the innermost (deepest) folder.
     """
     service = _build_service()
     root_folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
