@@ -2,12 +2,14 @@
 
 import io
 import mimetypes
+import time
 import uuid
 import zipfile
 import rarfile
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import List, Annotated
 from app.core.deps import get_current_active_user
@@ -76,6 +78,51 @@ ALLOWED_MIME_TYPES = {
 def _guess_mime(filename: str) -> str:
     mime, _ = mimetypes.guess_type(filename)
     return mime or "application/octet-stream"
+
+
+# ── Drive folder resolution cache ────────────────────────────────────────────
+# Once a folder id has been created or confirmed alive, skip the per-file
+# `folder_exists` Drive round-trip for a while. A folder deleted on Drive
+# mid-window just makes the next upload into it fail (and retry re-resolves).
+_VERIFIED_FOLDER_TTL = 600  # seconds
+_verified_folders: dict[str, float] = {}
+
+
+def _mark_folder_verified(folder_id: str) -> None:
+    if folder_id:
+        _verified_folders[folder_id] = time.monotonic() + _VERIFIED_FOLDER_TTL
+
+
+def _folder_recently_verified(folder_id: str) -> bool:
+    exp = _verified_folders.get(folder_id)
+    return bool(exp and exp > time.monotonic())
+
+
+def _resolve_drive_folder(
+    db: Session,
+    db_entry_type: str,
+    db_dtn: str,
+    doc_category: str | None,
+    category_parts: list[str],
+    explicit_folder_id: str | None = None,
+) -> str:
+    """Return the Drive folder id for this entry_type/dtn/category, creating
+    the nested path if needed. `explicit_folder_id` (e.g. from a prior
+    /folders/prepare call) is trusted as-is."""
+    if explicit_folder_id:
+        _mark_folder_verified(explicit_folder_id)
+        return explicit_folder_id
+
+    candidate_id = crud_doc.get_existing_folder_id(db, db_entry_type, db_dtn, doc_category)
+    if candidate_id and (
+        _folder_recently_verified(candidate_id) or folder_exists(candidate_id)
+    ):
+        _mark_folder_verified(candidate_id)
+        return candidate_id
+
+    folder_id = get_or_create_folder_path(db_entry_type, db_dtn, category_parts)
+    _mark_folder_verified(folder_id)
+    return folder_id
 
 
 @router.post("/upload", response_model=UploadDocumentResponse, status_code=201)
@@ -1009,8 +1056,46 @@ def list_documents_by_dtn(
     return ApplicationDocumentListResponse(data=docs, total=len(docs))
 
 
+class FolderPrepareItem(BaseModel):
+    db_dtn: str
+    doc_category: str | None = None
+
+
+class FolderPrepareRequest(BaseModel):
+    db_entry_type: str
+    items: list[FolderPrepareItem]
+
+
+class FolderPrepareResponse(BaseModel):
+    # key is "<db_dtn>|<doc_category or ''>"
+    folders: dict[str, str]
+
+
+@router.post("/folders/prepare", response_model=FolderPrepareResponse)
+def prepare_folders(
+    payload: FolderPrepareRequest,
+    db: Session = Depends(get_db),
+):
+    """Create (or find) every distinct Drive folder for a batch up front, so
+    the file uploads that follow can all run concurrently without racing to
+    create the same folder. Returns { "<dtn>|<category>": folder_id }."""
+    out: dict[str, str] = {}
+    for item in payload.items:
+        category = item.doc_category or None
+        key = f"{item.db_dtn}|{category or ''}"
+        if key in out:
+            continue
+        category_parts = (
+            [p.strip() for p in category.split("/") if p.strip()] if category else []
+        )
+        out[key] = _resolve_drive_folder(
+            db, payload.db_entry_type, item.db_dtn, category, category_parts
+        )
+    return FolderPrepareResponse(folders=out)
+
+
 @router.post("/upload-folder/single", response_model=BatchUploadResult, status_code=201)
-async def upload_single_folder_file(
+def upload_single_folder_file(
     db_entry_type: Annotated[str, Form(...)],
     db_dtn: Annotated[str, Form(...)],
     relative_path: Annotated[str, Form(...)],
@@ -1018,6 +1103,7 @@ async def upload_single_folder_file(
     file: Annotated[UploadFile, File(...)],
     main_db_id: Annotated[int | None, Form()] = None,
     doc_category: Annotated[str | None, Form()] = None,
+    drive_folder_id: Annotated[str | None, Form()] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -1027,9 +1113,12 @@ async def upload_single_folder_file(
 
     This endpoint is used by the frontend instead of sending one large
     multi-file request. It enables real-time, byte-level upload progress
-    tracking for each file and supports concurrent uploads, resulting in
-    significantly better performance than sequentially uploading files to
-    Google Drive within a single request.
+    tracking for each file and supports concurrent uploads.
+
+    Defined as a sync `def` on purpose: the Google Drive calls below are
+    blocking, so FastAPI runs each request in its own worker thread and true
+    concurrency is possible. `drive_folder_id`, when supplied (from a prior
+    /folders/prepare call), skips folder resolution entirely.
     """
     category_parts = (
         [p.strip() for p in doc_category.split("/") if p.strip()]
@@ -1076,27 +1165,23 @@ async def upload_single_folder_file(
 
     max_size = (
         GMP_MAX_FILE_SIZE
-        if (db_entry_type or "").strip().upper() == "GMP"
+        if (db_entry_type or "").strip().upper() in ("GMP", "FGMP")
         else MAX_FILE_SIZE
     )
-    file_bytes = await file.read()
+    file_bytes = file.file.read()
     if len(file_bytes) > max_size:
         error_msg = f"File exceeds the {max_size // (1024 * 1024)} MB limit."
         _log("failed", error_msg, content_type, len(file_bytes))
         return BatchUploadResult(filename=filename, success=False, error=error_msg)
 
-    candidate_id = crud_doc.get_existing_folder_id(
-        db, db_entry_type, db_dtn, doc_category
-    )
-    if candidate_id and folder_exists(candidate_id):
-        folder_id = candidate_id
-    else:
-        try:
-            folder_id = get_or_create_folder_path(db_entry_type, db_dtn, category_parts)
-        except Exception as exc:
-            error_msg = f"Failed to prepare Drive folder: {exc}"
-            _log("failed", error_msg, content_type, len(file_bytes))
-            return BatchUploadResult(filename=filename, success=False, error=error_msg)
+    try:
+        folder_id = _resolve_drive_folder(
+            db, db_entry_type, db_dtn, doc_category, category_parts, drive_folder_id
+        )
+    except Exception as exc:
+        error_msg = f"Failed to prepare Drive folder: {exc}"
+        _log("failed", error_msg, content_type, len(file_bytes))
+        return BatchUploadResult(filename=filename, success=False, error=error_msg)
 
     existing_doc = crud_doc.get_existing_document_by_name(
         db, db_entry_type, db_dtn, doc_category, filename

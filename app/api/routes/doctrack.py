@@ -383,7 +383,7 @@ async def upload_doctrack_excel(
 def create_log_by_rsn(payload: SingleDoctrackLogByRsnRequest, db: DBSessionDep):
     # ← DAGDAG alias append
     remarks = (
-        f"{payload.remarks} Remarks By: {payload.alias}"
+        f"{payload.remarks} Remarks by: {payload.alias}"
         if payload.alias else payload.remarks
     )
     result = insert_log_by_rsn_with_user(
@@ -424,7 +424,7 @@ def create_bulk_logs_by_rsn_with_user(
     for e in payload.entries:
         d = e.dict()
         if payload.alias:
-            d["remarks"] = f"{d['remarks']} Remarks By: {payload.alias}"
+            d["remarks"] = f"{d['remarks']} Remarks by: {payload.alias}"
         entries.append(d)
 
     result = insert_bulk_logs_by_rsns_with_user(
