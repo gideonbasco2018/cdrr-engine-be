@@ -178,6 +178,135 @@ def get_member_target_counts_map(db: Session, member_user_ids: List[int]) -> dic
     return {uid: count for uid, count in rows}
 
 
+def get_member_directors_target_counts_map(
+    db: Session, member_user_ids: List[int]
+) -> dict:
+    if not member_user_ids:
+        return {}
+    rows = (
+        db.query(DirectorsTarget.member_user_id, func.count(DirectorsTarget.id))
+        .filter(
+            DirectorsTarget.member_user_id.in_(member_user_ids),
+            DirectorsTarget.is_active == True,  # noqa: E712
+        )
+        .group_by(DirectorsTarget.member_user_id)
+        .all()
+    )
+    return {uid: count for uid, count in rows}
+
+
+def get_completed_main_db_ids(db: Session, main_db_ids: List[int]) -> set:
+    """
+    Given a set of application ids (main_db_id), returns the subset
+    that are ACTUALLY DONE RIGHT NOW — i.e. their most recent
+    ApplicationLogs row (by created_at) has a done status.
+
+    This is deliberately different from get_member_done_main_db_pairs:
+    that helper checks whether a SPECIFIC MEMBER ever marked ANY of
+    their own steps as done, even if the application later bounced
+    back for another round — which produces false "completed" results
+    for a currently-in-progress application the member simply passed
+    through before. This helper looks only at the application's
+    CURRENT state, matching what a person would actually see if they
+    opened the task right now.
+    """
+    if not main_db_ids:
+        return set()
+
+    latest_subq = (
+        db.query(
+            ApplicationLogs.main_db_id.label("main_db_id"),
+            func.max(ApplicationLogs.created_at).label("max_created_at"),
+        )
+        .filter(ApplicationLogs.main_db_id.in_(main_db_ids))
+        .group_by(ApplicationLogs.main_db_id)
+        .subquery()
+    )
+
+    latest_rows = (
+        db.query(ApplicationLogs.main_db_id, ApplicationLogs.application_status)
+        .join(
+            latest_subq,
+            (ApplicationLogs.main_db_id == latest_subq.c.main_db_id)
+            & (ApplicationLogs.created_at == latest_subq.c.max_created_at),
+        )
+        .all()
+    )
+
+    status_expr_upper = lambda s: (s or "").strip().upper()  # noqa: E731
+    return {
+        main_db_id
+        for main_db_id, status in latest_rows
+        if status_expr_upper(status) in _DONE_STATUSES
+    }
+
+
+def get_member_target_completed_counts_map(
+    db: Session, member_user_ids: List[int]
+) -> dict:
+    """
+    Count of each member's ACTIVE TargetAssignments whose application
+    is CURRENTLY (right now) in a done status — not just "was done at
+    some point by this member on some earlier step." See
+    get_completed_main_db_ids for why that distinction matters.
+    """
+    if not member_user_ids:
+        return {}
+
+    rows = (
+        db.query(TargetAssignment.member_user_id, TargetAssignment.main_db_id)
+        .filter(
+            TargetAssignment.member_user_id.in_(member_user_ids),
+            TargetAssignment.is_active == True,  # noqa: E712
+        )
+        .all()
+    )
+    main_db_ids = [main_db_id for _, main_db_id in rows]
+    completed_ids = get_completed_main_db_ids(db, main_db_ids)
+
+    counts = defaultdict(int)
+    for uid, main_db_id in rows:
+        if main_db_id in completed_ids:
+            counts[uid] += 1
+    return dict(counts)
+
+
+def get_member_target_overdue_counts_map(
+    db: Session, member_user_ids: List[int]
+) -> dict:
+    """
+    Count of each member's ACTIVE TargetAssignments where
+    target_end_date has passed and the application is NOT currently
+    completed (same "completed" definition as
+    get_member_target_completed_counts_map).
+    """
+    if not member_user_ids:
+        return {}
+    today = date.today()
+
+    rows = (
+        db.query(
+            TargetAssignment.member_user_id,
+            TargetAssignment.main_db_id,
+            TargetAssignment.target_end_date,
+        )
+        .filter(
+            TargetAssignment.member_user_id.in_(member_user_ids),
+            TargetAssignment.is_active == True,  # noqa: E712
+        )
+        .all()
+    )
+    main_db_ids = [main_db_id for _, main_db_id, _ in rows]
+    completed_ids = get_completed_main_db_ids(db, main_db_ids)
+
+    counts = defaultdict(int)
+    for uid, main_db_id, end_date in rows:
+        is_completed = main_db_id in completed_ids
+        if not is_completed and end_date is not None and end_date < today:
+            counts[uid] += 1
+    return dict(counts)
+
+
 def count_member_directors_targets(db: Session, member_user_id: int) -> int:
     # Count directly off DirectorsTarget.member_user_id (captured at
     # targeting time) instead of joining through ApplicationLogs.id —
@@ -320,6 +449,9 @@ def build_team_overview(db: Session, lead_user_id: int) -> List[TeamMemberOut]:
     target_counts = get_member_target_counts_map(db, member_ids)
     in_progress_counts = get_member_in_progress_counts_map(db, member_ids)
     completed_counts = get_member_completed_counts_map(db, member_ids)
+    target_completed_counts = get_member_target_completed_counts_map(db, member_ids)
+    target_overdue_counts = get_member_target_overdue_counts_map(db, member_ids)
+    directors_target_counts = get_member_directors_target_counts_map(db, member_ids)
 
     result: List[TeamMemberOut] = []
     for a in assignments:
@@ -340,6 +472,9 @@ def build_team_overview(db: Session, lead_user_id: int) -> List[TeamMemberOut]:
                 target_count=target_counts.get(a.member_user_id, 0),
                 in_progress_count=in_progress_counts.get(a.member_user_id, 0),
                 completed_count=completed_counts.get(a.member_user_id, 0),
+                target_completed_count=target_completed_counts.get(a.member_user_id, 0),
+                target_overdue_count=target_overdue_counts.get(a.member_user_id, 0),
+                directors_target_count=directors_target_counts.get(a.member_user_id, 0),
             )
         )
     return result

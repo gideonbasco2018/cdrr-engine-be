@@ -133,13 +133,25 @@ class TeamMemberOut(BaseModel):
     target_count: int = 0
     in_progress_count: int = 0
     completed_count: int = 0
+    # ── NEW — breakdown of this member's TARGETED (not overall) tasks,
+    #    for the Target Monitoring tab. "Completed" here means the
+    #    member's own ApplicationLogs row for that application shows a
+    #    done status (see get_member_target_completed_counts_map).
+    #    "Overdue" means target_end_date has passed and it's not yet
+    #    completed. target_count - target_completed_count -
+    #    target_overdue_count = on-track. ──
+    target_completed_count: int = 0
+    target_overdue_count: int = 0
+    # ── NEW — count of this member's active CDRR (Director's) Targets.
+    #    Previously only on AllTeamsMemberOut; My Team sidebar needs it
+    #    too for the 🏛️ badge, same pattern as target_count (🎯). ──
+    directors_target_count: int = 0
 
 
 # ── "Every team" view (Monitoring) ───────────────────────────────────
 class AllTeamsMemberOut(TeamMemberOut):
     lead_user_id: Optional[int] = None
     lead_name: str = ""
-    directors_target_count: int = 0
     # Used for the PER-MEMBER badge — targets where this member
     # completed their own part (any step). See
     # count_member_directors_targets_completed.
