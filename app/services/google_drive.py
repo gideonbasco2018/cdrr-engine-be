@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import threading
 from typing import Optional
 
 from google.oauth2 import service_account
@@ -32,9 +33,21 @@ def _get_credentials() -> service_account.Credentials:
     )
 
 
+# The Drive service object (and its underlying http transport) is not
+# thread-safe, but building it on every call is wasteful — a single file
+# upload touches Drive ~4 times. Cache one service PER THREAD: sync FastAPI
+# endpoints run in a bounded worker pool, so this ends up being a handful of
+# reused clients instead of one rebuilt per Drive call.
+_thread_local = threading.local()
+
+
 def _build_service():
-    creds = _get_credentials()
-    return build("drive", "v3", credentials=creds, cache_discovery=False)
+    service = getattr(_thread_local, "service", None)
+    if service is None:
+        creds = _get_credentials()
+        service = build("drive", "v3", credentials=creds, cache_discovery=False)
+        _thread_local.service = service
+    return service
 
 
 def folder_exists(folder_id: str) -> bool:
@@ -125,11 +138,10 @@ def upload_file_to_drive(
         .execute()
     )
 
-    service.permissions().create(
-        fileId=created["id"],
-        body={"role": "reader", "type": "anyone"},
-        supportsAllDrives=True,
-    ).execute()
+    # NOTE: no per-file "anyone: reader" permission here anymore — it's an
+    # extra Drive round-trip on every single upload. The permission is set
+    # once on each folder when it's created (see _find_or_create_child_folder),
+    # and Drive permissions are inherited by everything inside.
 
     # Tanggalin ang lumang file matapos ang successful na bagong upload
     if existing_file_id:
@@ -197,7 +209,20 @@ def _find_or_create_child_folder(
         .create(body=folder_metadata, fields="id", supportsAllDrives=True)
         .execute()
     )
-    return folder["id"]
+    folder_id = folder["id"]
+
+    # Make the folder link-viewable once, here — files uploaded into it inherit
+    # this, so upload_file_to_drive no longer sets a permission per file.
+    try:
+        service.permissions().create(
+            fileId=folder_id,
+            body={"role": "reader", "type": "anyone"},
+            supportsAllDrives=True,
+        ).execute()
+    except Exception as exc:
+        print(f"[GDrive] failed to set 'anyone' permission on folder {folder_id}: {exc}")
+
+    return folder_id
 
 
 def get_or_create_application_folder(
