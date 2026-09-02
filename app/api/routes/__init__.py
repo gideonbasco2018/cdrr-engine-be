@@ -40,6 +40,8 @@ from app.api.routes import (
     gmp_record,
     oauth,
     cpr_applications,
+    cpr_app_document,
+    priority_meds,
 )
 
 api_router = APIRouter()
@@ -79,3 +81,5 @@ api_router.include_router(gmp_dashboard.router)
 api_router.include_router(gmp_record.router)
 api_router.include_router(oauth.router)
 api_router.include_router(cpr_applications.router)
+api_router.include_router(cpr_app_document.router)
+api_router.include_router(priority_meds.router)

@@ -44,6 +44,8 @@ from app.api.routes import (
     gmp_dashboard,
     oauth,
     cpr_applications,
+    cpr_app_document,
+    priority_meds,
 )
 
 # ── Scheduler setup ───────────────────────────────────────────────────
@@ -148,6 +150,8 @@ app.include_router(gmp_analytics.router)
 app.include_router(gmp_dashboard.router)
 app.include_router(oauth.router)
 app.include_router(cpr_applications.router)
+app.include_router(cpr_app_document.router)
+app.include_router(priority_meds.router)
 
 
 @app.get("/")
