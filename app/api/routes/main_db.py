@@ -132,6 +132,146 @@ COLUMN_MAPPING = {
     "Processing Type": "DB_PROCESSING_TYPE",
 }
 
+# ── Column registry (id -> (header_label, getter, width)) ──
+EXPORT_COLUMNS = [
+    ("processing_type", "Processing Type", lambda r: r.DB_PROCESSING_TYPE, 18),
+    ("dtn", "DTN", lambda r: str(r.DB_DTN) if r.DB_DTN else None, 22),
+    ("category", "Category", lambda r: r.DB_EST_CAT, 15),
+    ("applicant_company", "Applicant Company", lambda r: r.DB_EST_LTO_COMP, 35),
+    ("address", "Address", lambda r: r.DB_EST_LTO_ADD, 40),
+    ("email", "Email Address", lambda r: r.DB_EST_EADD, 30),
+    ("tin", "TIN", lambda r: r.DB_EST_TIN, 15),
+    ("contact_no", "Contact No.", lambda r: r.DB_EST_CONTACT_NO, 18),
+    ("lto_no", "LTO No.", lambda r: r.DB_EST_LTO_NO, 18),
+    ("validity", "Validity", lambda r: r.DB_EST_VALIDITY, 15),
+    ("brand_name", "Brand Name", lambda r: r.DB_PROD_BR_NAME, 30),
+    ("generic_name", "Generic Name", lambda r: r.DB_PROD_GEN_NAME, 30),
+    ("dosage_strength", "Dosage Strength", lambda r: r.DB_PROD_DOS_STR, 20),
+    (
+        "dosage_form",
+        "Dosage Form and Route of Administration",
+        lambda r: r.DB_PROD_DOS_FORM,
+        30,
+    ),
+    ("classification", "Classification", lambda r: r.DB_PROD_CLASS_PRESCRIP, 22),
+    ("essential_drug", "Essential Drug List", lambda r: r.DB_PROD_ESS_DRUG_LIST, 20),
+    ("pharma_cat", "Pharmacologic Category", lambda r: r.DB_PROD_PHARMA_CAT, 25),
+    ("manufacturer", "Manufacturer", lambda r: r.DB_PROD_MANU, 30),
+    ("manufacturer_add", "Manufacturer Address", lambda r: r.DB_PROD_MANU_ADD, 40),
+    ("manufacturer_tin", "Manufacturer TIN", lambda r: r.DB_PROD_MANU_TIN, 15),
+    ("manufacturer_lto", "Manufacturer LTO No.", lambda r: r.DB_PROD_MANU_LTO_NO, 20),
+    (
+        "manufacturer_country",
+        "Manufacturer Country",
+        lambda r: r.DB_PROD_MANU_COUNTRY,
+        20,
+    ),
+    ("trader", "Trader", lambda r: r.DB_PROD_TRADER, 30),
+    ("trader_add", "Trader Address", lambda r: r.DB_PROD_TRADER_ADD, 40),
+    ("trader_tin", "Trader TIN", lambda r: r.DB_PROD_TRADER_TIN, 15),
+    ("trader_lto", "Trader LTO No.", lambda r: r.DB_PROD_TRADER_LTO_NO, 20),
+    ("trader_country", "Trader Country", lambda r: r.DB_PROD_TRADER_COUNTRY, 20),
+    ("repacker", "Repacker", lambda r: r.DB_PROD_REPACKER, 30),
+    ("repacker_add", "Repacker Address", lambda r: r.DB_PROD_REPACKER_ADD, 40),
+    ("repacker_tin", "Repacker TIN", lambda r: r.DB_PROD_REPACKER_TIN, 15),
+    ("repacker_lto", "Repacker LTO No.", lambda r: r.DB_PROD_REPACKER_LTO_NO, 20),
+    ("repacker_country", "Repacker Country", lambda r: r.DB_PROD_REPACKER_COUNTRY, 20),
+    ("importer", "Importer", lambda r: r.DB_PROD_IMPORTER, 30),
+    ("importer_add", "Importer Address", lambda r: r.DB_PROD_IMPORTER_ADD, 40),
+    ("importer_tin", "Importer TIN", lambda r: r.DB_PROD_IMPORTER_TIN, 15),
+    ("importer_lto", "Importer LTO No.", lambda r: r.DB_PROD_IMPORTER_LTO_NO, 20),
+    ("importer_country", "Importer Country", lambda r: r.DB_PROD_IMPORTER_COUNTRY, 20),
+    ("distributor", "Distributor", lambda r: r.DB_PROD_DISTRI, 30),
+    ("distributor_add", "Distributor Address", lambda r: r.DB_PROD_DISTRI_ADD, 40),
+    ("distributor_tin", "Distributor TIN", lambda r: r.DB_PROD_DISTRI_TIN, 15),
+    ("distributor_lto", "Distributor LTO No.", lambda r: r.DB_PROD_DISTRI_LTO_NO, 20),
+    (
+        "distributor_country",
+        "Distributor Country",
+        lambda r: r.DB_PROD_DISTRI_COUNTRY,
+        20,
+    ),
+    ("shelf_life", "Shelf Life", lambda r: r.DB_PROD_DISTRI_SHELF_LIFE, 20),
+    ("storage_cond", "Storage Condition", lambda r: r.DB_STORAGE_COND, 25),
+    ("packaging", "Packaging", lambda r: r.DB_PACKAGING, 25),
+    ("suggested_rp", "Suggested Retail Price", lambda r: r.DB_SUGG_RP, 20),
+    ("reg_no", "Registration Number", lambda r: r.DB_REG_NO, 22),
+    ("app_type", "Application Type", lambda r: r.DB_APP_TYPE, 20),
+    ("mother_app_type", "Mother Application Type", lambda r: r.DB_MOTHER_APP_TYPE, 25),
+    ("old_rsn", "Old RSN/ Other DTN", lambda r: r.DB_OLD_RSN, 20),
+    ("amendment1", "Amendment 1", lambda r: r.DB_AMMEND1, 15),
+    ("amendment2", "Amendment 2", lambda r: r.DB_AMMEND2, 15),
+    ("amendment3", "Amendment 3", lambda r: r.DB_AMMEND3, 15),
+    ("prod_cat", "Product Category", lambda r: r.DB_PROD_CAT, 20),
+    ("certification", "Certification", lambda r: r.DB_CERTIFICATION, 20),
+    ("fee", "Fee", lambda r: r.DB_FEE, 12),
+    ("lrf", "LRF", lambda r: r.DB_LRF, 12),
+    ("surc", "SURC", lambda r: r.DB_SURC, 12),
+    ("total", "Total", lambda r: r.DB_TOTAL, 12),
+    ("or_no", "OR No.", lambda r: r.DB_OR_NO, 18),
+    ("date_issued", "Date Issued", lambda r: r.DB_DATE_ISSUED, 18),
+    (
+        "date_received_fdac",
+        "Date when the application was received by FDAC",
+        lambda r: r.DB_DATE_RECEIVED_FDAC,
+        35,
+    ),
+    (
+        "date_received_cent",
+        "Date when the application was received by CDRR",
+        lambda r: r.DB_DATE_RECEIVED_CENT,
+        35,
+    ),
+    ("mo", "MO", lambda r: r.DB_MO, 12),
+    ("file_copy", "FILE COPY", lambda r: r.DB_FILE, 12),
+    ("secpa", "SECPA No.", lambda r: r.DB_SECPA, 18),
+    ("secpa_exp", "Expiry Date", lambda r: r.DB_SECPA_EXP_DATE, 18),
+    ("secpa_issued", "Issued On", lambda r: r.DB_SECPA_ISSUED_ON, 18),
+    (
+        "remarks1",
+        "Remarks (1)(e.g. reason of application returned)",
+        lambda r: r.DB_REMARKS_1,
+        45,
+    ),
+    ("date_remarks", "Date of Remarks (1)", lambda r: r.DB_DATE_REMARKS, 20),
+    ("class", "Class", lambda r: r.DB_CLASS, 15),
+    ("date_released", "Date Released by the CDRR", lambda r: r.DB_DATE_RELEASED, 25),
+    (
+        "type_doc_released",
+        "Type of Document Released",
+        lambda r: r.DB_TYPE_DOC_RELEASED,
+        25,
+    ),
+    (
+        "atta_released",
+        "Attachment/s released with authorization",
+        lambda r: r.DB_ATTA_RELEASED,
+        35,
+    ),
+    (
+        "cpr_cond",
+        "CPR Condition/s Ticked at the back of CPR",
+        lambda r: r.DB_CPR_COND,
+        40,
+    ),
+    ("cpr_cond_remarks", "CPR Cond Remarks", lambda r: r.DB_CPR_COND_REMARKS, 30),
+    (
+        "cpr_cond_add_remarks",
+        "CPR Cond Additional Remarks",
+        lambda r: r.DB_CPR_COND_ADD_REMARKS,
+        35,
+    ),
+    ("app_status", "App Status", lambda r: r.DB_APP_STATUS, 20),
+    ("app_remarks", "App Remarks", lambda r: r.DB_APP_REMARKS, 30),
+    ("timeline", "Timeline (Days)", lambda r: r.DB_TIMELINE_CITIZEN_CHARTER, 18),
+]
+
+
+# ── LOG_STEPS as "column groups" — each step = 1 selectable id, expands to 4 real columns ──
+def _log_step_export_id(step_label):
+    return f"log__{step_label.lower().replace(' ', '_').replace('&', 'and')}"
+
+
 # ============================================================
 # UPDATED LOG_STEPS CONFIGURATION
 # ============================================================
@@ -1513,13 +1653,34 @@ async def export_filtered_records(
     date_received_cent_to: Optional[str] = Query(None),
     null_date_released: Optional[str] = Query(None),
     null_date_received_cent: Optional[str] = Query(None),
+    columns: Optional[str] = Query(
+        None,
+        description="Comma-separated column ids to include. Omit = all columns.",
+    ),
     db: Session = Depends(get_db),
 ):
-    """Export filtered records to Excel — streamed, no auto-fit loop"""
+    """Export filtered records to Excel — streamed, only selected columns"""
     try:
         print(
-            f"📥 Export request: status={status}, app_type={app_type}, search={search}"
+            f"📥 Export request: status={status}, app_type={app_type}, search={search}, columns={columns}"
         )
+
+        # ── Parse selected columns ──
+        selected_ids = None
+        if columns:
+            selected_ids = {c.strip() for c in columns.split(",") if c.strip()}
+
+        selected_main_cols = [
+            c for c in EXPORT_COLUMNS if selected_ids is None or c[0] in selected_ids
+        ]
+
+        all_log_ids = {step[0]: _log_step_export_id(step[0]) for step in LOG_STEPS}
+        selected_log_steps = (
+            LOG_STEPS
+            if selected_ids is None
+            else [s for s in LOG_STEPS if all_log_ids[s[0]] in selected_ids]
+        )
+        include_entry_type = selected_ids is None or "entry_type" in selected_ids
 
         filters = {
             "status": status,
@@ -1564,157 +1725,71 @@ async def export_filtered_records(
             sort_order="desc",
         )
 
-        print(f"📊 Exporting {total} records")
-
-        # ── Latest log per LOG_STEPS role (Decker, Evaluator, S&E, Checker, etc.) ──
-        from sqlalchemy.orm import joinedload
-
-        main_db_ids = [r.DB_ID for r in records]
-
-        # LOG_STEPS entries: (step_label, user_col, id_col, decision_col, remarks_col, date_col, thread_col, del_idx)
-        ALL_LOG_STEP_LABELS = [step[0] for step in LOG_STEPS]
-
-        logs = (
-            db.query(ApplicationLogs)
-            .options(joinedload(ApplicationLogs.user))
-            .filter(ApplicationLogs.main_db_id.in_(main_db_ids))
-            .filter(ApplicationLogs.application_step.in_(ALL_LOG_STEP_LABELS))
-            .order_by(ApplicationLogs.main_db_id, ApplicationLogs.created_at.desc())
-            .all()
-        )
-
-        def _log_user_name(log):
-            if log.user:
-                name = f"{log.user.first_name or ''} {log.user.surname or ''}".strip()
-                if name:
-                    return name
-            return log.user_name
-
-        # {main_db_id: {step_label: log}}
-        latest_by_step = {}
-        for log in logs:
-            if log.application_step not in ALL_LOG_STEP_LABELS:
-                continue
-            bucket = latest_by_step.setdefault(log.main_db_id, {})
-            if (
-                log.application_step not in bucket
-            ):  # naka-sort na desc → una wins (latest)
-                bucket[log.application_step] = log
-
-        # ── Per-step pastel colors for header + data cells (para agad makilala) ──
-        LOG_STEP_COLORS = [
-            "FFF2CC",  # Decking            — yellow
-            "D9EAD3",  # Quality Evaluation — green
-            "FDE2C8",  # S&E                — peach
-            "CFE2F3",  # Checking           — blue
-            "EAD1DC",  # Supervisor         — pink
-            "D9D2E9",  # QA Admin           — purple
-            "FCE5CD",  # LRD Chief Admin    — orange
-            "D0E4F7",  # OD-Receiving       — light blue
-            "F4CCCC",  # OD-Releasing       — rose
-            "C9DAF8",  # Releasing Officer  — blue-gray
-        ]
+        print(f"📊 Exporting {total} records with {len(selected_main_cols)} columns")
 
         if not records:
             raise HTTPException(status_code=404, detail="No records found to export")
 
-        # ── Build Excel using write_only mode (much faster, low memory) ──
+        from sqlalchemy.orm import joinedload
+
+        main_db_ids = [r.DB_ID for r in records]
+
+        latest_by_step = {}
+        if selected_log_steps:
+            step_labels = [s[0] for s in selected_log_steps]
+            logs = (
+                db.query(ApplicationLogs)
+                .options(joinedload(ApplicationLogs.user))
+                .filter(ApplicationLogs.main_db_id.in_(main_db_ids))
+                .filter(ApplicationLogs.application_step.in_(step_labels))
+                .order_by(ApplicationLogs.main_db_id, ApplicationLogs.created_at.desc())
+                .all()
+            )
+
+            def _log_user_name(log):
+                if log.user:
+                    name = (
+                        f"{log.user.first_name or ''} {log.user.surname or ''}".strip()
+                    )
+                    if name:
+                        return name
+                return log.user_name
+
+            for log in logs:
+                bucket = latest_by_step.setdefault(log.main_db_id, {})
+                if log.application_step not in bucket:
+                    bucket[log.application_step] = log
+        else:
+
+            def _log_user_name(log):
+                return None
+
+        LOG_STEP_COLORS = [
+            "FFF2CC",
+            "D9EAD3",
+            "FDE2C8",
+            "CFE2F3",
+            "EAD1DC",
+            "D9D2E9",
+            "FCE5CD",
+            "D0E4F7",
+            "F4CCCC",
+            "C9DAF8",
+        ]
+
         from openpyxl import Workbook
+        from openpyxl.cell import WriteOnlyCell
         from openpyxl.styles import Font, PatternFill, Alignment
         from openpyxl.utils import get_column_letter
 
-        wb = Workbook(
-            write_only=True
-        )  # ✅ write_only — no cell reads, no auto-fit loop
+        wb = Workbook(write_only=True)
         ws = wb.create_sheet("Filtered Records")
 
-        HEADERS = [
-            "Processing Type",
-            "DTN",
-            "Category",
-            "Applicant Company",
-            "Address",
-            "Email Address",
-            "TIN",
-            "Contact No.",
-            "LTO No.",
-            "Validity",
-            "Brand Name",
-            "Generic Name",
-            "Dosage Strength",
-            "Dosage Form and Route of Administration",
-            "Classification",
-            "Essential Drug List",
-            "Pharmacologic Category",
-            "Manufacturer",
-            "Manufacturer Address",
-            "Manufacturer TIN",
-            "Manufacturer LTO No.",
-            "Manufacturer Country",
-            "Trader",
-            "Trader Address",
-            "Trader TIN",
-            "Trader LTO No.",
-            "Trader Country",
-            "Repacker",
-            "Repacker Address",
-            "Repacker TIN",
-            "Repacker LTO No.",
-            "Repacker Country",
-            "Importer",
-            "Importer Address",
-            "Importer TIN",
-            "Importer LTO No.",
-            "Importer Country",
-            "Distributor",
-            "Distributor Address",
-            "Distributor TIN",
-            "Distributor LTO No.",
-            "Distributor Country",
-            "Shelf Life",
-            "Storage Condition",
-            "Packaging",
-            "Suggested Retail Price",
-            "Registration Number",
-            "Application Type",
-            "Mother Application Type",
-            "Old RSN/ Other DTN",
-            "Amendment 1",
-            "Amendment 2",
-            "Amendment 3",
-            "Product Category",
-            "Certification",
-            "Fee",
-            "LRF",
-            "SURC",
-            "Total",
-            "OR No.",
-            "Date Issued",
-            "Date when the application was received by FDAC",
-            "Date when the application was received by CDRR",
-            "MO",
-            "FILE COPY",
-            "SECPA No.",
-            "Expiry Date",
-            "Issued On",
-            "Remarks (1)(e.g. reason of application returned)",
-            "Date of Remarks (1)",
-            "Class",
-            "Date Released by the CDRR",
-            "Type of Document Released",
-            "Attachment/s released with authorization",
-            "CPR Condition/s Ticked at the back of CPR",
-            "CPR Cond Remarks",
-            "CPR Cond Additional Remarks",
-            "App Status",
-            "App Remarks",
-            "Timeline (Days)",
-        ]
+        HEADERS = [label for _, label, _, _ in selected_main_cols]
+        WIDTHS = [width for _, _, _, width in selected_main_cols]
 
-        # ── Dynamically append 4 columns per LOG_STEPS role: Name, Decision, Remarks, Date End ──
-        LOG_HEADERS = []
-        LOG_COLUMN_FILLS = []  # parallel list — fill color per log header/data column
-        for step_idx, (
+        LOG_COLUMN_FILL_BY_INDEX = {}
+        for (
             step_label,
             user_col,
             id_col,
@@ -1723,123 +1798,29 @@ async def export_filtered_records(
             date_col,
             thread_col,
             del_idx,
-        ) in enumerate(LOG_STEPS):
-            color = LOG_STEP_COLORS[step_idx % len(LOG_STEP_COLORS)]
-            LOG_HEADERS += [user_col, decision_col, remarks_col, date_col]
-            LOG_COLUMN_FILLS += [color, color, color, color]
+        ) in selected_log_steps:
+            step_global_idx = next(
+                i for i, s in enumerate(LOG_STEPS) if s[0] == step_label
+            )
+            color = LOG_STEP_COLORS[step_global_idx % len(LOG_STEP_COLORS)]
+            start_col = len(HEADERS) + 1
+            HEADERS += [user_col, decision_col, remarks_col, date_col]
+            WIDTHS += [25, 22, 30, 20]
+            for offset in range(4):
+                LOG_COLUMN_FILL_BY_INDEX[start_col + offset] = color
 
-        HEADERS += LOG_HEADERS + ["Entry Type"]
+        if include_entry_type:
+            HEADERS.append("Entry Type")
+            WIDTHS.append(20)
 
-        # ── Header row with styling ──
-        from openpyxl.cell import WriteOnlyCell
-        from openpyxl.styles import Font, PatternFill, Alignment
-        from openpyxl.utils import get_column_letter
+        for col_idx, width in enumerate(WIDTHS, start=1):
+            ws.column_dimensions[get_column_letter(col_idx)].width = width
 
         header_fill = PatternFill(
             start_color="1F4E79", end_color="1F4E79", fill_type="solid"
         )
         header_font = Font(bold=True, color="FFFFFF", size=10)
         header_align = Alignment(horizontal="center", vertical="center")
-
-        FIXED_WIDTHS = {
-            1: 18,  # Processing Type
-            2: 22,  # DTN
-            3: 15,  # Category
-            4: 35,  # Applicant Company
-            5: 40,  # Address
-            6: 30,  # Email Address
-            7: 15,  # TIN
-            8: 18,  # Contact No.
-            9: 18,  # LTO No.
-            10: 15,  # Validity
-            11: 30,  # Brand Name
-            12: 30,  # Generic Name
-            13: 20,  # Dosage Strength
-            14: 30,  # Dosage Form and Route
-            15: 22,  # Classification
-            16: 20,  # Essential Drug List
-            17: 25,  # Pharmacologic Category
-            18: 30,  # Manufacturer
-            19: 40,  # Manufacturer Address
-            20: 15,  # Manufacturer TIN
-            21: 20,  # Manufacturer LTO No.
-            22: 20,  # Manufacturer Country
-            23: 30,  # Trader
-            24: 40,  # Trader Address
-            25: 15,  # Trader TIN
-            26: 20,  # Trader LTO No.
-            27: 20,  # Trader Country
-            28: 30,  # Repacker
-            29: 40,  # Repacker Address
-            30: 15,  # Repacker TIN
-            31: 20,  # Repacker LTO No.
-            32: 20,  # Repacker Country
-            33: 30,  # Importer
-            34: 40,  # Importer Address
-            35: 15,  # Importer TIN
-            36: 20,  # Importer LTO No.
-            37: 20,  # Importer Country
-            38: 30,  # Distributor
-            39: 40,  # Distributor Address
-            40: 15,  # Distributor TIN
-            41: 20,  # Distributor LTO No.
-            42: 20,  # Distributor Country
-            43: 20,  # Shelf Life
-            44: 25,  # Storage Condition
-            45: 25,  # Packaging
-            46: 20,  # Suggested Retail Price
-            47: 22,  # Registration Number
-            48: 20,  # Application Type
-            49: 25,  # Mother Application Type
-            50: 20,  # Old RSN/ Other DTN
-            51: 15,  # Amendment 1
-            52: 15,  # Amendment 2
-            53: 15,  # Amendment 3
-            54: 20,  # Product Category
-            55: 20,  # Certification
-            56: 12,  # Fee
-            57: 12,  # LRF
-            58: 12,  # SURC
-            59: 12,  # Total
-            60: 18,  # OR No.
-            61: 18,  # Date Issued
-            62: 35,  # Date Received FDAC
-            63: 35,  # Date Received CDRR
-            64: 12,  # MO
-            65: 12,  # FILE COPY
-            66: 18,  # SECPA No.
-            67: 18,  # Expiry Date
-            68: 18,  # Issued On
-            69: 45,  # Remarks 1
-            70: 20,  # Date of Remarks
-            71: 15,  # Class
-            72: 25,  # Date Released
-            73: 25,  # Type of Document Released
-            74: 35,  # Attachment Released
-            75: 40,  # CPR Condition
-            76: 30,  # CPR Cond Remarks
-            77: 35,  # CPR Cond Additional Remarks
-            78: 20,  # App Status
-            79: 30,  # App Remarks
-            80: 18,  # Timeline (Days)
-        }
-        # ── Widths for the dynamic LOG_STEPS columns (Name/Decision/Remarks/Date x 10 steps) ──
-        _log_col_width_cycle = [25, 22, 30, 20]  # Name, Decision, Remarks, Date
-        for offset in range(len(LOG_HEADERS)):
-            FIXED_WIDTHS[80 + 1 + offset] = _log_col_width_cycle[offset % 4]
-        FIXED_WIDTHS[80 + len(LOG_HEADERS) + 1] = 20  # Entry Type
-
-        for col_idx in range(1, len(HEADERS) + 1):
-            width = FIXED_WIDTHS.get(col_idx, 20)
-            ws.column_dimensions[get_column_letter(col_idx)].width = width
-
-        # ── Map absolute column index → pastel fill color, for the LOG_STEPS columns ──
-        LOG_COLUMN_FILL_BY_INDEX = {
-            80 + 1 + offset: LOG_COLUMN_FILLS[offset]
-            for offset in range(len(LOG_HEADERS))
-        }
-
-        # ── Header row ──
         log_header_font = Font(bold=True, color="000000", size=10)
 
         header_cells = []
@@ -1859,98 +1840,20 @@ async def export_filtered_records(
             header_cells.append(c)
         ws.append(header_cells)
 
-        # ── Data rows — alternate row color ──
         even_fill = PatternFill(
             start_color="EBF3FB", end_color="EBF3FB", fill_type="solid"
         )
         data_align = Alignment(vertical="center")
+        dtn_col_idx = next(
+            (i + 1 for i, (cid, *_r) in enumerate(selected_main_cols) if cid == "dtn"),
+            None,
+        )
 
         for row_idx, record in enumerate(records, start=2):
             step_logs = latest_by_step.get(record.DB_ID, {})
+            values = [getter(record) for _, _, getter, _ in selected_main_cols]
 
-            values = [
-                record.DB_PROCESSING_TYPE,
-                str(record.DB_DTN) if record.DB_DTN else None,
-                record.DB_EST_CAT,
-                record.DB_EST_LTO_COMP,
-                record.DB_EST_LTO_ADD,
-                record.DB_EST_EADD,
-                record.DB_EST_TIN,
-                record.DB_EST_CONTACT_NO,
-                record.DB_EST_LTO_NO,
-                record.DB_EST_VALIDITY,
-                record.DB_PROD_BR_NAME,
-                record.DB_PROD_GEN_NAME,
-                record.DB_PROD_DOS_STR,
-                record.DB_PROD_DOS_FORM,
-                record.DB_PROD_CLASS_PRESCRIP,
-                record.DB_PROD_ESS_DRUG_LIST,
-                record.DB_PROD_PHARMA_CAT,
-                record.DB_PROD_MANU,
-                record.DB_PROD_MANU_ADD,
-                record.DB_PROD_MANU_TIN,
-                record.DB_PROD_MANU_LTO_NO,
-                record.DB_PROD_MANU_COUNTRY,
-                record.DB_PROD_TRADER,
-                record.DB_PROD_TRADER_ADD,
-                record.DB_PROD_TRADER_TIN,
-                record.DB_PROD_TRADER_LTO_NO,
-                record.DB_PROD_TRADER_COUNTRY,
-                record.DB_PROD_REPACKER,
-                record.DB_PROD_REPACKER_ADD,
-                record.DB_PROD_REPACKER_TIN,
-                record.DB_PROD_REPACKER_LTO_NO,
-                record.DB_PROD_REPACKER_COUNTRY,
-                record.DB_PROD_IMPORTER,
-                record.DB_PROD_IMPORTER_ADD,
-                record.DB_PROD_IMPORTER_TIN,
-                record.DB_PROD_IMPORTER_LTO_NO,
-                record.DB_PROD_IMPORTER_COUNTRY,
-                record.DB_PROD_DISTRI,
-                record.DB_PROD_DISTRI_ADD,
-                record.DB_PROD_DISTRI_TIN,
-                record.DB_PROD_DISTRI_LTO_NO,
-                record.DB_PROD_DISTRI_COUNTRY,
-                record.DB_PROD_DISTRI_SHELF_LIFE,
-                record.DB_STORAGE_COND,
-                record.DB_PACKAGING,
-                record.DB_SUGG_RP,
-                record.DB_REG_NO,
-                record.DB_APP_TYPE,
-                record.DB_MOTHER_APP_TYPE,
-                record.DB_OLD_RSN,
-                record.DB_AMMEND1,
-                record.DB_AMMEND2,
-                record.DB_AMMEND3,
-                record.DB_PROD_CAT,
-                record.DB_CERTIFICATION,
-                record.DB_FEE,
-                record.DB_LRF,
-                record.DB_SURC,
-                record.DB_TOTAL,
-                record.DB_OR_NO,
-                record.DB_DATE_ISSUED,
-                record.DB_DATE_RECEIVED_FDAC,
-                record.DB_DATE_RECEIVED_CENT,
-                record.DB_MO,
-                record.DB_FILE,
-                record.DB_SECPA,
-                record.DB_SECPA_EXP_DATE,
-                record.DB_SECPA_ISSUED_ON,
-                record.DB_REMARKS_1,
-                record.DB_DATE_REMARKS,
-                record.DB_CLASS,
-                record.DB_DATE_RELEASED,
-                record.DB_TYPE_DOC_RELEASED,
-                record.DB_ATTA_RELEASED,
-                record.DB_CPR_COND,
-                record.DB_CPR_COND_REMARKS,
-                record.DB_CPR_COND_ADD_REMARKS,
-                record.DB_APP_STATUS,
-                record.DB_APP_REMARKS,
-                record.DB_TIMELINE_CITIZEN_CHARTER,
-            ]
-            for step_label, *_rest in LOG_STEPS:
+            for step_label, *_rest in selected_log_steps:
                 log = step_logs.get(step_label)
                 values += [
                     _log_user_name(log) if log else None,
@@ -1962,7 +1865,9 @@ async def export_filtered_records(
                         else None
                     ),
                 ]
-            values.append(record.DB_ENTRY_TYPE)
+
+            if include_entry_type:
+                values.append(record.DB_ENTRY_TYPE)
 
             is_even = row_idx % 2 == 0
             row_cells = []
@@ -1970,7 +1875,6 @@ async def export_filtered_records(
                 c = WriteOnlyCell(ws, value=val)
                 c.alignment = data_align
                 if col_idx in LOG_COLUMN_FILL_BY_INDEX:
-                    # ── Lighter tint ng parehong per-step color, pare-pareho sa buong column ──
                     c.fill = PatternFill(
                         start_color=LOG_COLUMN_FILL_BY_INDEX[col_idx],
                         end_color=LOG_COLUMN_FILL_BY_INDEX[col_idx],
@@ -1978,13 +1882,11 @@ async def export_filtered_records(
                     )
                 elif is_even:
                     c.fill = even_fill
-                # ✅ DTN column (col 2) — force text format
-                if col_idx == 2 and val is not None:
+                if dtn_col_idx and col_idx == dtn_col_idx and val is not None:
                     c.number_format = "@"
                 row_cells.append(c)
             ws.append(row_cells)
 
-        # ── Save to buffer and stream ──
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
@@ -2003,9 +1905,7 @@ async def export_filtered_records(
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={
                 "Content-Disposition": f"attachment; filename={filename}",
-                "Content-Length": str(
-                    output.getbuffer().nbytes
-                ),  # ✅ enables real % on frontend
+                "Content-Length": str(output.getbuffer().nbytes),
             },
         )
 
@@ -2019,6 +1919,25 @@ async def export_filtered_records(
         raise HTTPException(
             status_code=500, detail=f"Failed to export records: {str(e)}"
         )
+
+
+@router.get("/export-columns")
+def get_export_columns():
+    """List of columns available for export selection"""
+    cols = [
+        {"id": cid, "label": label, "group": "Main"}
+        for cid, label, _, _ in EXPORT_COLUMNS
+    ]
+    cols += [
+        {
+            "id": _log_step_export_id(step[0]),
+            "label": step[0],
+            "group": "Application Log",
+        }
+        for step in LOG_STEPS
+    ]
+    cols.append({"id": "entry_type", "label": "Entry Type", "group": "Main"})
+    return {"columns": cols}
 
 
 @router.get("/{record_id}", response_model=MainDBResponse)
