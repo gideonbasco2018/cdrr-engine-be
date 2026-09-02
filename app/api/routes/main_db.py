@@ -26,7 +26,7 @@ from app.crud.main_db import (
     get_upload_history_paginated,
 )
 from app.models.main_db import MainDB
-from app.models.application_delegation import ApplicationDelegation
+
 from app.models.application_logs import ApplicationLogs
 from app.core.deps import get_current_active_user
 from app.models.user import User
@@ -1566,6 +1566,55 @@ async def export_filtered_records(
 
         print(f"📊 Exporting {total} records")
 
+        # ── Latest log per LOG_STEPS role (Decker, Evaluator, S&E, Checker, etc.) ──
+        from sqlalchemy.orm import joinedload
+
+        main_db_ids = [r.DB_ID for r in records]
+
+        # LOG_STEPS entries: (step_label, user_col, id_col, decision_col, remarks_col, date_col, thread_col, del_idx)
+        ALL_LOG_STEP_LABELS = [step[0] for step in LOG_STEPS]
+
+        logs = (
+            db.query(ApplicationLogs)
+            .options(joinedload(ApplicationLogs.user))
+            .filter(ApplicationLogs.main_db_id.in_(main_db_ids))
+            .filter(ApplicationLogs.application_step.in_(ALL_LOG_STEP_LABELS))
+            .order_by(ApplicationLogs.main_db_id, ApplicationLogs.created_at.desc())
+            .all()
+        )
+
+        def _log_user_name(log):
+            if log.user:
+                name = f"{log.user.first_name or ''} {log.user.surname or ''}".strip()
+                if name:
+                    return name
+            return log.user_name
+
+        # {main_db_id: {step_label: log}}
+        latest_by_step = {}
+        for log in logs:
+            if log.application_step not in ALL_LOG_STEP_LABELS:
+                continue
+            bucket = latest_by_step.setdefault(log.main_db_id, {})
+            if (
+                log.application_step not in bucket
+            ):  # naka-sort na desc → una wins (latest)
+                bucket[log.application_step] = log
+
+        # ── Per-step pastel colors for header + data cells (para agad makilala) ──
+        LOG_STEP_COLORS = [
+            "FFF2CC",  # Decking            — yellow
+            "D9EAD3",  # Quality Evaluation — green
+            "FDE2C8",  # S&E                — peach
+            "CFE2F3",  # Checking           — blue
+            "EAD1DC",  # Supervisor         — pink
+            "D9D2E9",  # QA Admin           — purple
+            "FCE5CD",  # LRD Chief Admin    — orange
+            "D0E4F7",  # OD-Receiving       — light blue
+            "F4CCCC",  # OD-Releasing       — rose
+            "C9DAF8",  # Releasing Officer  — blue-gray
+        ]
+
         if not records:
             raise HTTPException(status_code=404, detail="No records found to export")
 
@@ -1660,19 +1709,26 @@ async def export_filtered_records(
             "App Status",
             "App Remarks",
             "Timeline (Days)",
-            "Evaluator",
-            "Evaluator Decision",
-            "Evaluator Remarks",
-            "Date Eval End",
-            "Decker",
-            "Decker Decision",
-            "Decker Remarks",
-            "Date Decked End",
-            "Checker",
-            "Checker Decision",
-            "Date Checker End",
-            "Entry Type",
         ]
+
+        # ── Dynamically append 4 columns per LOG_STEPS role: Name, Decision, Remarks, Date End ──
+        LOG_HEADERS = []
+        LOG_COLUMN_FILLS = []  # parallel list — fill color per log header/data column
+        for step_idx, (
+            step_label,
+            user_col,
+            id_col,
+            decision_col,
+            remarks_col,
+            date_col,
+            thread_col,
+            del_idx,
+        ) in enumerate(LOG_STEPS):
+            color = LOG_STEP_COLORS[step_idx % len(LOG_STEP_COLORS)]
+            LOG_HEADERS += [user_col, decision_col, remarks_col, date_col]
+            LOG_COLUMN_FILLS += [color, color, color, color]
+
+        HEADERS += LOG_HEADERS + ["Entry Type"]
 
         # ── Header row with styling ──
         from openpyxl.cell import WriteOnlyCell
@@ -1685,7 +1741,6 @@ async def export_filtered_records(
         header_font = Font(bold=True, color="FFFFFF", size=10)
         header_align = Alignment(horizontal="center", vertical="center")
 
-        # ── Set ALL column widths BEFORE appending rows (required for write_only) ──
         FIXED_WIDTHS = {
             1: 18,  # Processing Type
             2: 22,  # DTN
@@ -1767,28 +1822,39 @@ async def export_filtered_records(
             78: 20,  # App Status
             79: 30,  # App Remarks
             80: 18,  # Timeline (Days)
-            81: 25,  # Evaluator
-            82: 22,  # Evaluator Decision
-            83: 30,  # Evaluator Remarks
-            84: 20,  # Date Eval End
-            85: 25,  # Decker
-            86: 22,  # Decker Decision
-            87: 30,  # Decker Remarks
-            88: 20,  # Date Decked End
-            89: 25,  # Checker
-            90: 22,  # Checker Decision
-            91: 20,  # Date Checker End
         }
+        # ── Widths for the dynamic LOG_STEPS columns (Name/Decision/Remarks/Date x 10 steps) ──
+        _log_col_width_cycle = [25, 22, 30, 20]  # Name, Decision, Remarks, Date
+        for offset in range(len(LOG_HEADERS)):
+            FIXED_WIDTHS[80 + 1 + offset] = _log_col_width_cycle[offset % 4]
+        FIXED_WIDTHS[80 + len(LOG_HEADERS) + 1] = 20  # Entry Type
+
         for col_idx in range(1, len(HEADERS) + 1):
             width = FIXED_WIDTHS.get(col_idx, 20)
             ws.column_dimensions[get_column_letter(col_idx)].width = width
 
+        # ── Map absolute column index → pastel fill color, for the LOG_STEPS columns ──
+        LOG_COLUMN_FILL_BY_INDEX = {
+            80 + 1 + offset: LOG_COLUMN_FILLS[offset]
+            for offset in range(len(LOG_HEADERS))
+        }
+
         # ── Header row ──
+        log_header_font = Font(bold=True, color="000000", size=10)
+
         header_cells = []
-        for h in HEADERS:
+        for col_idx, h in enumerate(HEADERS, start=1):
             c = WriteOnlyCell(ws, value=h)
-            c.fill = header_fill
-            c.font = header_font
+            if col_idx in LOG_COLUMN_FILL_BY_INDEX:
+                c.fill = PatternFill(
+                    start_color=LOG_COLUMN_FILL_BY_INDEX[col_idx],
+                    end_color=LOG_COLUMN_FILL_BY_INDEX[col_idx],
+                    fill_type="solid",
+                )
+                c.font = log_header_font
+            else:
+                c.fill = header_fill
+                c.font = header_font
             c.alignment = header_align
             header_cells.append(c)
         ws.append(header_cells)
@@ -1800,11 +1866,7 @@ async def export_filtered_records(
         data_align = Alignment(vertical="center")
 
         for row_idx, record in enumerate(records, start=2):
-            delegation = (
-                record.application_delegation
-                if hasattr(record, "application_delegation")
-                else None
-            )
+            step_logs = latest_by_step.get(record.DB_ID, {})
 
             values = [
                 record.DB_PROCESSING_TYPE,
@@ -1887,38 +1949,34 @@ async def export_filtered_records(
                 record.DB_APP_STATUS,
                 record.DB_APP_REMARKS,
                 record.DB_TIMELINE_CITIZEN_CHARTER,
-                delegation.DB_EVALUATOR if delegation else None,
-                delegation.DB_EVAL_DECISION if delegation else None,
-                delegation.DB_EVAL_REMARKS if delegation else None,
-                (
-                    str(delegation.DB_DATE_EVAL_END)
-                    if delegation and delegation.DB_DATE_EVAL_END
-                    else None
-                ),
-                delegation.DB_DECKER if delegation else None,
-                delegation.DB_DECKER_DECISION if delegation else None,
-                delegation.DB_DECKER_REMARKS if delegation else None,
-                (
-                    str(delegation.DB_DATE_DECKED_END)
-                    if delegation and delegation.DB_DATE_DECKED_END
-                    else None
-                ),
-                delegation.DB_CHECKER if delegation else None,
-                delegation.DB_CHECKER_DECISION if delegation else None,
-                (
-                    str(delegation.DB_DATE_CHECKER_END)
-                    if delegation and delegation.DB_DATE_CHECKER_END
-                    else None
-                ),
-                record.DB_ENTRY_TYPE,
             ]
+            for step_label, *_rest in LOG_STEPS:
+                log = step_logs.get(step_label)
+                values += [
+                    _log_user_name(log) if log else None,
+                    log.application_decision if log else None,
+                    log.application_remarks if log else None,
+                    (
+                        str(log.accomplished_date)
+                        if log and log.accomplished_date
+                        else None
+                    ),
+                ]
+            values.append(record.DB_ENTRY_TYPE)
 
             is_even = row_idx % 2 == 0
             row_cells = []
             for col_idx, val in enumerate(values, start=1):
                 c = WriteOnlyCell(ws, value=val)
                 c.alignment = data_align
-                if is_even:
+                if col_idx in LOG_COLUMN_FILL_BY_INDEX:
+                    # ── Lighter tint ng parehong per-step color, pare-pareho sa buong column ──
+                    c.fill = PatternFill(
+                        start_color=LOG_COLUMN_FILL_BY_INDEX[col_idx],
+                        end_color=LOG_COLUMN_FILL_BY_INDEX[col_idx],
+                        fill_type="solid",
+                    )
+                elif is_even:
                     c.fill = even_fill
                 # ✅ DTN column (col 2) — force text format
                 if col_idx == 2 and val is not None:
