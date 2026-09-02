@@ -646,6 +646,25 @@ def build_application_history_entries(
     ]
 
 
+def _dedupe_latest_per_main_db(rows):
+    """
+    Given (log, main, target, dtarget) rows for ONE member, keep only the
+    row with the most recent created_at per main_db_id. If the member
+    touched the same application twice (e.g. Evaluator -> Checker ->
+    back to Evaluator), only the latest pass shows as "their" task/
+    target — reflects current standing instead of showing two rows for
+    the same application. The earlier pass is still visible via
+    application_history, just not duplicated as a second top-level row.
+    """
+    latest = {}
+    for row in rows:
+        log, main = row[0], row[1]
+        key = main.DB_ID
+        if key not in latest or log.created_at > latest[key][0].created_at:
+            latest[key] = row
+    return list(latest.values())
+
+
 def get_member_tasks(db: Session, member_user_id: int) -> List[MemberTaskOut]:
 
     rows = (
@@ -653,22 +672,29 @@ def get_member_tasks(db: Session, member_user_id: int) -> List[MemberTaskOut]:
         .join(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
         .outerjoin(
             TargetAssignment,
-            # Match by main_db_id (the application), NOT application_log_id
-            # (one step's log row). A step transition creates a NEW
-            # ApplicationLogs row with a new id, so matching on
-            # application_log_id makes the target "disappear" the moment
-            # the task advances to its next step.
+            # Match by main_db_id AND member_user_id — a target belongs
+            # to a specific PERSON on a specific application, not to the
+            # application as a whole. Without the member check, a step
+            # that briefly passes through another user (e.g. sent to
+            # Checker for review) would incorrectly inherit the
+            # Evaluator's target/completed status.
             (TargetAssignment.main_db_id == ApplicationLogs.main_db_id)
+            & (TargetAssignment.member_user_id == ApplicationLogs.user_id)
             & (TargetAssignment.is_active == True),  # noqa: E712
         )
         .outerjoin(
             DirectorsTarget,
+            # Same reasoning as TargetAssignment above — CDRR Target is
+            # also captured per-member at targeting time.
             (DirectorsTarget.main_db_id == ApplicationLogs.main_db_id)
+            & (DirectorsTarget.member_user_id == ApplicationLogs.user_id)
             & (DirectorsTarget.is_active == True),  # noqa: E712
         )
         .filter(ApplicationLogs.user_id == member_user_id)
         .all()
     )
+
+    rows = _dedupe_latest_per_main_db(rows)
 
     main_db_ids = list({main.DB_ID for _, main, _, _ in rows})
     history_map = get_application_history_map(db, main_db_ids)
@@ -709,11 +735,13 @@ def get_member_targeted_tasks(db: Session, member_user_id: int) -> List[MemberTa
         .join(
             TargetAssignment,
             (TargetAssignment.main_db_id == ApplicationLogs.main_db_id)
+            & (TargetAssignment.member_user_id == ApplicationLogs.user_id)
             & (TargetAssignment.is_active == True),  # noqa: E712
         )
         .outerjoin(
             DirectorsTarget,
             (DirectorsTarget.main_db_id == ApplicationLogs.main_db_id)
+            & (DirectorsTarget.member_user_id == ApplicationLogs.user_id)
             & (DirectorsTarget.is_active == True),  # noqa: E712
         )
         .filter(ApplicationLogs.user_id == member_user_id)
@@ -764,13 +792,23 @@ def get_active_target_by_log(
     )
 
 
-def get_target_by_log(
-    db: Session, application_log_id: int
+def get_target_for_member(
+    db: Session, main_db_id: int, member_user_id: int
 ) -> Optional[TargetAssignment]:
-    """Fetches the row regardless of is_active — used to decide upsert vs insert."""
+    """
+    Fetches the target row for THIS member on THIS application, regardless
+    of is_active — used to decide upsert vs insert. Scoped by
+    (main_db_id, member_user_id) instead of application_log_id, so
+    re-marking as target after the task moves to a new step (new log_id,
+    same application, same member) updates the existing row instead of
+    creating a duplicate.
+    """
     return (
         db.query(TargetAssignment)
-        .filter(TargetAssignment.application_log_id == application_log_id)
+        .filter(
+            TargetAssignment.main_db_id == main_db_id,
+            TargetAssignment.member_user_id == member_user_id,
+        )
         .first()
     )
 
@@ -783,7 +821,7 @@ def mark_as_target(
     lead_user_id: int,
     payload: TargetAssignmentCreate,
 ) -> TargetAssignment:
-    existing = get_target_by_log(db, payload.application_log_id)
+    existing = get_target_for_member(db, log.main_db_id, log.user_id)
 
     if existing:
         existing.is_active = True
@@ -850,7 +888,7 @@ def bulk_mark_as_target(
 
     for log in logs:
         lead_assignment = lead_assignment_by_member[log.user_id]
-        existing = get_target_by_log(db, log.id)
+        existing = get_target_for_member(db, log.main_db_id, log.user_id)
 
         if existing:
             existing.is_active = True
@@ -1223,11 +1261,13 @@ def get_member_in_progress_tasks_paginated(
         .outerjoin(
             TargetAssignment,
             (TargetAssignment.main_db_id == ApplicationLogs.main_db_id)
+            & (TargetAssignment.member_user_id == ApplicationLogs.user_id)
             & (TargetAssignment.is_active == True),  # noqa: E712
         )
         .outerjoin(
             DirectorsTarget,
             (DirectorsTarget.main_db_id == ApplicationLogs.main_db_id)
+            & (DirectorsTarget.member_user_id == ApplicationLogs.user_id)
             & (DirectorsTarget.is_active == True),  # noqa: E712
         )
         .filter(

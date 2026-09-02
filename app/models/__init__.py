@@ -28,6 +28,7 @@ from app.models.oauth_otp import OAuthOTP
 from app.models.cpr_app_history import CPRAppHistory
 from app.models.cpr_app_parties import CPRAppParty
 from app.models.cpr_application import CPRApplication
+from app.models.cpr_app_document import CPRAppDocument
 
 __all__ = [
     "MainDB",
@@ -60,4 +61,5 @@ __all__ = [
     "CPRAppHistory",
     "CPRAppParty",
     "CPRApplication",
+    "CPRAppDocument",
 ]
