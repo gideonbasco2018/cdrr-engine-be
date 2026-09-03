@@ -323,7 +323,6 @@ def get_latest_document_log_by_id(
         FROM document_tracker.docreceivinglogtbl
         WHERE docrecID = :docrecID
         ORDER BY logdate DESC, logID DESC
-        LIMIT 1
     """)
     row = db.execute(query, {"docrecID": docrecID}).mappings().first()
     return dict(row) if row else None
