@@ -42,6 +42,7 @@ from app.api.routes import (
     cpr_applications,
     cpr_app_document,
     priority_meds,
+    doctrack_system,
 )
 
 api_router = APIRouter()
@@ -83,3 +84,4 @@ api_router.include_router(oauth.router)
 api_router.include_router(cpr_applications.router)
 api_router.include_router(cpr_app_document.router)
 api_router.include_router(priority_meds.router)
+api_router.include_router(doctrack_system.router)
