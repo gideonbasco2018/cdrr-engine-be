@@ -73,7 +73,7 @@ class ApplicationCreate(BaseModel):
     # ── initial history entry ──
     application_step: Optional[str] = None
     current_status: Optional[str] = None
-    start_date: Optional[str] = None
+    start_date: Optional[datetime] = None
     step_duedate: Optional[str] = None
 
 
