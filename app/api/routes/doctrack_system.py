@@ -15,7 +15,7 @@ from app.db.deps import DBSessionDep
 from app.core.security_external import verify_doctrack_bearer_token
 from app.crud.doctrack import (
     get_document_by_rsn,
-    get_document_log_by_id,
+    get_latest_document_log_by_id,
 )
 from app.schemas.doctrack import DoctrackFullDetailsResponse
 
@@ -57,12 +57,11 @@ def get_doctrack_full_details(
             status_code=500, detail=f"Document found for RSN {rsn} but missing docrecID"
         )
 
-    logs = get_document_log_by_id(db, str(docrec_id)) or []
+    latest_log = get_latest_document_log_by_id(db, str(docrec_id))
 
     return DoctrackFullDetailsResponse(
         rsn=rsn,
         docrecID=docrec_id,
         document=document,
-        logs=logs,
-        log_count=len(logs),
+        latest_log=latest_log,
     )
