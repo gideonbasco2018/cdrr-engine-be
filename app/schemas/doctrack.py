@@ -58,8 +58,7 @@ class DoctrackFullDetailsResponse(BaseModel):
     rsn: str
     docrecID: int
     document: dict
-    logs: List[dict]
-    log_count: int
+    latest_log: Optional[dict] = None
 
     class Config:
         from_attributes = True
