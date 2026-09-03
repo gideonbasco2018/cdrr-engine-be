@@ -27,7 +27,6 @@ from app.schemas.doctrack import (
     DocumentLogResponse,
     SingleDoctrackLogByRsnRequest,
     BulkDoctrackLogByRsnRequest,
-    DoctrackFullDetailsResponse,
 )
 
 router = APIRouter(
@@ -499,48 +498,3 @@ def create_bulk_logs_by_rsn_with_user(
         "inserted": [serialize_row(r) for r in result["inserted"]],
         "failed": result["failed"],
     }
-
-
-# ─────────────────────────────────────────────
-# NEW: GET /api/doctrack/full-details
-# Combined lookup: RSN → docrecID → logs (single call for frontend)
-# ─────────────────────────────────────────────
-@router.get("/full-details", response_model=DoctrackFullDetailsResponse)
-def get_doctrack_full_details(
-    db: DBSessionDep,
-    rsn: str = Query(..., description="14-digit Doctrack Number"),
-):
-    """
-    Combined endpoint for the frontend — a single call to get both the
-    document info and all its logs, instead of calling two separate endpoints.
-
-    Flow:
-      1. Look up the document using the RSN → get the docrecID
-      2. Use the docrecID to look up all logs
-
-    Sample: GET /api/doctrack/full-details?rsn=20260210154947
-    """
-    # Step 1: RSN → document (contains docrecID)
-    documents = get_document_by_rsn(db, rsn)
-    if not documents:
-        raise HTTPException(status_code=404, detail=f"No document found for RSN {rsn}")
-
-    # take the first match — an RSN should only have one document
-    document = documents[0]
-    docrec_id = document.get("docrecID")
-
-    if not docrec_id:
-        raise HTTPException(
-            status_code=500, detail=f"Document found for RSN {rsn} but missing docrecID"
-        )
-
-    # Step 2: docrecID → logs
-    logs = get_document_log_by_id(db, str(docrec_id)) or []
-
-    return DoctrackFullDetailsResponse(
-        rsn=rsn,
-        docrecID=docrec_id,
-        document=document,
-        logs=logs,
-        log_count=len(logs),
-    )
