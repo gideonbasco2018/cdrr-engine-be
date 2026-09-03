@@ -68,6 +68,8 @@ class Settings:
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
     # External system auth (for machine-to-machine endpoints like /api/applications/)
     EXTERNAL_SYSTEM_TOKEN = os.getenv("EXTERNAL_SYSTEM_TOKEN")
+    # External system auth (for machine-to-machine Doctrack endpoints)
+    EXTERNAL_DOCTRACK_TOKEN = os.getenv("EXTERNAL_DOCTRACK_TOKEN")
 
 
 settings = Settings()
