@@ -7,18 +7,20 @@ from typing import Optional, List
 import math
 import io
 from app.db.session import get_db
+from sqlalchemy.exc import IntegrityError
 from app.schemas.gmp_record import (
     GMPRecordCreate, GMPRecordUpdate, GMPRecordResponse, GMPRecordListResponse,
     GMPRecordSummary, GMPApplicationLogResponse, GMPFieldAuditLogResponse,
     GMPAdvanceStepRequest, GMPTaskListResponse,
     GMPApplicationLogUpdate, GMPReassignRequest, GMPRerouteRequest,
     GMPAddIssuanceRequest, GMPIssuanceFieldsUpdate, GMPReopenRequest,
+    GMPResolveOrCreateByDtnRequest, GMPResolveOrCreateByDtnResponse,
 )
 from app.crud import gmp_record as crud
 from app.crud import gmp_logs
 from app.crud.gmp_record import (
     get_gmp_records, get_gmp_logs, GMP_LOG_STEPS, GMP_STEP_DEL_INDEX,
-    resolve_next_step,
+    resolve_next_step, gmp_actions_for_step,
 )
 from app.models.gmp_record import GMPRecord
 from app.core.deps import get_current_active_user
@@ -404,7 +406,18 @@ def get_summary(db: Session = Depends(get_db)):
 # ── Log step definitions (static) ─────────────────────────────────────────────
 @router.get("/log-steps")
 def get_log_steps():
-    return {"steps": [{"label": label, "del_index": idx} for label, idx in GMP_LOG_STEPS]}
+    # `actions` is derived from GMP_ACTION_ROUTES and is the single source of
+    # truth for the WorkflowModal Action dropdown — see gmp_actions_for_step().
+    return {
+        "steps": [
+            {
+                "label": label,
+                "del_index": idx,
+                "actions": gmp_actions_for_step(label),
+            }
+            for label, idx in GMP_LOG_STEPS
+        ]
+    }
 
 
 # ── Tasks for current user (static — must be before /{record_id}) ─────────────
@@ -418,10 +431,11 @@ def get_my_gmp_tasks(
     current_user: User = Depends(get_current_active_user),
 ):
     username = getattr(current_user, "username", None)
-    if not username:
+    user_id = getattr(current_user, "id", None)
+    if not username and user_id is None:
         return {"total": 0, "page": page, "page_size": page_size, "total_pages": 0, "data": []}
     logs, total = gmp_logs.get_tasks_for_user(
-        db, username, application_step, is_received, page, page_size
+        db, username, application_step, is_received, page, page_size, user_id=user_id
     )
     total_pages = math.ceil(total / page_size) if total > 0 else 0
     return {
@@ -436,9 +450,10 @@ def get_my_gmp_task_count(
     current_user: User = Depends(get_current_active_user),
 ):
     username = getattr(current_user, "username", None)
-    if not username:
+    user_id = getattr(current_user, "id", None)
+    if not username and user_id is None:
         return {"count": 0}
-    count = gmp_logs.get_task_count_for_user(db, username)
+    count = gmp_logs.get_task_count_for_user(db, username, user_id=user_id)
     return {"count": count}
 
 
@@ -519,6 +534,62 @@ def create_record(
         user_name=getattr(current_user, "username", None),
         user_id=getattr(current_user, "id", None),
     )
+
+
+# ── Resolve-or-create a record by DTN (FGMP batch folder upload) ──────────────
+@router.post("/resolve-or-create-by-dtn", response_model=GMPResolveOrCreateByDtnResponse)
+def resolve_or_create_by_dtn(
+    req: GMPResolveOrCreateByDtnRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Return the record a DTN's uploaded documents should attach to.
+
+    Any non-deleted record for the DTN (primary or a sibling reference number)
+    is reused — a fresh record is created ONLY when the DTN has none at all.
+    This is called at upload time, so it also absorbs the case where the record
+    was created/deleted between staging the files and clicking Upload.
+    """
+    try:
+        dtn_int = int(str(req.dtn).strip())
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="dtn must be a numeric DTN.")
+
+    def _live_record_for_dtn():
+        return (
+            db.query(GMPRecord)
+            .filter(
+                GMPRecord.GMP_DTN == dtn_int,
+                or_(GMPRecord.GMP_TRASH.is_(None), GMPRecord.GMP_TRASH != "deleted"),
+            )
+            .order_by(GMPRecord.GMP_ID.asc())
+            .first()
+        )
+
+    existing = _live_record_for_dtn()
+    if existing:
+        return {"record": existing, "created": False}
+
+    payload = GMPRecordCreate(
+        GMP_DTN=dtn_int,
+        **({"GMP_LTO_COMPANY": req.company} if req.company else {}),
+        **({"GMP_TRANSACTION_TYPE": req.transaction_type} if req.transaction_type else {}),
+    )
+    try:
+        created = crud.create_gmp_record(
+            db, payload,
+            user_name=getattr(current_user, "username", None),
+            user_id=getattr(current_user, "id", None),
+        )
+        return {"record": created, "created": True}
+    except IntegrityError:
+        # Lost a race — GMP_REFERENCE_NO is unique, so a concurrent create for
+        # the same DTN's "-01" trips this. Fall back to whatever now exists.
+        db.rollback()
+        existing = _live_record_for_dtn()
+        if existing:
+            return {"record": existing, "created": False}
+        raise
 
 
 # ── Single record — GET / PUT / DELETE /{record_id} ───────────────────────────
@@ -916,6 +987,9 @@ async def upload_gmp_excel(
 
             record_data["GMP_USER_UPLOADER"]    = username
             record_data["GMP_DATE_EXCEL_UPLOAD"] = crud._now()
+            # Blank TIMELINE column → fill from CATEGORY (PIC/S 60 / NON PIC/S
+            # 153 working days). A value in the sheet is kept as-is.
+            crud._apply_category_timeline(record_data)
 
             db_record = GMPRecord(**record_data)
             db.add(db_record)

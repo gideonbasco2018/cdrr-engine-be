@@ -136,6 +136,22 @@ def get_logs_for_record(db: Session, gmp_record_id: int) -> List[GMPApplicationL
     return completed + in_progress
 
 
+def _assignee_match(username: Optional[str], user_id: Optional[int]):
+    """A log belongs to this user if EITHER its stored user_id matches (stable
+    across a username change) OR its user_name matches the current username
+    (covers legacy / self-loop / deck / Excel-imported logs that never got a
+    user_id). Kept as one helper so every task query stays in sync."""
+    clauses = []
+    if user_id is not None:
+        clauses.append(GMPApplicationLogs.user_id == user_id)
+    if username:
+        clauses.append(GMPApplicationLogs.user_name == username)
+    if not clauses:
+        # No identity to match on — return a never-true clause.
+        return GMPApplicationLogs.id.is_(None)
+    return or_(*clauses)
+
+
 def get_tasks_for_user(
     db: Session,
     username: str,
@@ -143,9 +159,11 @@ def get_tasks_for_user(
     is_received: Optional[int] = None,
     page: int = 1,
     page_size: int = 10000,
+    user_id: Optional[int] = None,
 ) -> Tuple[List[GMPApplicationLogs], int]:
     """
     Return all open tasks assigned to a user, joined with GMPRecord.
+    Matched by user_id OR user_name (see _assignee_match).
     Defensively restricted to PRIMARY ('-01') reference numbers only —
     sibling issuance records (added via Add Issuance) should never carry
     their own application logs going forward (see add_gmp_issuance in
@@ -157,7 +175,7 @@ def get_tasks_for_user(
         .join(GMPRecord, GMPApplicationLogs.gmp_record_id == GMPRecord.GMP_ID)
         .options(joinedload(GMPApplicationLogs.gmp_record))
         .filter(
-            GMPApplicationLogs.user_name == username,
+            _assignee_match(username, user_id),
             GMPApplicationLogs.del_thread == "Open",
             GMPApplicationLogs.del_last_index == 1,
             or_(GMPRecord.GMP_REFERENCE_NO.is_(None), GMPRecord.GMP_REFERENCE_NO.like("%-01")),
@@ -224,20 +242,18 @@ def get_task_counts_for_users(db: Session, usernames: List[str]) -> Dict[str, in
     return {name: count for name, count in rows}
 
 
-def get_task_count_for_user(db: Session, username: str) -> int:
+def get_task_count_for_user(db: Session, username: str, user_id: Optional[int] = None) -> int:
     """
-    Count of open tasks currently assigned to a user, across every step
-    (Decking, Quality Evaluator, Checker, QA Supervisor, QA Admin, etc.).
-    Uses the same del_thread="Open" + del_last_index=1 criteria as
-    get_tasks_for_user, so a task automatically drops out of this count
-    the moment it's decked/advanced/reassigned/rerouted (del_thread → "Close").
-    Same primary-only restriction as get_tasks_for_user above.
+    Count of open tasks currently assigned to a user, across every step.
+    Matched by user_id OR user_name, same criteria as get_tasks_for_user, so a
+    task drops out the moment it's decked/advanced/reassigned/rerouted
+    (del_thread → "Close"). Same primary-only restriction.
     """
     return (
         db.query(GMPApplicationLogs)
         .join(GMPRecord, GMPApplicationLogs.gmp_record_id == GMPRecord.GMP_ID)
         .filter(
-            GMPApplicationLogs.user_name == username,
+            _assignee_match(username, user_id),
             GMPApplicationLogs.del_thread == "Open",
             GMPApplicationLogs.del_last_index == 1,
             or_(GMPRecord.GMP_REFERENCE_NO.is_(None), GMPRecord.GMP_REFERENCE_NO.like("%-01")),
@@ -376,8 +392,8 @@ def advance_step(
     db.refresh(current_log)
 
     if not next_step_label:
-        # Final step — the workflow ends here (e.g. "Disapprove" at Decking/
-        # QA Admin/LRD Chief Admin, per GMP_ACTION_ROUTES in gmp_record.py).
+        # Final step — the workflow ends here (e.g. "Disapprove" at QA Admin /
+        # LRD Chief Admin, per GMP_ACTION_ROUTES in gmp_record.py).
         # Clear the record's current step — it is no longer actively at any
         # step — and, for a Disapprove action specifically, mark the record
         # itself DISAPPROVED. Without this, GMP_CURRENT_STEP was left
@@ -385,9 +401,9 @@ def advance_step(
         # which made it read as permanently "IN PROGRESS"/"on process" in
         # both the Queue Table (getEffectiveStatus()) and every GMP
         # analytics query that checks for an open current step. Other
-        # terminal actions (e.g. OD Releasing's release) already set
-        # GMP_APP_STATUS themselves via a prior record update from the
-        # frontend, so we don't overwrite it here.
+        # terminal actions (e.g. OD Releasing's release) set GMP_APP_STATUS
+        # themselves via a separate record update from the frontend (which
+        # WorkflowModal issues right after this call), so we don't set it here.
         record = db.query(GMPRecord).filter(GMPRecord.GMP_ID == gmp_record_id).first()
         if record:
             record.GMP_CURRENT_STEP = None

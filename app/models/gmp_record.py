@@ -49,7 +49,7 @@ class GMPRecord(Base):
     GMP_NOD_DATE_5 = Column(Date, nullable=True, comment="5th Date of NOD")
     GMP_DATE_PRINTED = Column(Date, nullable=True, comment="Date Printed")
     GMP_COMPLIANCE_DOCS_DATE_RECEIVED = Column(Date, nullable=True, comment="Compliance / Additional Docs Date Received")
-    GMP_PRODUCT_LINE = Column(String(100), nullable=True, index=True, comment="Product Line")
+    GMP_PRODUCT_LINE = Column(Text, nullable=True, index=True, comment="Product Line / Manufacturing Operation")
 
     # ── Workflow tracking ────────────────────────────────────────────────────
     GMP_CURRENT_STEP = Column(String(100), nullable=True, index=True, comment="Current Workflow Step")

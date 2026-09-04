@@ -90,7 +90,8 @@ GMP_FROO_ACTION = "Forwarded to CDRR FGMP"
 # entry here or advance-step will reject it with a 400 (see the route handler).
 GMP_ACTION_ROUTES: Dict[tuple, Optional[str]] = {
     ("Decking", "Forwarded to Evaluator"):        "Evaluator",
-    ("Decking", "Disapprove"):                    None,
+    # Decking only forwards — it cannot disapprove or hold. Disapproval happens
+    # later, at QA Admin / LRD Chief Admin (which keep their Disapprove routes).
 
     ("Evaluator", "Endorsed to Checker"):         "Checker",
     ("Evaluator", "Endorsed to QA Admin"):        "QA Admin",
@@ -132,6 +133,32 @@ def resolve_next_step(current_step: str, action: str) -> Tuple[bool, Optional[st
     if route_key not in GMP_ACTION_ROUTES:
         return False, None
     return True, GMP_ACTION_ROUTES[route_key]
+
+
+def gmp_actions_for_step(step: str) -> List[str]:
+    """Every action valid at `step`, derived straight from GMP_ACTION_ROUTES.
+
+    This is the single source of truth for "what may the UI offer at step X".
+    It is served to the frontend via GET /api/gmp/log-steps so the WorkflowModal
+    Action dropdown is built from it — the dropdown can never drift from routing
+    and therefore can never offer an action advance-step will 400 on.
+    """
+    return [action for (s, action) in GMP_ACTION_ROUTES if s == step]
+
+
+# ── Import-time consistency guard ─────────────────────────────────────────────
+# Fail fast on a malformed routing table: every non-terminal target must be a
+# real step label. Catches a typo in GMP_ACTION_ROUTES at startup instead of at
+# runtime when a user is mid-advance.
+_VALID_STEP_LABELS = {label for label, _ in GMP_LOG_STEPS}
+_BAD_ROUTE_TARGETS = [
+    (src, action, dst) for (src, action), dst in GMP_ACTION_ROUTES.items()
+    if dst is not None and dst not in _VALID_STEP_LABELS
+]
+assert not _BAD_ROUTE_TARGETS, (
+    f"GMP_ACTION_ROUTES points at unknown step label(s): {_BAD_ROUTE_TARGETS}. "
+    f"Valid labels: {sorted(_VALID_STEP_LABELS)}"
+)
 
 GMP_AUDIT_EXCLUDED_FIELDS = {
     "GMP_ID", "GMP_DATE_EXCEL_UPLOAD", "GMP_TRASH_DATE_ENCODED", "GMP_USER_UPLOADER",
@@ -577,6 +604,7 @@ def create_gmp_record(
         data["GMP_DATE_EXCEL_UPLOAD"] = _now()
     if data.get("GMP_DTN") and not data.get("GMP_REFERENCE_NO"):
         data["GMP_REFERENCE_NO"] = _next_reference_no(db, data["GMP_DTN"])
+    _apply_category_timeline(data)
     db_record = GMPRecord(**data)
     db.add(db_record)
     db.commit()
@@ -598,6 +626,14 @@ def update_gmp_record(
     if not db_record:
         return None
     update_data = record_update.model_dump(exclude_unset=True)
+    # If the establishment category is being set/changed and the record still
+    # has no timeline, seed GMP_TIMELINE from the category (PIC/S 60 / NON
+    # PIC/S 153 working days). Never overwrites an existing value.
+    if "GMP_EST_CATEGORY" in update_data and "GMP_TIMELINE" not in update_data \
+            and not str(db_record.GMP_TIMELINE or "").strip():
+        days = _category_timeline_days(update_data["GMP_EST_CATEGORY"])
+        if days is not None:
+            update_data["GMP_TIMELINE"] = str(days)
     before = {f: getattr(db_record, f) for f in update_data.keys()}
     for f, v in update_data.items():
         setattr(db_record, f, v)
@@ -663,6 +699,7 @@ GMP_NO_CERT_ISSUANCE_TYPES = {
     "NFI due to Non-compliance",
     "Permit to Register",
     "Letter of Disapproval",
+    "Acknowledgement Letter",
 }
 # Issuance types that carry a Certificate Number + Certificate Validity but
 # NO SECPA Number.
@@ -681,6 +718,33 @@ def _apply_issuance_cert_rules(data: dict, type_of_issuance: str) -> dict:
         data["GMP_SECPA_NUMBER"] = None
     elif type_of_issuance in GMP_NO_SECPA_ONLY_TYPES:
         data["GMP_SECPA_NUMBER"] = None
+    return data
+
+
+# Fixed Citizen's-Charter timeline (in WORKING days) per establishment category.
+# PIC/S = 60, NON PIC/S = 153. Used to auto-fill GMP_TIMELINE when it is left
+# blank at intake — a value already entered there is a manual override and is
+# never touched.
+GMP_CATEGORY_TIMELINE_DAYS = {"PIC/S": 60, "NON PIC/S": 153}
+
+
+def _category_timeline_days(category) -> Optional[int]:
+    c = str(category or "").strip().upper()
+    if c in GMP_CATEGORY_TIMELINE_DAYS:
+        return GMP_CATEGORY_TIMELINE_DAYS[c]
+    if c.replace("-", " ").replace("  ", " ") in ("NON PIC/S", "NON PICS"):
+        return GMP_CATEGORY_TIMELINE_DAYS["NON PIC/S"]
+    return None
+
+
+def _apply_category_timeline(data: dict) -> dict:
+    """Fill GMP_TIMELINE from GMP_EST_CATEGORY when `data` carries a category but
+    no (non-blank) timeline. Leaves an existing GMP_TIMELINE untouched."""
+    if str(data.get("GMP_TIMELINE") or "").strip():
+        return data
+    days = _category_timeline_days(data.get("GMP_EST_CATEGORY"))
+    if days is not None:
+        data["GMP_TIMELINE"] = str(days)
     return data
 
 
@@ -1040,6 +1104,7 @@ def bulk_create_gmp_records(
         data = record.model_dump(exclude_unset=True)
         if "GMP_DATE_EXCEL_UPLOAD" not in data:
             data["GMP_DATE_EXCEL_UPLOAD"] = _now()
+        _apply_category_timeline(data)
         db_records.append(GMPRecord(**data))
     db.add_all(db_records)
     db.commit()
