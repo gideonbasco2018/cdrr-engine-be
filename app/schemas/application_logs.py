@@ -108,6 +108,20 @@ class ApplicationLogBase(BaseModel):
     is_starred: Optional[int] = Field(None, description="0 = not starred, 1 = starred")
     starred_at: Optional[datetime] = Field(None)
 
+    # ── Add New Task tracking ────────────────────────────────────────
+    added_by_user_id: Optional[int] = Field(
+        None, description="ID of the user who created this task via Add New Task"
+    )
+    added_by_user_name: Optional[str] = Field(
+        None, max_length=255, description="Name of the user who created this task"
+    )
+    added_at: Optional[datetime] = Field(
+        None, description="Timestamp when this task was created via Add New Task"
+    )
+    add_task_remarks: Optional[str] = Field(
+        None, description="Remarks left by the user who added this task"
+    )
+
 
 class ApplicationLogCreate(ApplicationLogBase):
     main_db_id: int = Field(..., description="ID of the main_db record (DB_ID)")
@@ -157,3 +171,35 @@ class OpenTasksResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class AddTaskRequest(BaseModel):
+    main_db_ids: list[int] = Field(
+        ..., description="Selected DB_ID values from the decking table"
+    )
+    application_step: str = Field(..., max_length=255)
+    application_status: str = Field(..., max_length=255)
+    user_id: int = Field(
+        ..., description="Assignee's users.id — user_name is resolved server-side"
+    )
+    remarks: Optional[str] = Field(
+        None, description="Remarks from the person adding this task"
+    )
+    close_previous: bool = Field(
+        False,
+        description="Default False — this just adds a new log even if an open thread already exists",
+    )
+
+
+class AddTaskResult(BaseModel):
+    main_db_id: int
+    dtn: Optional[str] = None
+    success: bool
+    log_id: Optional[int] = None
+    error: Optional[str] = None
+
+
+class AddTaskResponse(BaseModel):
+    created: int
+    failed: int
+    results: list[AddTaskResult]

@@ -12,6 +12,8 @@ from app.schemas.application_logs import (
     ApplicationLogUpdate,
     ApplicationLogResponse,
     OpenTasksResponse,
+    AddTaskRequest,
+    AddTaskResponse,
 )
 from app.models.user import User
 from app.models.main_db import MainDB
@@ -262,6 +264,79 @@ def get_open_task_users(
 ):
     """Distinct user_name values among open tasks — for the Current User filter dropdown."""
     return {"users": crud_logs.get_distinct_users(db)}
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Add New Task — bulk-assign a new log for selected decking records
+#  POST /api/application-logs/add-task
+# ══════════════════════════════════════════════════════════════════════
+@router.post(
+    "/add-task", response_model=AddTaskResponse, status_code=status.HTTP_201_CREATED
+)
+def add_task_for_selected_records(
+    payload: AddTaskRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Add New Task — used by the Decking page when the user selects rows
+    (via checkbox) and assigns a new step to a chosen user.
+
+    user_name is resolved from the users table based on user_id, so it is
+    always accurate and never manually typed by the frontend.
+    """
+    if not payload.main_db_ids:
+        raise HTTPException(status_code=400, detail="No records selected")
+
+    if len(payload.main_db_ids) > 200:
+        raise HTTPException(
+            status_code=400, detail="Cannot process more than 200 records at once"
+        )
+
+    assignee = db.query(User).filter(User.id == payload.user_id).first()
+    if not assignee:
+        raise HTTPException(
+            status_code=404, detail=f"User id {payload.user_id} not found"
+        )
+    if not assignee.is_active:
+        raise HTTPException(
+            status_code=400, detail=f"User '{assignee.username}' is inactive"
+        )
+
+    result = crud_logs.add_task_for_selected(
+        db,
+        main_db_ids=payload.main_db_ids,
+        application_step=payload.application_step,
+        application_status=payload.application_status,
+        assignee=assignee,
+        added_by=current_user,
+        remarks=payload.remarks,
+        close_previous=payload.close_previous,
+    )
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Dropdown data for the Add New Task modal
+#  GET /api/application-logs/steps/all
+#  GET /api/application-logs/statuses/all
+# ══════════════════════════════════════════════════════════════════════
+@router.get("/steps/all")
+def get_all_application_steps(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """All distinct application_step values — for the Add New Task modal dropdown."""
+    return {"steps": crud_logs.get_all_distinct_steps(db)}
+
+
+@router.get("/statuses/all")
+def get_all_application_statuses(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """All distinct application_status values — for the Add New Task modal dropdown."""
+    return {"statuses": crud_logs.get_all_distinct_statuses(db)}
 
 
 @router.get("/{log_id}", response_model=ApplicationLogResponse)

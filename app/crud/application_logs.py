@@ -11,6 +11,7 @@ from app.models.application_logs import ApplicationLogs
 from app.schemas.application_logs import ApplicationLogCreate, ApplicationLogUpdate
 from app.crud.notification import create_notification, already_notified_today
 from app.schemas.notification import NotificationCreate
+from app.models.user import User
 
 # ─────────────────────────────────────────────────────────────────────
 # NOTIFICATION HELPERS
@@ -601,6 +602,127 @@ def toggle_star(db: Session, log_id: int, star: bool) -> Optional[ApplicationLog
     return db_log
 
 
+def add_task_for_selected(
+    db: Session,
+    main_db_ids: List[int],
+    application_step: str,
+    application_status: str,
+    assignee: User,
+    added_by: User,
+    remarks: Optional[str] = None,
+    close_previous: bool = False,
+) -> dict:
+    """
+    'Add New Task' action for the Decking page.
+
+    For each selected main_db_id:
+      - Look up the record in main_db
+      - (optional) close the currently open thread (del_last_index=1, del_thread='Open')
+      - Compute the next del_index chain via get_last_index()
+      - Create a new log assigned to the chosen user
+      - Stamp who added the task, when, and their remarks
+
+    Returns a summary dict: {created, failed, results}
+    """
+    from app.models.main_db import MainDB
+
+    results = []
+    created = 0
+    failed = 0
+    added_at_ts = _now_pht()
+
+    for main_db_id in main_db_ids:
+        try:
+            main_record = db.query(MainDB).filter(MainDB.DB_ID == main_db_id).first()
+            if not main_record:
+                results.append(
+                    {
+                        "main_db_id": main_db_id,
+                        "dtn": None,
+                        "success": False,
+                        "log_id": None,
+                        "error": "main_db record not found",
+                    }
+                )
+                failed += 1
+                continue
+
+            dtn = str(main_record.DB_DTN) if main_record.DB_DTN else str(main_db_id)
+
+            # ── Optional: close the currently open thread first ──────────
+            if close_previous:
+                current_open = (
+                    db.query(ApplicationLogs)
+                    .filter(
+                        ApplicationLogs.main_db_id == main_db_id,
+                        ApplicationLogs.del_last_index == 1,
+                        ApplicationLogs.del_thread == "Open",
+                    )
+                    .order_by(ApplicationLogs.del_index.desc())
+                    .first()
+                )
+                if current_open:
+                    current_open.del_last_index = 0
+                    current_open.del_thread = "Close"
+                    db.commit()
+
+            # ── Compute the new index chain ───────────────────────────────
+            last_index = get_last_index(db, main_db_id)
+            next_index = last_index + 1
+
+            new_log = ApplicationLogs(
+                main_db_id=main_db_id,
+                application_step=application_step,
+                application_status=application_status,
+                user_name=assignee.username,
+                user_id=assignee.id,
+                start_date=added_at_ts,
+                del_index=next_index,
+                del_previous=last_index,
+                del_last_index=1,
+                del_thread="Open",
+                is_read=0,
+                is_received=0,
+                is_starred=0,
+                # ── Add New Task tracking ──
+                added_by_user_id=added_by.id,
+                added_by_user_name=added_by.username,
+                added_at=added_at_ts,
+                add_task_remarks=remarks,
+            )
+            db.add(new_log)
+            db.commit()
+            db.refresh(new_log)
+
+            _notify_assigned_user(db, new_log, dtn)
+
+            results.append(
+                {
+                    "main_db_id": main_db_id,
+                    "dtn": dtn,
+                    "success": True,
+                    "log_id": new_log.id,
+                    "error": None,
+                }
+            )
+            created += 1
+
+        except Exception as e:
+            db.rollback()
+            results.append(
+                {
+                    "main_db_id": main_db_id,
+                    "dtn": None,
+                    "success": False,
+                    "log_id": None,
+                    "error": str(e),
+                }
+            )
+            failed += 1
+
+    return {"created": created, "failed": failed, "results": results}
+
+
 def get_open_tasks(
     db: Session,
     page: int = 1,
@@ -714,6 +836,36 @@ def get_distinct_users(db: Session) -> List[str]:
         )
         .distinct()
         .order_by(ApplicationLogs.user_name.asc())
+        .all()
+    )
+    return [r[0] for r in rows]
+
+
+def get_all_distinct_steps(db: Session) -> List[str]:
+    """
+    All distinct application_step values across ALL logs (not limited to open tasks).
+    Used to populate the step dropdown in the Add New Task modal.
+    """
+    rows = (
+        db.query(ApplicationLogs.application_step)
+        .filter(ApplicationLogs.application_step.isnot(None))
+        .distinct()
+        .order_by(ApplicationLogs.application_step.asc())
+        .all()
+    )
+    return [r[0] for r in rows]
+
+
+def get_all_distinct_statuses(db: Session) -> List[str]:
+    """
+    All distinct application_status values across ALL logs.
+    Used to populate the status dropdown in the Add New Task modal.
+    """
+    rows = (
+        db.query(ApplicationLogs.application_status)
+        .filter(ApplicationLogs.application_status.isnot(None))
+        .distinct()
+        .order_by(ApplicationLogs.application_status.asc())
         .all()
     )
     return [r[0] for r in rows]

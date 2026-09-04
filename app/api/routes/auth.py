@@ -268,6 +268,37 @@ def get_my_group_users(
     return crud_user.get_users_by_group(db, group_id=current_user.group_id)
 
 
+@router.get("/users/select-list")
+def get_users_for_select(
+    search: Optional[str] = None,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Minimal active-user list for dropdown/select components,
+    e.g. the Add New Task modal's "Assign to" field.
+    Any authenticated user can query this — needed for workflow assignment.
+    """
+    query = db.query(User).filter(User.is_active == True)  # noqa: E712
+    if search:
+        like = f"%{search}%"
+        query = query.filter(
+            (User.username.ilike(like))
+            | (User.first_name.ilike(like))
+            | (User.surname.ilike(like))
+        )
+    users = query.order_by(User.first_name.asc()).limit(200).all()
+    return [
+        {
+            "id": u.id,
+            "username": u.username,
+            "full_name": f"{u.first_name} {u.surname}",
+            "position": u.position,
+        }
+        for u in users
+    ]
+
+
 # ========================================
 # ADMIN ONLY
 # ========================================

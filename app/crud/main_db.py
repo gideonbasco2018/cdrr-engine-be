@@ -25,6 +25,11 @@ def _decked_subquery(db: Session):
     )
 
 
+def get_records_by_dtn(db: Session, dtn: int) -> List[MainDB]:
+    """Check if there is an existing record(s) with the same DTN"""
+    return db.query(MainDB).filter(MainDB.DB_DTN == dtn).all()
+
+
 # -----------------------------
 # Single Record
 # -----------------------------
@@ -416,9 +421,19 @@ def get_application_logs(
 # -----------------------------
 # Create / Update
 # -----------------------------
-def create_main_db_record(db: Session, record: MainDBCreate) -> MainDB:
+def create_main_db_record(
+    db: Session, record: MainDBCreate, check_duplicate_dtn: bool = True
+) -> MainDB:
     """Create a new record with proper type handling"""
     data = record.model_dump(exclude_unset=True)
+
+    if check_duplicate_dtn and data.get("DB_DTN"):
+        existing = get_records_by_dtn(db, data["DB_DTN"])
+        if existing:
+            raise ValueError(
+                f"DTN {data['DB_DTN']} already exists (DB_ID={[r.DB_ID for r in existing]})"
+            )
+
     if "DB_DATE_EXCEL_UPLOAD" not in data or data["DB_DATE_EXCEL_UPLOAD"] is None:
         data["DB_DATE_EXCEL_UPLOAD"] = datetime.now()
     elif isinstance(data.get("DB_DATE_EXCEL_UPLOAD"), str):

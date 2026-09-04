@@ -108,6 +108,12 @@ class ApplicationLogs(Base):
     is_starred = Column(SmallInteger, nullable=False, default=0)
     starred_at = Column(DateTime, nullable=True)
 
+    # ── Add New Task tracking fields ─────────────────────────────────
+    added_by_user_id = Column(Integer, nullable=True)
+    added_by_user_name = Column(String(255), nullable=True)
+    added_at = Column(DateTime, nullable=True)
+    add_task_remarks = Column(Text, nullable=True)
+
     def __repr__(self):
         return (
             f"<ApplicationLogs(id={self.id}, "
