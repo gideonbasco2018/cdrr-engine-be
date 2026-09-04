@@ -1273,6 +1273,7 @@ async def upload_excel(
 
     print(f"📊 Total rows in Excel: {len(df)}")
     success, errors = 0, []
+    duplicates_skipped = 0
 
     for index, row in df.iterrows():
         try:
@@ -1295,12 +1296,33 @@ async def upload_excel(
                         else str(raw_value)
                     )
 
+            dtn_value = record_data.get("DB_DTN")
+            if dtn_value:
+                existing = crud.get_records_by_dtn(db, dtn_value)
+                if existing:
+                    duplicates_skipped += 1
+                    errors.append(
+                        {
+                            "row_number": index + 2,
+                            "dtn": str(dtn_value),
+                            "brand_name": (
+                                str(row.get("Brand Name", "-"))
+                                if pd.notna(row.get("Brand Name", ""))
+                                else "-"
+                            ),
+                            "reason": f"Duplicate DTN — already exists (DB_ID={[r.DB_ID for r in existing]})",
+                        }
+                    )
+                    continue
+
             record_data["DB_USER_UPLOADER"] = username
             record_data["DB_DATE_EXCEL_UPLOAD"] = datetime.now().strftime(
                 "%Y-%m-%d %H:%M:%S"
             )
 
-            db_record = crud.create_main_db_record(db, MainDBCreate(**record_data))
+            db_record = crud.create_main_db_record(
+                db, MainDBCreate(**record_data), check_duplicate_dtn=False
+            )
             print(
                 f"  ✅ Inserted main_db ID {db_record.DB_ID} (DTN: {db_record.DB_DTN})"
             )
@@ -1428,7 +1450,7 @@ async def upload_excel(
             "total_processed": len(df),
             "success": success,
             "errors": len(errors),
-            "duplicates_skipped": 0,
+            "duplicates_skipped": duplicates_skipped,
         },
         "failed_records": errors,
     }

@@ -22,7 +22,7 @@ class MainDB(Base):
     DB_DTN = Column(
         BigInteger,
         nullable=True,
-        unique=True,
+        unique=False,
         index=True,
         comment="Document Tracking Number",
     )
