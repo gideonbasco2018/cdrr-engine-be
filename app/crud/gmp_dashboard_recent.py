@@ -10,16 +10,18 @@
 # is added on top so a row can be resolved back to its GMPRecord.
 
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import or_
 from typing import Optional
 import math
 
 from app.models.gmp_record import GMPApplicationLogs, GMPRecord
+from app.crud.gmp_logs import _assignee_match
 
 
 def get_recent_applications(
     db: Session,
     username: Optional[str] = None,
-    limit: int = 10,
+    user_id: Optional[int] = None,
     page: int = 1,
     page_size: int = 10,
 ) -> dict:
@@ -27,10 +29,17 @@ def get_recent_applications(
         db.query(GMPApplicationLogs)
         .join(GMPRecord, GMPApplicationLogs.gmp_record_id == GMPRecord.GMP_ID)
         .options(joinedload(GMPApplicationLogs.gmp_record))
+        .filter(
+            or_(GMPRecord.GMP_REFERENCE_NO.is_(None), GMPRecord.GMP_REFERENCE_NO.like("%-01"))
+        )
     )
 
-    if username is not None:
-        q = q.filter(GMPApplicationLogs.user_name == username)
+    # Matched by user_id OR user_name (see _assignee_match) when either is
+    # given; omitting both (as the licensing dashboard's "global recent
+    # applications" admin view does) leaves the query unfiltered — every
+    # user's rows.
+    if username is not None or user_id is not None:
+        q = q.filter(_assignee_match(username, user_id))
 
     q = q.order_by(GMPApplicationLogs.created_at.desc())
 

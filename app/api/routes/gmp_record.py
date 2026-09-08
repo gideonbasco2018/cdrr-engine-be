@@ -7,7 +7,7 @@ from typing import Optional, List
 import math
 import io
 from app.db.session import get_db
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, DataError, SQLAlchemyError
 from app.schemas.gmp_record import (
     GMPRecordCreate, GMPRecordUpdate, GMPRecordResponse, GMPRecordListResponse,
     GMPRecordSummary, GMPApplicationLogResponse, GMPFieldAuditLogResponse,
@@ -58,6 +58,53 @@ def download_template():
     )
 
 
+# ── Export column list (static — must be before /{record_id}) ────────────────
+# Powers the "Select columns to include" modal on the Queue's Export button.
+#
+# _gmp_export_columns() is the ONE place the "Main" (record) columns'
+# (label, id, getter) triples are built — both /export-columns (the modal's
+# list) and /export-filtered (what actually gets written to the sheet) call
+# it, so an id can never mean two different things in the two endpoints.
+# Mirrors buildFilterParams() on the Queue page being the one shared source
+# for the list fetch AND the export.
+def _gmp_export_columns():
+    from app.crud.gmp_upload import GMP_COLUMN_MAPPING
+    return [
+        ("Reference No.", "reference_no", lambda r: r.GMP_REFERENCE_NO),
+        ("Current Step", "current_step", lambda r: r.GMP_CURRENT_STEP),
+    ] + [
+        (label, field, (lambda f: lambda r: getattr(r, f, None))(field))
+        for label, field in GMP_COLUMN_MAPPING.items()
+    ]
+
+
+# One selectable id per FGMP workflow step — checking it pulls in that step's
+# Name / Decision / Remarks / Date as a bundle (same UX as CPR's export),
+# built from application logs rather than a single getattr on the record.
+#
+# GMP_LOG_STEPS (crud/gmp_record.py) minus FROO — the Excel import template's
+# shorter GMP_LOG_STEPS_EXCEL list is missing LRD Chief Admin too, and that
+# one IS added back here (real applications get real rows for it in
+# gmp_application_logs, same as every other step). FROO stays excluded — a
+# legacy detour step for NFI issuance types only, no longer part of the live
+# routing (see resolve_next_step()/GMP_ACTION_ROUTES's comments on FROO).
+def _gmp_export_log_steps():
+    return [label for label, _ in GMP_LOG_STEPS if label != "FROO"]
+
+
+@router.get("/export-columns", summary="List of columns available for GMP export")
+def get_export_columns():
+    cols = [
+        {"id": col_id, "label": label, "group": "Main"}
+        for label, col_id, _ in _gmp_export_columns()
+    ]
+    cols += [
+        {"id": step_label, "label": step_label, "group": "Application Log"}
+        for step_label in _gmp_export_log_steps()
+    ]
+    return {"columns": cols}
+
+
 # ── Export filtered records (static — must be before /{record_id}) ───────────
 # Mirrors main_db.py's /export-filtered: same filter set as the list endpoint
 # above (GET /), just with skip=0 and a high limit so every matching record —
@@ -66,6 +113,9 @@ def download_template():
 # the export's columns always match what the upload template expects.
 @router.get("/export-filtered", summary="Export filtered GMP records to Excel")
 def export_filtered_records(
+    columns: Optional[str] = Query(
+        None, description="Comma-separated column ids (from /export-columns). Omit = all columns."
+    ),
     search: Optional[str] = Query(None),
     dtns: Optional[str] = Query(None, description="Comma-separated DTN numbers"),
     tab: Optional[str] = Query(None),
@@ -107,11 +157,11 @@ def export_filtered_records(
     date_printed_to: Optional[str] = Query(None),
     compliance_docs_date_received_from: Optional[str] = Query(None),
     compliance_docs_date_received_to: Optional[str] = Query(None),
+    timeline_risk: Optional[str] = Query(None, pattern="^(near|beyond)(,(near|beyond))?$", description="Comma-separated: near, beyond, or near,beyond — same calc as the Tasks page's filter chips"),
     sort_by: str = Query("GMP_DATE_EXCEL_UPLOAD"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     db: Session = Depends(get_db),
 ):
-    from app.crud.gmp_upload import GMP_COLUMN_MAPPING
     from openpyxl import Workbook
     from openpyxl.cell import WriteOnlyCell
     from openpyxl.styles import Font, PatternFill, Alignment
@@ -158,6 +208,7 @@ def export_filtered_records(
         "date_printed_to": date_printed_to,
         "compliance_docs_date_received_from": compliance_docs_date_received_from,
         "compliance_docs_date_received_to": compliance_docs_date_received_to,
+        "timeline_risk": timeline_risk,
     }
 
     records, total = get_gmp_records(
@@ -168,8 +219,60 @@ def export_filtered_records(
     if not records:
         raise HTTPException(status_code=404, detail="No records found to export")
 
-    HEADERS = ["Reference No.", "Current Step"] + list(GMP_COLUMN_MAPPING.keys())
-    FIELDS = list(GMP_COLUMN_MAPPING.values())
+    from app.models.gmp_record import GMPApplicationLogs
+
+    ALL_COLUMNS = _gmp_export_columns()
+    ALL_LOG_STEPS = _gmp_export_log_steps()
+
+    selected_ids = None
+    if columns:
+        selected_ids = {c.strip() for c in columns.split(",") if c.strip()}
+    selected_columns = [
+        c for c in ALL_COLUMNS if selected_ids is None or c[1] in selected_ids
+    ]
+    selected_log_steps = [
+        s for s in ALL_LOG_STEPS if selected_ids is None or s in selected_ids
+    ]
+    if not selected_columns and not selected_log_steps:
+        raise HTTPException(status_code=422, detail="No valid columns selected.")
+
+    HEADERS = [c[0] for c in selected_columns]
+    GETTERS = [c[2] for c in selected_columns]
+
+    # One bulk query for every selected step across every exported record,
+    # instead of a per-record/per-step query — then keep only each record's
+    # most recent log per step (highest del_index; it's assigned sequentially
+    # per record across every step, so it's a reliable "latest" order without
+    # depending on wall-clock timestamps).
+    latest_by_step: dict = {}
+    if selected_log_steps:
+        record_ids = [r.GMP_ID for r in records]
+        logs = (
+            db.query(GMPApplicationLogs)
+            .filter(GMPApplicationLogs.gmp_record_id.in_(record_ids))
+            .filter(GMPApplicationLogs.application_step.in_(selected_log_steps))
+            .order_by(GMPApplicationLogs.gmp_record_id, GMPApplicationLogs.del_index.desc())
+            .all()
+        )
+        for log in logs:
+            bucket = latest_by_step.setdefault(log.gmp_record_id, {})
+            bucket.setdefault(log.application_step, log)
+
+    LOG_STEP_COLORS = [
+        "FFF2CC", "D9EAD3", "FDE2C8", "CFE2F3",
+        "EAD1DC", "D9D2E9", "FCE5CD", "D0E4F7",
+    ]
+    LOG_COLUMN_FILL_BY_INDEX: dict = {}
+    for step_label in selected_log_steps:
+        step_global_idx = ALL_LOG_STEPS.index(step_label)
+        color = LOG_STEP_COLORS[step_global_idx % len(LOG_STEP_COLORS)]
+        start_col = len(HEADERS) + 1
+        HEADERS += [
+            f"{step_label} — Name", f"{step_label} — Decision",
+            f"{step_label} — Remarks", f"{step_label} — Date",
+        ]
+        for offset in range(4):
+            LOG_COLUMN_FILL_BY_INDEX[start_col + offset] = color
 
     wb = Workbook(write_only=True)
     ws = wb.create_sheet("GMP Records")
@@ -177,24 +280,42 @@ def export_filtered_records(
     header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=10)
     header_align = Alignment(horizontal="center", vertical="center")
+    log_header_font = Font(bold=True, color="000000", size=10)
 
     for col_idx in range(1, len(HEADERS) + 1):
         ws.column_dimensions[get_column_letter(col_idx)].width = 22
 
     header_cells = []
-    for h in HEADERS:
+    for col_idx, h in enumerate(HEADERS, start=1):
         c = WriteOnlyCell(ws, value=h)
-        c.fill = header_fill
-        c.font = header_font
+        if col_idx in LOG_COLUMN_FILL_BY_INDEX:
+            c.fill = PatternFill(
+                start_color=LOG_COLUMN_FILL_BY_INDEX[col_idx],
+                end_color=LOG_COLUMN_FILL_BY_INDEX[col_idx],
+                fill_type="solid",
+            )
+            c.font = log_header_font
+        else:
+            c.fill = header_fill
+            c.font = header_font
         c.alignment = header_align
         header_cells.append(c)
     ws.append(header_cells)
 
     for record in records:
-        values = [record.GMP_REFERENCE_NO, record.GMP_CURRENT_STEP]
-        for field in FIELDS:
-            value = getattr(record, field, None)
-            values.append(str(value) if value is not None else None)
+        values = [
+            (str(v) if v is not None else None)
+            for v in (getter(record) for getter in GETTERS)
+        ]
+        step_logs = latest_by_step.get(record.GMP_ID, {})
+        for step_label in selected_log_steps:
+            log = step_logs.get(step_label)
+            values += [
+                log.user_name if log else None,
+                log.application_decision if log else None,
+                log.application_remarks if log else None,
+                (str(log.accomplished_date) if log and log.accomplished_date else None),
+            ]
         ws.append(values)
 
     output = io.BytesIO()
@@ -261,6 +382,7 @@ def get_gmp_queue(
     date_printed_to: Optional[str] = Query(None),
     compliance_docs_date_received_from: Optional[str] = Query(None),
     compliance_docs_date_received_to: Optional[str] = Query(None),
+    timeline_risk: Optional[str] = Query(None, pattern="^(near|beyond)(,(near|beyond))?$", description="Comma-separated: near, beyond, or near,beyond — same calc as the Tasks page's filter chips"),
     sort_by: str = Query("GMP_DATE_EXCEL_UPLOAD"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     db: Session = Depends(get_db),
@@ -307,6 +429,7 @@ def get_gmp_queue(
         "date_printed_to": date_printed_to,
         "compliance_docs_date_received_from": compliance_docs_date_received_from,
         "compliance_docs_date_received_to": compliance_docs_date_received_to,
+        "timeline_risk": timeline_risk,
     }
 
     records, total = get_gmp_records(
@@ -883,6 +1006,152 @@ def reroute_step(
 
 
 # ── Excel upload ──────────────────────────────────────────────────────────────
+def _friendly_row_error(e: Exception) -> str:
+    """
+    Turn whatever exception blew up while saving one Excel row into
+    something the person uploading the file can actually understand and
+    act on, instead of a raw SQLAlchemy/PyMySQL driver message (e.g.
+    "(pymysql.err.DataError) (1406, \"Data too long for column
+    'GMP_EST_CATEGORY' at row 1\")"). The real exception is still printed
+    to the server log via traceback.print_exc() right before this runs, so
+    nothing is lost for troubleshooting — this is only what the uploader sees.
+    """
+    if isinstance(e, DataError):
+        return "One or more fields are too long for that column — shorten the text and try again."
+    if isinstance(e, IntegrityError):
+        if "duplicate" in str(e).lower():
+            return "This DTN already exists — skipped."
+        return "This row conflicts with existing data and couldn't be saved."
+    if isinstance(e, SQLAlchemyError):
+        return "This row couldn't be saved due to a database error — please check its values and try again."
+    return "This row couldn't be imported — please check its values and try again."
+
+
+@router.post("/upload-preview", summary="Preview a GMP Excel upload before committing it")
+async def preview_gmp_excel(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Read-only pass over the file: parses every row and checks each DTN
+    against existing records AND against other rows already seen earlier in
+    this same file — without writing anything to the database. Powers the
+    upload modal's confirmation screen ("N will be added, M will be
+    skipped — here's why") so the user sees the outcome before committing
+    to the real /upload call. The dedup rule here mirrors /upload exactly
+    (a row needs a DTN, and that DTN can't already exist) so the preview
+    never promises something the real upload won't do.
+    """
+    import pandas as pd
+    import numpy as np
+    from app.crud.gmp_upload import _parse_date as _parse_upload_date
+
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only .xlsx or .xls files are accepted.",
+        )
+
+    contents = await file.read()
+    try:
+        df = pd.read_excel(io.BytesIO(contents), sheet_name="Template")
+    except Exception:
+        try:
+            df = pd.read_excel(io.BytesIO(contents))
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Could not read the Excel file: {str(e)}",
+            )
+
+    if df.empty:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No data rows found in the uploaded file.",
+        )
+
+    df.columns = [str(c).strip().upper() for c in df.columns]
+
+    def _clean_text(v):
+        if v is None or pd.isna(v):
+            return None
+        s = str(v).strip()
+        return s if s else None
+
+    def _dtn_from_raw(raw):
+        """(parsed_int_or_text, was_present) — mirrors /upload's own DTN
+        parsing so a row that would error there doesn't look importable here."""
+        if raw is None or pd.isna(raw):
+            return None, False
+        if isinstance(raw, (int, float, np.integer, np.floating)):
+            try:
+                return int(raw), True
+            except (ValueError, TypeError, OverflowError):
+                return None, True
+        s = str(raw).strip()
+        if not s:
+            return None, False
+        try:
+            return int(float(s)), True
+        except (ValueError, TypeError):
+            return s, True  # present, but not a usable numeric DTN
+
+    will_insert, will_skip = [], []
+    seen_dtns_in_file = set()
+
+    for index, row in df.iterrows():
+        row_has_any_content = not all(pd.isna(v) or str(v).strip() == "" for v in row.values)
+        if not row_has_any_content:
+            continue  # truly empty row — nothing to report
+
+        dtn_val, dtn_present = _dtn_from_raw(row.get("DTN"))
+        preview_row = {
+            "row_number":        index + 2,
+            "dtn":               str(dtn_val) if dtn_val is not None else "-",
+            "company":           _clean_text(row.get("NAME OF ESTABLISHMENT")) or "-",
+            "category":          _clean_text(row.get("CATEGORY")) or "-",
+            "transaction_type":  _clean_text(row.get("TRANSACTION TYPE")) or "-",
+        }
+        # Same parser /upload uses for this column — handles a pre-parsed
+        # datetime, a raw Excel day-serial number, or free text alike.
+        # A plain pd.Timestamp(raw) here would misread a numeric serial as
+        # nanoseconds-since-epoch and show a bogus 1970 date.
+        parsed_date = _parse_upload_date(row.get("DATE RECEIVED"))
+        preview_row["date_received"] = parsed_date.strftime("%Y-%m-%d") if parsed_date else None
+
+        if not dtn_present:
+            will_skip.append({**preview_row, "reason": "No DTN in this row — a row needs a DTN to be imported."})
+            continue
+
+        if not isinstance(dtn_val, int):
+            will_skip.append({**preview_row, "reason": f"DTN \"{dtn_val}\" isn't a valid number — won't import."})
+            continue
+
+        if dtn_val in seen_dtns_in_file:
+            will_skip.append({**preview_row, "reason": "Duplicate DTN — appears more than once in this file."})
+            continue
+
+        existing = db.query(GMPRecord).filter(GMPRecord.GMP_DTN == dtn_val).first()
+        if existing:
+            will_skip.append({
+                **preview_row,
+                "reason": f"DTN already exists in the system (record #{existing.GMP_ID}) — will be skipped, not overwritten.",
+            })
+            continue
+
+        seen_dtns_in_file.add(dtn_val)
+        will_insert.append(preview_row)
+
+    return {
+        "total_rows":   len(will_insert) + len(will_skip),
+        "insert_count": len(will_insert),
+        "skip_count":   len(will_skip),
+        "will_insert":  will_insert,
+        "will_skip":    will_skip,
+    }
+
+
 @router.post("/upload", summary="Upload filled GMP Excel template")
 async def upload_gmp_excel(
     file: UploadFile = File(...),
@@ -929,8 +1198,29 @@ async def upload_gmp_excel(
     errors    = []
 
     for index, row in df.iterrows():
-        # Skip completely blank rows
-        if all(pd.isna(v) or str(v).strip() == "" for v in row.values):
+        # A row needs a DTN to be treated as real data. Checking "is every
+        # one of the 65+ columns blank" instead is too loose — a single
+        # stray leftover value anywhere in the sheet (e.g. a paste artifact
+        # sitting in one of the internal workflow-log columns most users
+        # never touch) makes a row look "non-blank" while it still has no
+        # DTN, no company, nothing usable. That used to fall through and
+        # create a full GMPRecord anyway — with every field NULL — and
+        # because a NULL DTN skips the dedup check below entirely, every
+        # re-upload of the same file added another one of these phantom
+        # blank records with no way to stop it.
+        dtn_raw = row.get("DTN")
+        has_dtn = not (pd.isna(dtn_raw) or dtn_raw is None or str(dtn_raw).strip() == "")
+        row_has_any_content = not all(pd.isna(v) or str(v).strip() == "" for v in row.values)
+
+        if not has_dtn:
+            if row_has_any_content:
+                # Not a truly empty row — something's in it, just no DTN.
+                # Surface this instead of silently creating a blank record.
+                errors.append({
+                    "row_number": index + 2,
+                    "dtn": "-",
+                    "reason": "No DTN in this row — skipped. A row needs a DTN to be imported.",
+                })
             continue
 
         try:
@@ -1002,6 +1292,7 @@ async def upload_gmp_excel(
                 "Evaluator":    ("GMP_EVALUATOR",  "GMP_EVALUATOR_DECISION",  "GMP_EVALUATOR_REMARKS",  "GMP_DATE_EVALUATOR_END"),
                 "Checker":      ("GMP_CHECKER",    "GMP_CHECKER_DECISION",    "GMP_CHECKER_REMARKS",    "GMP_DATE_CHECKER_END"),
                 "QA Admin":     ("GMP_QA_ADMIN",   "GMP_QA_ADMIN_DECISION",   "GMP_QA_ADMIN_REMARKS",   "GMP_DATE_QA_ADMIN_END"),
+                "LRD Chief Admin": ("GMP_LRD_CHIEF", "GMP_LRD_CHIEF_DECISION", "GMP_LRD_CHIEF_REMARKS", "GMP_DATE_LRD_CHIEF_END"),
                 "OD Receiving": ("GMP_OD_RECEIVING", "GMP_OD_RECEIVING_DECISION", "GMP_OD_RECEIVING_REMARKS", "GMP_DATE_OD_RECEIVING_END"),
                 "OD Releasing": ("GMP_OD_RELEASING", "GMP_OD_RELEASING_DECISION", "GMP_OD_RELEASING_REMARKS", "GMP_DATE_OD_RELEASING_END"),
             }
@@ -1090,11 +1381,11 @@ async def upload_gmp_excel(
         except Exception as e:
             db.rollback()
             import traceback
-            traceback.print_exc()
+            traceback.print_exc()  # full raw error still goes to the server log
             errors.append({
                 "row_number": index + 2,
                 "dtn": str(row.get("DTN", "-")) if not pd.isna(row.get("DTN", "")) else "-",
-                "reason": str(e),
+                "reason": _friendly_row_error(e),
             })
 
     if inserted == 0 and not errors:

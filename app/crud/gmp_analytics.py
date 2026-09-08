@@ -4,7 +4,7 @@ import re
 from collections import Counter
 from typing import Dict
 from sqlalchemy.orm import Session
-from sqlalchemy import case, func, Float, Integer, literal, text
+from sqlalchemy import case, func, Float, Integer, String, cast, literal, text
 from app.models.gmp_record import GMPRecord, GMPApplicationLogs
 from app.crud.gmp_record import GMP_LOG_STEPS, GMP_TERMINAL_STATUSES
 
@@ -419,7 +419,21 @@ def get_gmp_analytics_workload(
     est_category: str = "All",
     limit: int = 15,
 ) -> list:
-    """Open (non-terminal, actively-stepped) task count and avg TAT per assigned evaluator."""
+    """Open (non-terminal, actively-stepped) task count and avg TAT per assigned evaluator.
+
+    Reads the assigned evaluator from GMPApplicationLogs (each record's most
+    recent "Evaluator"-step log), not GMPRecord.GMP_EVALUATOR. That column is
+    only ever written by assign_evaluator() (app/crud/gmp_record.py), which
+    the frontend only calls from one rare fallback branch — a record decked
+    through the normal advance-step flow (the vast majority) never touches it
+    at all, so grouping by it meant this widget was mostly empty. It also
+    only stores a name, so even the few rows it *did* have would split into
+    two buckets the moment that evaluator was renamed.
+    GMPApplicationLogs.user_id, in contrast, is written for every record that
+    ever reaches the Evaluator step — through advance_step, and through Excel
+    import (GMP_LOG_STEPS_EXCEL has an Evaluator column) — and is stable
+    across a rename, the same fix already applied to Tasks/Dashboard.
+    """
     has_current_step = GMPRecord.GMP_CURRENT_STEP.isnot(None) & (GMPRecord.GMP_CURRENT_STEP != "")
     is_terminal = func.upper(func.coalesce(GMPRecord.GMP_APP_STATUS, "")).in_(
         [s.upper() for s in GMP_TERMINAL_STATUSES]
@@ -429,15 +443,46 @@ def get_gmp_analytics_workload(
     tat_days = _wd_diff(GMPRecord.GMP_DATE_RECEIVED, GMPRecord.GMP_RELEASED_DATE)
     has_tat = GMPRecord.GMP_DATE_RECEIVED.isnot(None) & GMPRecord.GMP_RELEASED_DATE.isnot(None)
 
+    # Most recent "Evaluator"-step log per record — who's on record as the
+    # evaluator, whether or not the application has since moved past them
+    # (matches the old GMP_EVALUATOR semantics: it doesn't get cleared just
+    # because the record advanced to Checker/QA Admin/etc.).
+    rn = func.row_number().over(
+        partition_by=GMPApplicationLogs.gmp_record_id,
+        order_by=GMPApplicationLogs.del_index.desc(),
+    ).label("rn")
+    eval_logs = (
+        db.query(
+            GMPApplicationLogs.gmp_record_id.label("gmp_record_id"),
+            GMPApplicationLogs.user_id.label("evaluator_user_id"),
+            GMPApplicationLogs.user_name.label("evaluator_user_name"),
+            rn,
+        )
+        .filter(GMPApplicationLogs.application_step == "Evaluator")
+        .subquery()
+    )
+    latest_eval = db.query(eval_logs).filter(eval_logs.c.rn == 1).subquery()
+
+    # Group by user_id when available (stable across a rename); only falls
+    # back to the bare name for legacy logs that predate id tracking.
+    evaluator_key = func.coalesce(
+        cast(latest_eval.c.evaluator_user_id, String(20)), latest_eval.c.evaluator_user_name
+    )
+
     rows = (
         _base_query(db, year, month, est_category)
-        .filter(GMPRecord.GMP_EVALUATOR.isnot(None), GMPRecord.GMP_EVALUATOR != "")
+        .join(latest_eval, latest_eval.c.gmp_record_id == GMPRecord.GMP_ID)
+        .filter(evaluator_key.isnot(None))
         .with_entities(
-            GMPRecord.GMP_EVALUATOR.label("evaluator"),
+            evaluator_key.label("eval_key"),
+            # Representative display name for the group — arbitrary but
+            # deterministic pick among that id's name variants; cosmetic only,
+            # the grouping itself is what's keyed by the stable id.
+            func.max(latest_eval.c.evaluator_user_name).label("evaluator"),
             func.sum(case((is_open, 1), else_=0)).label("open_count"),
             func.avg(case((has_tat, tat_days))).cast(Float).label("avg_tat"),
         )
-        .group_by(GMPRecord.GMP_EVALUATOR)
+        .group_by(evaluator_key)
         .order_by(func.sum(case((is_open, 1), else_=0)).desc())
         .limit(limit)
         .all()
@@ -451,6 +496,43 @@ def get_gmp_analytics_workload(
         }
         for r in rows
     ]
+
+
+# ── 6b. Applications by current step ─────────────────────────────
+def get_gmp_analytics_by_step(
+    db: Session,
+    year: str = "All",
+    month: str = "All",
+    est_category: str = "All",
+) -> list:
+    """
+    How many currently-open (non-terminal) applications are sitting at each
+    workflow step right now — queue depth per step, so a pile-up at one
+    specific step is visible instead of hiding inside one "On Process" total.
+    """
+    has_current_step = GMPRecord.GMP_CURRENT_STEP.isnot(None) & (GMPRecord.GMP_CURRENT_STEP != "")
+    is_terminal = func.upper(func.coalesce(GMPRecord.GMP_APP_STATUS, "")).in_(
+        [s.upper() for s in GMP_TERMINAL_STATUSES]
+    )
+    is_open = ~is_terminal & has_current_step
+
+    rows = (
+        _base_query(db, year, month, est_category)
+        .filter(is_open)
+        .with_entities(
+            GMPRecord.GMP_CURRENT_STEP.label("step"),
+            func.count(GMPRecord.GMP_ID).label("count"),
+        )
+        .group_by(GMPRecord.GMP_CURRENT_STEP)
+        .all()
+    )
+    by_step = {r.step: int(r.count or 0) for r in rows}
+
+    # Ordered by real workflow sequence (Decking → ... → OD Releasing), not
+    # by count — this is a pipeline, and the order is the point (spot a
+    # pile-up at a specific step at a glance). Steps with zero open
+    # applications still appear, at 0, so the pipeline reads as complete.
+    return [{"step": step, "count": by_step.get(step, 0)} for step in STEP_ORDER]
 
 
 # ── 7. Backlog aging ─────────────────────────────────────────────

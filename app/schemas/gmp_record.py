@@ -318,6 +318,12 @@ class GMPTaskResponse(BaseModel):
     # single value, since siblings never carry their own task/log. Populated
     # in get_tasks_for_user via one bulk query, not a model relationship.
     all_issuance_types: List[str] = []
+    # Where this task came from — the step that handed it over (None for
+    # Excel-imported logs) — and how many times the current step has been
+    # opened for this record (1 = first visit, >1 = it's back again).
+    # Populated in get_tasks_for_user, not model columns.
+    from_step: Optional[str] = None
+    revision: Optional[int] = None
     model_config = ConfigDict(from_attributes=True)
 
 

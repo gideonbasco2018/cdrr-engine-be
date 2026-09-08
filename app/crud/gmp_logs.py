@@ -216,6 +216,62 @@ def get_tasks_for_user(
         dtn = log.gmp_record.GMP_DTN if log.gmp_record else None
         log.all_issuance_types = sorted(issuance_by_dtn.get(dtn, []))
 
+    # ── Origin tagging — where each task came from ────────────────────────────
+    # The Evaluator and Checker need to tell a brand-new application (fresh from
+    # Decking) apart from one that bounced back to them (e.g. Checker returned
+    # it to the Evaluator for rework). Every task log stores del_previous = the
+    # del_index of the log that handed it over, so one bulk fetch of all logs
+    # for these records gives us:
+    #   from_step — the step that handed this task over (None for Excel imports,
+    #               whose logs carry no del_previous chain)
+    #   revision  — how many times this step has been genuinely revisited for
+    #               this record (1 = first visit; >1 = it's been here before)
+    # Attached as plain non-persisted attributes, same as all_issuance_types.
+    #
+    # revision must NOT just tally every log ever opened at the step — a
+    # Reassignment (or a same-step Reroute) closes the current log and opens a
+    # new one AT THE SAME STEP for a different assignee, with no actual
+    # send-back-and-return cycle. Counting that as a "revisit" falsely tagged
+    # a merely-reassigned Checker task as "Re-submitted". So each log is first
+    # classified as an "entry" (its previous step differs from its own — a
+    # genuine arrival) or a "continuation" (previous step == own step — a
+    # lateral handoff); revision only advances on entries, del_index order
+    # (assigned sequentially per record, across every step) giving the
+    # chronological walk.
+    record_ids = {log.gmp_record_id for log in logs}
+    if record_ids:
+        sibling_logs = (
+            db.query(
+                GMPApplicationLogs.gmp_record_id,
+                GMPApplicationLogs.del_index,
+                GMPApplicationLogs.application_step,
+                GMPApplicationLogs.del_previous,
+            )
+            .filter(GMPApplicationLogs.gmp_record_id.in_(record_ids))
+            .order_by(GMPApplicationLogs.gmp_record_id, GMPApplicationLogs.del_index)
+            .all()
+        )
+        step_by_index: Dict[tuple, str] = {
+            (rid, didx): step for rid, didx, step, _ in sibling_logs
+        }
+        entry_counts: Dict[tuple, int] = {}
+        log_revision: Dict[tuple, int] = {}
+        for rid, didx, step, prev_didx in sibling_logs:
+            own_from_step = step_by_index.get((rid, prev_didx)) if prev_didx else None
+            if own_from_step != step:
+                entry_counts[(rid, step)] = entry_counts.get((rid, step), 0) + 1
+            log_revision[(rid, didx)] = entry_counts.get((rid, step), 0)
+        for log in logs:
+            log.from_step = (
+                step_by_index.get((log.gmp_record_id, log.del_previous))
+                if log.del_previous else None
+            )
+            log.revision = log_revision.get((log.gmp_record_id, log.del_index), 1)
+    else:
+        for log in logs:
+            log.from_step = None
+            log.revision = 1
+
     return logs, total
 
 def get_task_counts_for_users(db: Session, usernames: List[str]) -> Dict[str, int]:

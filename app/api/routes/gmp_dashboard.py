@@ -14,10 +14,15 @@ from app.crud import gmp_dashboard as crud_dashboard
 from app.crud import gmp_dashboard_chart as crud_chart
 from app.crud import gmp_dashboard_recent as crud_recent
 from app.crud import gmp_dashboard_detail as crud_detail
+from app.crud import gmp_post_eval_status as crud_post_eval
 from app.schemas.dashboard import StatResponse, CombinedStatsResponse
 from app.schemas.dashboard_chart import ChartResponse
 from app.schemas.recent_applications import RecentApplicationsResponse
 from app.schemas.gmp_dashboard_detail import GMPMetricDetailResponse
+from app.schemas.gmp_post_eval_status import (
+    PostEvalStatusSummaryResponse,
+    PostEvalStatusListResponse,
+)
 from app.models.user import User
 
 router = APIRouter(
@@ -26,17 +31,21 @@ router = APIRouter(
 )
 
 
-def _effective_username(
+def _effective_user(
     current_user,
     impersonate: Optional[int],
     db: Session = None,
-) -> str:
+) -> tuple[str, Optional[int]]:
+    """(username, user_id) — the impersonated target's, or the current user's
+    own. Callers should pass BOTH into the crud layer's _assignee_match
+    (user_id OR user_name) rather than username alone, which silently drops
+    every log recorded before the user's last rename."""
     if impersonate and db and current_user.role in ("Admin", "SuperAdmin"):
         user = db.query(User).filter(User.id == impersonate).first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
-        return user.username
-    return current_user.username
+        return user.username, user.id
+    return current_user.username, current_user.id
 
 
 def _common_params(
@@ -59,9 +68,9 @@ def get_received(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    username = _effective_username(current_user, params["impersonate"], db)
+    username, user_id = _effective_user(current_user, params["impersonate"], db)
     value = crud_dashboard.get_total_received(
-        db, username, params["date_from"], params["date_to"]
+        db, username, user_id, params["date_from"], params["date_to"]
     )
     return StatResponse(
         label="Total Received",
@@ -82,9 +91,9 @@ def get_completed(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    username = _effective_username(current_user, params["impersonate"], db)
+    username, user_id = _effective_user(current_user, params["impersonate"], db)
     value = crud_dashboard.get_total_completed(
-        db, username, params["date_from"], params["date_to"]
+        db, username, user_id, params["date_from"], params["date_to"]
     )
     return StatResponse(
         label="Completed",
@@ -105,9 +114,9 @@ def get_on_process(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    username = _effective_username(current_user, params["impersonate"], db)
+    username, user_id = _effective_user(current_user, params["impersonate"], db)
     value = crud_dashboard.get_total_on_process(
-        db, username, params["date_from"], params["date_to"]
+        db, username, user_id, params["date_from"], params["date_to"]
     )
     return StatResponse(
         label="On Process",
@@ -128,9 +137,9 @@ def get_summary(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    username = _effective_username(current_user, params["impersonate"], db)
+    username, user_id = _effective_user(current_user, params["impersonate"], db)
     stats = crud_dashboard.get_stats_summary(
-        db, username, params["date_from"], params["date_to"]
+        db, username, user_id, params["date_from"], params["date_to"]
     )
     return CombinedStatsResponse(
         username=username,
@@ -162,13 +171,14 @@ def get_chart(
             detail="date_from must be earlier than or equal to date_to.",
         )
 
-    username = _effective_username(current_user, impersonate, db)
+    username, user_id = _effective_user(current_user, impersonate, db)
 
     try:
         return crud_chart.get_chart_data(
             db=db,
             username=username,
             breakdown=breakdown,
+            user_id=user_id,
             date_from=date_from,
             date_to=date_to,
         )
@@ -182,19 +192,18 @@ def get_chart(
     summary="Most recent GMP application log entries for the current user",
 )
 def get_recent_applications(
-    limit: int = Query(default=10, ge=1, le=500, description="Number of rows to return"),
     page: int = Query(default=1, ge=1, description="1-based page number"),
     page_size: int = Query(default=10, ge=1, le=50, description="Rows per page (max 50)"),
     impersonate: Optional[int] = Query(None, description="Admin only — user_id of target user"),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    username = _effective_username(current_user, impersonate, db)
+    username, user_id = _effective_user(current_user, impersonate, db)
 
     data = crud_recent.get_recent_applications(
         db=db,
         username=username,
-        limit=limit,
+        user_id=user_id,
         page=page,
         page_size=page_size,
     )
@@ -252,12 +261,13 @@ def get_metric_detail(
             detail="accomplished_date_from must be earlier than or equal to accomplished_date_to.",
         )
 
-    username = _effective_username(current_user, impersonate, db)
+    username, user_id = _effective_user(current_user, impersonate, db)
 
     try:
         return crud_detail.get_metric_detail(
             db=db,
             username=username,
+            user_id=user_id,
             metric=metric,
             date_from=date_from,
             date_to=date_to,
@@ -272,3 +282,49 @@ def get_metric_detail(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+
+
+# ── Post-Evaluation Status (FGMP Dashboard only — no CPR counterpart) ─────────
+# Applications the current user has finished their own part on (a COMPLETED
+# step they were the assignee of) that aren't released yet — i.e. still
+# actively at some step (GMP_CURRENT_STEP is not null). Powers the
+# "Post-Evaluation Status" card: a per-step count breakdown for the header,
+# plus a paginated row list for its "See all".
+@router.get(
+    "/post-eval-status/summary",
+    response_model=PostEvalStatusSummaryResponse,
+    summary="Per-current-step counts for the Post-Evaluation Status card's header chips",
+)
+def get_post_eval_status_summary(
+    impersonate: Optional[int] = Query(None, description="Admin only — user_id of target user"),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    username, user_id = _effective_user(current_user, impersonate, db)
+    breakdown = crud_post_eval.get_step_breakdown(db, username, user_id)
+    return PostEvalStatusSummaryResponse(
+        breakdown=[{"step": step, "count": count} for step, count in breakdown.items()],
+        total=sum(breakdown.values()),
+    )
+
+
+@router.get(
+    "/post-eval-status",
+    response_model=PostEvalStatusListResponse,
+    summary="Paginated rows for the Post-Evaluation Status card / its 'See all'",
+)
+def get_post_eval_status(
+    page: int = Query(default=1, ge=1, description="1-based page number"),
+    page_size: int = Query(default=10, ge=1, le=50, description="Rows per page (max 50)"),
+    impersonate: Optional[int] = Query(None, description="Admin only — user_id of target user"),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    username, user_id = _effective_user(current_user, impersonate, db)
+    data = crud_post_eval.get_rows(db, username, user_id, page=page, page_size=page_size)
+    return PostEvalStatusListResponse(
+        data=data["rows"],
+        total=data["total"],
+        total_pages=data["total_pages"],
+        page=data["page"],
+    )
