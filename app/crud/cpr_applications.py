@@ -1,8 +1,13 @@
 # app/crud/cpr_applications.py
+import uuid
+from datetime import datetime, timezone
+
 from fastapi import HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.models.e_process import EProcess
+from app.models.e_application_ref import EApplicationRef
 from app.models.cpr_application import CPRApplication
 from app.models.cpr_app_parties import CPRAppParty
 from app.models.cpr_app_history import CPRAppHistory
@@ -38,18 +43,55 @@ APPLICATION_FIELDS = {
     "old_rsn_other_dtn",
 }
 
+# TODO: confirm/update this to match the actual seeded value
+# of process_code in the e_process table (the "Minor Variation Notification" row).
+CPR_PROCESS_CODE = "MVN"
+
+
+def _get_cpr_process_uuid(db: Session) -> str:
+    process = (
+        db.query(EProcess)
+        .filter(
+            EProcess.process_code == CPR_PROCESS_CODE,
+            EProcess.is_active.is_(True),
+        )
+        .first()
+    )
+    if not process:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"e_process row not found/active for "
+                f"process_code='{CPR_PROCESS_CODE}'"
+            ),
+        )
+    return process.process_uuid
+
 
 def create_application(db: Session, payload: ApplicationCreate) -> CPRApplication:
     data = payload.model_dump(by_alias=False)
 
-    try:
-        # 1. main application row
-        app_data = {k: data[k] for k in APPLICATION_FIELDS}
-        db_application = CPRApplication(**app_data)
-        db.add(db_application)
-        db.flush()  # kunin agad yung application_uuid bago gawin yung children
+    # Resolve the process_uuid first, before creating any rows
+    process_uuid = _get_cpr_process_uuid(db)
+    now = datetime.now(timezone.utc)
 
-        # 2. parties
+    try:
+        # 1. Master reference row (e_application_ref) — this is now the "real" PK
+        ref_uuid = str(uuid.uuid4())
+        db_ref = EApplicationRef(
+            ref_uuid=ref_uuid,
+            process_uuid=process_uuid,
+        )
+        db.add(db_ref)
+        db.flush()
+
+        # 2. CPR-specific application row (application_uuid == ref_uuid)
+        app_data = {k: data[k] for k in APPLICATION_FIELDS}
+        db_application = CPRApplication(application_uuid=ref_uuid, **app_data)
+        db.add(db_application)
+        db.flush()
+
+        # 3. Parties
         for ptype in PARTY_TYPES:
             name = data.get(ptype)
             if not name:
@@ -66,15 +108,39 @@ def create_application(db: Session, payload: ApplicationCreate) -> CPRApplicatio
                 )
             )
 
-        # 3. initial history entry
+            # 4a. Step 1 — Initial Submission (auto-completed, closed thread)
         db.add(
             CPRAppHistory(
-                application_uuid=db_application.application_uuid,
+                application_uuid=ref_uuid,
+                process_uuid=process_uuid,
+                user_uuid=None,  # TODO: set this once a current-user dependency exists
                 reference_number=data.get("reference_number"),
-                application_step=data.get("application_step"),
-                application_status=data.get("current_status"),
-                start_date=data.get("start_date"),
+                application_step="Initial Submission",
+                application_status="Completed",
+                start_date=data.get("start_date") or now,
+                accomplished_date=now,
+                del_index=1,
+                del_previous=None,
+                del_last_index=0,
+                del_thread="Close",
+            )
+        )
+
+        # 4b. Step 2 — Decking (next actionable step, open/active thread)
+        db.add(
+            CPRAppHistory(
+                application_uuid=ref_uuid,
+                process_uuid=process_uuid,
+                user_uuid=None,
+                reference_number=data.get("reference_number"),
+                application_step=data.get("application_step") or "Decking",
+                application_status=data.get("current_status") or "In Progress",
+                start_date=now,
                 step_duedate=data.get("step_duedate"),
+                del_index=2,
+                del_previous=1,
+                del_last_index=1,
+                del_thread="Open",
             )
         )
 
