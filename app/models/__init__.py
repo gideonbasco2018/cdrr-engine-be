@@ -30,6 +30,9 @@ from app.models.cpr_app_parties import CPRAppParty
 from app.models.cpr_application import CPRApplication
 from app.models.cpr_app_document import CPRAppDocument
 
+from app.models.e_application_ref import EApplicationRef
+from app.models.e_process import EProcess
+
 __all__ = [
     "MainDB",
     "ApplicationDelegation",
@@ -62,4 +65,6 @@ __all__ = [
     "CPRAppParty",
     "CPRApplication",
     "CPRAppDocument",
+    "EApplicationRef",
+    "EProcess",
 ]

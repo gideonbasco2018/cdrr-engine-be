@@ -1,6 +1,5 @@
 # app/models/cpr_application.py
-import uuid
-from sqlalchemy import Column, DateTime, String
+from sqlalchemy import Column, DateTime, String, ForeignKey
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -12,9 +11,8 @@ class CPRApplication(Base):
 
     application_uuid = Column(
         String(36),
+        ForeignKey("e_application_ref.ref_uuid"),
         primary_key=True,
-        default=lambda: str(uuid.uuid4()),
-        index=True,
     )
 
     reference_number = Column(String(255), nullable=True)
@@ -50,6 +48,4 @@ class CPRApplication(Base):
     parties = relationship(
         "CPRAppParty", back_populates="application", cascade="all, delete-orphan"
     )
-    history = relationship(
-        "CPRAppHistory", back_populates="application", cascade="all, delete-orphan"
-    )
+    app_ref = relationship("EApplicationRef")

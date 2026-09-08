@@ -27,8 +27,15 @@ class CPRAppHistory(Base):
     )
     application_uuid = Column(
         String(36),
-        ForeignKey("cpr_application.application_uuid"),
+        ForeignKey("e_application_ref.ref_uuid"),
         nullable=False,
+    )
+
+    process_uuid = Column(
+        String(36),
+        ForeignKey("e_process.process_uuid"),
+        nullable=True,
+        index=True,
     )
 
     reference_number = Column(String(255), nullable=True)
@@ -92,9 +99,8 @@ class CPRAppHistory(Base):
     reroute_remarks = Column(Text, nullable=True)
     is_starred = Column(SmallInteger, nullable=False, default=0)
     starred_at = Column(DateTime, nullable=True)
+    priority = Column(String(20), nullable=True)  # "High" | "Medium" | "Low"
 
-    application = relationship("CPRApplication", back_populates="history")
-    # NOTE: multiple FK columns now point to users.user_uuid (user_uuid,
-    # reassigned_by/from/to_user_uuid, rerouted_by_user_uuid), so this
-    # relationship needs foreign_keys= to avoid AmbiguousForeignKeysError.
     user = relationship("User", foreign_keys=[user_uuid])
+    app_ref = relationship("EApplicationRef", back_populates="history")
+    process = relationship("EProcess")
