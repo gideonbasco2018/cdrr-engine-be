@@ -70,6 +70,14 @@ class GMPAnalyticsAgingResponse(BaseModel):
     data: List[GMPAnalyticsAgingItem]
 
 
+class GMPAnalyticsByStepItem(BaseModel):
+    step: str
+    count: int
+
+class GMPAnalyticsByStepResponse(BaseModel):
+    data: List[GMPAnalyticsByStepItem]
+
+
 class GMPAnalyticsNODDistributionItem(BaseModel):
     label: str
     count: int

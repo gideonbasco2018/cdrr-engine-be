@@ -1,10 +1,11 @@
 # app/crud/gmp_record.py
 """CRUD for GMPRecord — list, create, update, delete, audit logging, summaries."""
+import re
 import uuid
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, desc, or_, and_, case, cast, String, nullslast
 from typing import Optional, List, Tuple, Dict
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from app.models.gmp_record import GMPRecord, GMPDelegation, GMPApplicationLogs, GMPFieldAuditLog
 from app.schemas.gmp_record import GMPRecordCreate, GMPRecordUpdate
 from app.crud.notification import create_notification, already_notified_today
@@ -90,7 +91,8 @@ GMP_FROO_ACTION = "Forwarded to CDRR FGMP"
 # entry here or advance-step will reject it with a 400 (see the route handler).
 GMP_ACTION_ROUTES: Dict[tuple, Optional[str]] = {
     ("Decking", "Forwarded to Evaluator"):        "Evaluator",
-    ("Decking", "Disapprove"):                    None,
+    # Decking only forwards — it cannot disapprove or hold. Disapproval happens
+    # later, at QA Admin / LRD Chief Admin (which keep their Disapprove routes).
 
     ("Evaluator", "Endorsed to Checker"):         "Checker",
     ("Evaluator", "Endorsed to QA Admin"):        "QA Admin",
@@ -132,6 +134,32 @@ def resolve_next_step(current_step: str, action: str) -> Tuple[bool, Optional[st
     if route_key not in GMP_ACTION_ROUTES:
         return False, None
     return True, GMP_ACTION_ROUTES[route_key]
+
+
+def gmp_actions_for_step(step: str) -> List[str]:
+    """Every action valid at `step`, derived straight from GMP_ACTION_ROUTES.
+
+    This is the single source of truth for "what may the UI offer at step X".
+    It is served to the frontend via GET /api/gmp/log-steps so the WorkflowModal
+    Action dropdown is built from it — the dropdown can never drift from routing
+    and therefore can never offer an action advance-step will 400 on.
+    """
+    return [action for (s, action) in GMP_ACTION_ROUTES if s == step]
+
+
+# ── Import-time consistency guard ─────────────────────────────────────────────
+# Fail fast on a malformed routing table: every non-terminal target must be a
+# real step label. Catches a typo in GMP_ACTION_ROUTES at startup instead of at
+# runtime when a user is mid-advance.
+_VALID_STEP_LABELS = {label for label, _ in GMP_LOG_STEPS}
+_BAD_ROUTE_TARGETS = [
+    (src, action, dst) for (src, action), dst in GMP_ACTION_ROUTES.items()
+    if dst is not None and dst not in _VALID_STEP_LABELS
+]
+assert not _BAD_ROUTE_TARGETS, (
+    f"GMP_ACTION_ROUTES points at unknown step label(s): {_BAD_ROUTE_TARGETS}. "
+    f"Valid labels: {sorted(_VALID_STEP_LABELS)}"
+)
 
 GMP_AUDIT_EXCLUDED_FIELDS = {
     "GMP_ID", "GMP_DATE_EXCEL_UPLOAD", "GMP_TRASH_DATE_ENCODED", "GMP_USER_UPLOADER",
@@ -280,6 +308,71 @@ def _primary_only(query):
     return query.filter(
         or_(GMPRecord.GMP_REFERENCE_NO.is_(None), GMPRecord.GMP_REFERENCE_NO.like("%-01"))
     )
+
+
+# ── "Near Deadline" / "Beyond" classification ───────────────────────────────
+# Mirrors computeStatusTimeline() in
+# cdrr-engine-fe/src/components/gmp/shared/StatusTimelineBadge.jsx exactly —
+# same category defaults, same GMP_TIMELINE digit-parsing, same working-day
+# (Mon–Fri) count, same 0.8 "near" cutoff — so the Queue's filter and the
+# Tasks page's filter (which runs this same math client-side, since every
+# task there is already loaded) always agree on which applications qualify.
+# Kept in sync by hand; if that frontend function changes, update this too.
+_GMP_CATEGORY_TIMELINE_DAYS = {"PIC/S": 60, "NON PIC/S": 153}
+GMP_TIMELINE_NEAR_RATIO = 0.8
+
+
+def _gmp_category_timeline_days(category: Optional[str]) -> Optional[int]:
+    if not category:
+        return None
+    c = re.sub(r"\s+", " ", str(category).strip().upper())
+    if c in ("PIC/S", "PICS"):
+        return _GMP_CATEGORY_TIMELINE_DAYS["PIC/S"]
+    if c in ("NON PIC/S", "NON-PIC/S", "NONPIC/S", "NON PICS"):
+        return _GMP_CATEGORY_TIMELINE_DAYS["NON PIC/S"]
+    return None
+
+
+def _gmp_parse_timeline_days(raw) -> Optional[int]:
+    if not raw:
+        return None
+    m = re.search(r"\d+", str(raw))
+    return int(m.group()) if m else None
+
+
+def _gmp_effective_timeline_days(timeline, category) -> Optional[int]:
+    explicit = _gmp_parse_timeline_days(timeline)
+    return explicit if explicit is not None else _gmp_category_timeline_days(category)
+
+
+def _gmp_working_days_between(start: date, end: date) -> int:
+    """Mon–Fri days strictly after `start`, up to and including `end`."""
+    if end <= start:
+        return 0
+    count = 0
+    d = start
+    while d < end:
+        d += timedelta(days=1)
+        if d.weekday() < 5:  # 0=Mon .. 4=Fri
+            count += 1
+    return count
+
+
+def _gmp_timeline_level(date_received, timeline, category) -> Optional[str]:
+    """"within" | "near" | "beyond", or None if it can't be computed (no
+    Date Received, or no timeline number and an unrecognized category).
+    Caller is responsible for only calling this on still-open records —
+    a released application isn't "near" or "beyond" anything anymore."""
+    allowed = _gmp_effective_timeline_days(timeline, category)
+    if date_received is None or allowed is None or allowed <= 0:
+        return None
+    days = _gmp_working_days_between(date_received, date.today())
+    pct = days / allowed
+    if pct > 1:
+        return "beyond"
+    if pct >= GMP_TIMELINE_NEAR_RATIO:
+        return "near"
+    return "within"
 
 
 def get_gmp_records(
@@ -460,18 +553,70 @@ def get_gmp_records(
 
     if search and not (dtns and len(dtns) > 0):
         p = f"%{search}%"
-        conds = [
-            GMPRecord.GMP_LTO_COMPANY.like(p),
-            GMPRecord.GMP_LTO_NUMBER.like(p),
-            GMPRecord.GMP_CERTIFICATE_NUMBER.like(p),
-            GMPRecord.GMP_SECPA_NUMBER.like(p),
-            GMPRecord.GMP_EST_CATEGORY.like(p),
+        # Global search box — matches any of the record's basic-info fields
+        # (every user-visible text column + the workflow labels). Date columns
+        # are left out; use the Advanced Filters date ranges for those.
+        _search_columns = [
+            GMPRecord.GMP_REFERENCE_NO,
+            GMPRecord.GMP_RELATED_DTN,
+            GMPRecord.GMP_LTO_COMPANY,
+            GMPRecord.GMP_LTO_NUMBER,
+            GMPRecord.GMP_LTO_ADDRESS,
+            GMPRecord.GMP_TRANSACTION_TYPE,
+            GMPRecord.GMP_EST_CATEGORY,
+            GMPRecord.GMP_FOREIGN_MANUFACTURER,
+            GMPRecord.GMP_FOREIGN_MANUFACTURER_ADDRESS,
+            GMPRecord.GMP_SECPA_NUMBER,
+            GMPRecord.GMP_CERTIFICATE_NUMBER,
+            GMPRecord.GMP_TYPE_OF_ISSUANCE,
+            GMPRecord.GMP_CERTIFICATE_VALIDITY,
+            GMPRecord.GMP_DECISION,
+            GMPRecord.GMP_APP_STATUS,
+            GMPRecord.GMP_PROCESSED_TIME,
+            GMPRecord.GMP_TIMELINE,
+            GMPRecord.GMP_REMARKS,
+            GMPRecord.GMP_PRODUCT_LINE,
+            GMPRecord.GMP_CURRENT_STEP,
+            GMPRecord.GMP_EVALUATOR,
+            GMPRecord.GMP_PICS_NONPICS,
+            GMPRecord.GMP_USER_UPLOADER,
         ]
+        conds = [col.like(p) for col in _search_columns]
         if search.isdigit():
             conds.append(GMPRecord.GMP_DTN == int(search))
         else:
             conds.append(cast(GMPRecord.GMP_DTN, String).like(p))
         query = query.filter(or_(*conds))
+
+    # "Near Deadline" / "Beyond" — same client-side check the Tasks page
+    # applies (matchesTableFilters() in GMPTasksPage.jsx), just run here so
+    # it can compose with server-side pagination. Not a plain WHERE clause:
+    # the underlying calc needs a per-row working-day count and, for rows
+    # with no explicit GMP_TIMELINE number, a category-based default — not
+    # reasonably expressible as SQL. Only ever applies to still-open records
+    # (a released application has no deadline left to be "near" or "beyond"),
+    # so this only pulls in the four columns it needs for whatever the query
+    # already narrowed down, not the whole table.
+    # Comma-separated, e.g. "near,beyond" — Tasks lets both chips be active
+    # together (shows the union), so this does too, rather than forcing a
+    # single-select the Tasks page doesn't have.
+    risk_levels = {
+        v.strip() for v in (filters.get("timeline_risk") or "").split(",") if v.strip() in ("near", "beyond")
+    }
+    if risk_levels:
+        open_rows = (
+            query.filter(GMPRecord.GMP_RELEASED_DATE.is_(None))
+            .with_entities(
+                GMPRecord.GMP_ID, GMPRecord.GMP_DATE_RECEIVED,
+                GMPRecord.GMP_TIMELINE, GMPRecord.GMP_EST_CATEGORY,
+            )
+            .all()
+        )
+        matching_ids = [
+            gid for (gid, dr, tl, cat) in open_rows
+            if _gmp_timeline_level(dr, tl, cat) in risk_levels
+        ]
+        query = query.filter(GMPRecord.GMP_ID.in_(matching_ids))
 
     total = query.count()
 
@@ -484,7 +629,25 @@ def get_gmp_records(
     # A secondary sort key on the primary key is required — without it, rows
     # that tie on the primary sort column come back in a non-deterministic
     # order on every request (see same fix in crud/workflow_tasks.py).
-    if sort_by in delegation_sort_fields:
+    if sort_by == "STATUS_TIMELINE_DAYS":
+        # Not a real column — the frontend's "Status Timeline" header sends
+        # this sentinel to sort by elapsed time on the application: Released
+        # Date (or today, if it's still open) minus Date Received. This is
+        # calendar days, not the working-day count the badge itself shows
+        # (StatusTimelineBadge.jsx / computeStatusTimeline) — reproducing
+        # that exact Mon–Fri calculation in SQL isn't worth it just for sort
+        # order, and calendar days puts rows in essentially the same order.
+        # Rows with no Date Received can't be placed on this timeline at all,
+        # so they sort last regardless of direction.
+        days_expr = func.datediff(
+            func.coalesce(GMPRecord.GMP_RELEASED_DATE, func.curdate()),
+            GMPRecord.GMP_DATE_RECEIVED,
+        )
+        query = query.order_by(
+            nullslast(desc(days_expr) if sort_order.lower() == "desc" else days_expr),
+            GMPRecord.GMP_ID,
+        )
+    elif sort_by in delegation_sort_fields:
         query = query.outerjoin(GMPDelegation, GMPRecord.GMP_ID == GMPDelegation.GMP_MAIN_ID)
         col = getattr(GMPDelegation, sort_by)
         query = query.order_by(
@@ -577,6 +740,7 @@ def create_gmp_record(
         data["GMP_DATE_EXCEL_UPLOAD"] = _now()
     if data.get("GMP_DTN") and not data.get("GMP_REFERENCE_NO"):
         data["GMP_REFERENCE_NO"] = _next_reference_no(db, data["GMP_DTN"])
+    _apply_category_timeline(data)
     db_record = GMPRecord(**data)
     db.add(db_record)
     db.commit()
@@ -598,6 +762,14 @@ def update_gmp_record(
     if not db_record:
         return None
     update_data = record_update.model_dump(exclude_unset=True)
+    # If the establishment category is being set/changed and the record still
+    # has no timeline, seed GMP_TIMELINE from the category (PIC/S 60 / NON
+    # PIC/S 153 working days). Never overwrites an existing value.
+    if "GMP_EST_CATEGORY" in update_data and "GMP_TIMELINE" not in update_data \
+            and not str(db_record.GMP_TIMELINE or "").strip():
+        days = _category_timeline_days(update_data["GMP_EST_CATEGORY"])
+        if days is not None:
+            update_data["GMP_TIMELINE"] = str(days)
     before = {f: getattr(db_record, f) for f in update_data.keys()}
     for f, v in update_data.items():
         setattr(db_record, f, v)
@@ -633,6 +805,20 @@ def hard_delete_gmp_record(db: Session, record_id: int) -> bool:
     db_record = get_gmp_record(db, record_id)
     if not db_record:
         return False
+    # Every field edit stamps the then-currently-open log's id onto the audit
+    # row it creates (see log_field_changes below), so a record's audit trail
+    # almost always has real gmp_log_id values pointing at its own
+    # gmp_application_logs rows. That link has no ORM relationship (just a
+    # bare FK column) and no ON DELETE CASCADE at the DB level, so
+    # db.delete(db_record)'s cascade has no way to know it must delete the
+    # audit rows before the log rows they point to — MySQL rejects the
+    # delete with a foreign key error if it happens to go in the other
+    # order. Clearing the reference first removes the ordering dependency;
+    # the audit rows themselves still get deleted a moment later via the
+    # record's own cascade (gmp_audit_logs), same as always.
+    db.query(GMPFieldAuditLog).filter(
+        GMPFieldAuditLog.gmp_record_id == record_id
+    ).update({"gmp_log_id": None}, synchronize_session=False)
     db.delete(db_record)
     db.commit()
     return True
@@ -663,6 +849,7 @@ GMP_NO_CERT_ISSUANCE_TYPES = {
     "NFI due to Non-compliance",
     "Permit to Register",
     "Letter of Disapproval",
+    "Acknowledgement Letter",
 }
 # Issuance types that carry a Certificate Number + Certificate Validity but
 # NO SECPA Number.
@@ -681,6 +868,33 @@ def _apply_issuance_cert_rules(data: dict, type_of_issuance: str) -> dict:
         data["GMP_SECPA_NUMBER"] = None
     elif type_of_issuance in GMP_NO_SECPA_ONLY_TYPES:
         data["GMP_SECPA_NUMBER"] = None
+    return data
+
+
+# Fixed Citizen's-Charter timeline (in WORKING days) per establishment category.
+# PIC/S = 60, NON PIC/S = 153. Used to auto-fill GMP_TIMELINE when it is left
+# blank at intake — a value already entered there is a manual override and is
+# never touched.
+GMP_CATEGORY_TIMELINE_DAYS = {"PIC/S": 60, "NON PIC/S": 153}
+
+
+def _category_timeline_days(category) -> Optional[int]:
+    c = str(category or "").strip().upper()
+    if c in GMP_CATEGORY_TIMELINE_DAYS:
+        return GMP_CATEGORY_TIMELINE_DAYS[c]
+    if c.replace("-", " ").replace("  ", " ") in ("NON PIC/S", "NON PICS"):
+        return GMP_CATEGORY_TIMELINE_DAYS["NON PIC/S"]
+    return None
+
+
+def _apply_category_timeline(data: dict) -> dict:
+    """Fill GMP_TIMELINE from GMP_EST_CATEGORY when `data` carries a category but
+    no (non-blank) timeline. Leaves an existing GMP_TIMELINE untouched."""
+    if str(data.get("GMP_TIMELINE") or "").strip():
+        return data
+    days = _category_timeline_days(data.get("GMP_EST_CATEGORY"))
+    if days is not None:
+        data["GMP_TIMELINE"] = str(days)
     return data
 
 
@@ -1040,6 +1254,7 @@ def bulk_create_gmp_records(
         data = record.model_dump(exclude_unset=True)
         if "GMP_DATE_EXCEL_UPLOAD" not in data:
             data["GMP_DATE_EXCEL_UPLOAD"] = _now()
+        _apply_category_timeline(data)
         db_records.append(GMPRecord(**data))
     db.add_all(db_records)
     db.commit()

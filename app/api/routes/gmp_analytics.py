@@ -13,6 +13,7 @@ from app.schemas.gmp_analytics import (
     GMPAnalyticsCategoryResponse,
     GMPAnalyticsStepTimingResponse,
     GMPAnalyticsWorkloadResponse,
+    GMPAnalyticsByStepResponse,
     GMPAnalyticsAgingResponse,
     GMPAnalyticsNODResponse,
     GMPAnalyticsPicsCountryResponse,
@@ -88,6 +89,17 @@ def get_workload(
     db: Session = Depends(get_db),
 ):
     data = crud_gmp_analytics.get_gmp_analytics_workload(db, year=year, month=month, est_category=est_category, limit=limit)
+    return {"data": data}
+
+
+@router.get("/by-step", response_model=GMPAnalyticsByStepResponse)
+def get_by_step(
+    year: str = Query("All"),
+    month: str = Query("All"),
+    est_category: str = Query("All"),
+    db: Session = Depends(get_db),
+):
+    data = crud_gmp_analytics.get_gmp_analytics_by_step(db, year=year, month=month, est_category=est_category)
     return {"data": data}
 
 

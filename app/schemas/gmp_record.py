@@ -221,6 +221,18 @@ class GMPReopenRequest(BaseModel):
     related_dtn: str
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Resolve-or-create by DTN — used by the FGMP batch folder upload so a DTN's
+# files always attach to the one record that already exists for it (any live
+# reference number counts), and a record is created only when there is truly
+# none. Returns which of the two happened.
+# ─────────────────────────────────────────────────────────────────────────────
+class GMPResolveOrCreateByDtnRequest(BaseModel):
+    dtn: str
+    company: Optional[str] = None
+    transaction_type: Optional[str] = None
+
+
 class GMPIssuanceFieldsUpdate(BaseModel):
     type_of_issuance: Optional[str] = None
     certificate_number: Optional[str] = None
@@ -306,6 +318,12 @@ class GMPTaskResponse(BaseModel):
     # single value, since siblings never carry their own task/log. Populated
     # in get_tasks_for_user via one bulk query, not a model relationship.
     all_issuance_types: List[str] = []
+    # Where this task came from — the step that handed it over (None for
+    # Excel-imported logs) — and how many times the current step has been
+    # opened for this record (1 = first visit, >1 = it's back again).
+    # Populated in get_tasks_for_user, not model columns.
+    from_step: Optional[str] = None
+    revision: Optional[int] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -480,6 +498,11 @@ class GMPRecordListResponse(BaseModel):
     page_size: int
     total_pages: int
     data: List[GMPRecordResponse]
+
+
+class GMPResolveOrCreateByDtnResponse(BaseModel):
+    record: GMPRecordResponse
+    created: bool  # True = a new record was made, False = an existing one was reused
 
 
 class GMPRecordSummary(BaseModel):

@@ -60,10 +60,11 @@ GMP_COLUMN_MAPPING = {
 #   - "Quality Evaluator" renamed to "Evaluator"
 #   - "QA Supervisor" removed entirely (step/group deleted)
 #   - the 2nd-pass "Decker" slot repurposed and renamed to "QA Admin"
-# del_idx values now match GMP_LOG_STEPS exactly (Decking=1, Evaluator=2,
-# Checker=3, QA Admin=4, [LRD Chief Admin=5 — no Excel columns exist for this
-# step, pre-existing gap, not introduced by this change], OD Receiving=6,
-# OD Releasing=7).
+# del_idx values match GMP_LOG_STEPS exactly (Decking=1, Evaluator=2,
+# Checker=3, QA Admin=4, LRD Chief Admin=5, OD Receiving=6, OD Releasing=7).
+# LRD Chief Admin columns were added later — the GMPDelegation model already
+# had GMP_LRD_CHIEF* fields sitting unused for it (see models/gmp_record.py),
+# it just never had Excel columns wired up until now.
 # ─────────────────────────────────────────────────────────────────────────────
 GMP_LOG_STEPS_EXCEL = [
     (
@@ -87,6 +88,11 @@ GMP_LOG_STEPS_EXCEL = [
         "DATE QA ADMIN END", "QA ADMIN DEL THREAD", 4,
     ),
     (
+        "LRD Chief Admin",
+        "LRD CHIEF ADMIN", "LRD CHIEF ADMIN ID", "LRD CHIEF ADMIN DECISION", "LRD CHIEF ADMIN REMARKS",
+        "DATE LRD CHIEF ADMIN END", "LRD CHIEF ADMIN DEL THREAD", 5,
+    ),
+    (
         "OD Receiving",
         "OD-RECEIVING", "OD-RECEIVING ID", "OD-RECEIVING DECISION", "OD-RECEIVING REMARKS",
         "DATE OD-RECEIVING END", "OD-RECEIVING DEL THREAD", 6,
@@ -100,12 +106,13 @@ GMP_LOG_STEPS_EXCEL = [
 
 # One color per step group (matches main_db.py STEP_COLORS pattern)
 STEP_COLORS = [
-    "FFF2CC",   # Decking      — yellow
-    "D9EAD3",   # Evaluator    — green
-    "CFE2F3",   # Checker      — blue
-    "D9D2E9",   # QA Admin     — purple
-    "FCE5CD",   # OD Receiving — orange
-    "F4CCCC",   # OD Releasing — red/rose
+    "FFF2CC",   # Decking         — yellow
+    "D9EAD3",   # Evaluator       — green
+    "CFE2F3",   # Checker         — blue
+    "D9D2E9",   # QA Admin        — purple
+    "EAD1DC",   # LRD Chief Admin — pink
+    "FCE5CD",   # OD Receiving    — orange
+    "F4CCCC",   # OD Releasing    — red/rose
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -214,6 +221,7 @@ def _build_template_workbook() -> io.BytesIO:
                 "EVALUATOR (green)",
                 "CHECKER (blue)",
                 "QA ADMIN (purple)",
+                "LRD CHIEF ADMIN (pink)",
                 "OD-RECEIVING (orange)",
                 "OD-RELEASING (red/rose)",
                 "ID Columns",
@@ -227,6 +235,7 @@ def _build_template_workbook() -> io.BytesIO:
                 "Evaluator step — 6 columns",
                 "Checker step — 6 columns",
                 "QA Admin step — 6 columns",
+                "LRD Chief Admin step — 6 columns",
                 "OD-Receiving step — 6 columns",
                 "OD-Releasing step — 6 columns",
                 "e.g. 'DECKER ID' — numeric employee ID (e.g. 1001). Leave blank if unknown.",
@@ -238,6 +247,7 @@ def _build_template_workbook() -> io.BytesIO:
             "Note": [
                 "All fields optional except where required by your workflow.",
                 "A log row is only created if the Name column (e.g. DECKER) has a value.",
+                "Same rule applies for all step columns.",
                 "Same rule applies for all step columns.",
                 "Same rule applies for all step columns.",
                 "Same rule applies for all step columns.",

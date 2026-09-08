@@ -2,28 +2,35 @@
 # GMP counterpart of app/crud/dashboard_detail.py.
 
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from typing import Optional
 from datetime import date
 import math
 
 from app.models.gmp_record import GMPApplicationLogs, GMPRecord
 from app.schemas.gmp_dashboard_detail import GMPMetricDetailResponse, GMPApplicationLogDetail
+from app.crud.gmp_logs import _assignee_match
 
 
 def _base_query(
     db: Session,
     username: str,
+    user_id: Optional[int],
     date_from: Optional[date],
     date_to: Optional[date],
 ):
+    # Matched by user_id OR user_name (see _assignee_match) — see
+    # gmp_dashboard.py's _base_query for why username alone isn't enough.
+    # Also restricted to PRIMARY ('-01') reference numbers only — see
+    # gmp_dashboard.py's _base_query for why (sibling-record duplicates).
     q = (
         db.query(GMPApplicationLogs)
         .join(GMPRecord, GMPApplicationLogs.gmp_record_id == GMPRecord.GMP_ID)
         .options(joinedload(GMPApplicationLogs.gmp_record))
         .filter(
-            GMPApplicationLogs.user_name == username,
+            _assignee_match(username, user_id),
             GMPApplicationLogs.del_thread.in_(["Close", "Open"]),
+            or_(GMPRecord.GMP_REFERENCE_NO.is_(None), GMPRecord.GMP_REFERENCE_NO.like("%-01")),
         )
     )
     if date_from:
@@ -72,6 +79,7 @@ def get_metric_detail(
     db: Session,
     username: str,
     metric: str,
+    user_id: Optional[int] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     accomplished_date_from: Optional[date] = None,
@@ -91,7 +99,7 @@ def get_metric_detail(
     page = max(1, page)
     page_size = max(1, min(500, page_size))
 
-    q = _base_query(db, username, date_from, date_to)
+    q = _base_query(db, username, user_id, date_from, date_to)
     q = _apply_metric_filter(q, metric)
 
     if accomplished_date_from:

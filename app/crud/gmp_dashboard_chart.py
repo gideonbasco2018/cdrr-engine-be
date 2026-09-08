@@ -4,12 +4,13 @@
 # fields.
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func, extract, case, Integer
+from sqlalchemy import func, extract, case, Integer, or_
 from typing import Optional, List
 from datetime import date
 
-from app.models.gmp_record import GMPApplicationLogs
+from app.models.gmp_record import GMPApplicationLogs, GMPRecord
 from app.schemas.dashboard_chart import ChartDataPoint, ChartResponse
+from app.crud.gmp_logs import _assignee_match
 
 _MONTH_LABELS = [
     "", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -20,12 +21,22 @@ _MONTH_LABELS = [
 def _base_query(
     db: Session,
     username: str,
+    user_id: Optional[int],
     date_from: Optional[date],
     date_to: Optional[date],
 ):
-    q = db.query(GMPApplicationLogs).filter(
-        GMPApplicationLogs.user_name == username,
-        GMPApplicationLogs.del_thread.in_(["Close", "Open"]),
+    # Matched by user_id OR user_name (see _assignee_match) — see
+    # gmp_dashboard.py's _base_query for why username alone isn't enough.
+    # Also restricted to PRIMARY ('-01') reference numbers only — see
+    # gmp_dashboard.py's _base_query for why (sibling-record duplicates).
+    q = (
+        db.query(GMPApplicationLogs)
+        .join(GMPRecord, GMPApplicationLogs.gmp_record_id == GMPRecord.GMP_ID)
+        .filter(
+            _assignee_match(username, user_id),
+            GMPApplicationLogs.del_thread.in_(["Close", "Open"]),
+            or_(GMPRecord.GMP_REFERENCE_NO.is_(None), GMPRecord.GMP_REFERENCE_NO.like("%-01")),
+        )
     )
     if date_from:
         q = q.filter(func.date(GMPApplicationLogs.start_date) >= date_from)
@@ -61,6 +72,7 @@ def _agg_columns():
 def get_daily_chart(
     db: Session,
     username: str,
+    user_id: Optional[int] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
 ) -> List[ChartDataPoint]:
@@ -68,7 +80,7 @@ def get_daily_chart(
     day_col = func.date(GMPApplicationLogs.start_date).label("bucket")
 
     rows = (
-        _base_query(db, username, date_from, date_to)
+        _base_query(db, username, user_id, date_from, date_to)
         .with_entities(day_col, received, completed, on_process)
         .group_by(day_col)
         .order_by(day_col)
@@ -89,6 +101,7 @@ def get_daily_chart(
 def get_monthly_chart(
     db: Session,
     username: str,
+    user_id: Optional[int] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
 ) -> List[ChartDataPoint]:
@@ -98,7 +111,7 @@ def get_monthly_chart(
     month_col = extract("month", GMPApplicationLogs.start_date).cast(Integer).label("mo")
 
     rows = (
-        _base_query(db, username, date_from, date_to)
+        _base_query(db, username, user_id, date_from, date_to)
         .with_entities(year_col, month_col, received, completed, on_process)
         .group_by(year_col, month_col)
         .order_by(year_col, month_col)
@@ -119,6 +132,7 @@ def get_monthly_chart(
 def get_yearly_chart(
     db: Session,
     username: str,
+    user_id: Optional[int] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
 ) -> List[ChartDataPoint]:
@@ -127,7 +141,7 @@ def get_yearly_chart(
     year_col = extract("year", GMPApplicationLogs.start_date).cast(Integer).label("yr")
 
     rows = (
-        _base_query(db, username, date_from, date_to)
+        _base_query(db, username, user_id, date_from, date_to)
         .with_entities(year_col, received, completed, on_process)
         .group_by(year_col)
         .order_by(year_col)
@@ -149,17 +163,18 @@ def get_chart_data(
     db: Session,
     username: str,
     breakdown: str,
+    user_id: Optional[int] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
 ) -> ChartResponse:
     breakdown = breakdown.lower().strip()
 
     if breakdown == "day":
-        data = get_daily_chart(db, username, date_from, date_to)
+        data = get_daily_chart(db, username, user_id, date_from, date_to)
     elif breakdown == "month":
-        data = get_monthly_chart(db, username, date_from, date_to)
+        data = get_monthly_chart(db, username, user_id, date_from, date_to)
     elif breakdown == "year":
-        data = get_yearly_chart(db, username, date_from, date_to)
+        data = get_yearly_chart(db, username, user_id, date_from, date_to)
     else:
         raise ValueError(f"Invalid breakdown '{breakdown}'. Must be 'day', 'month', or 'year'.")
 
