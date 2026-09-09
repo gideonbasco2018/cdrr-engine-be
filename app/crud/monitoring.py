@@ -489,18 +489,20 @@ def get_cpr_trend(
 
 def _build_processing_filters(
     query,
-    year: Optional[int],
+    years: Optional[list],
     doc_type: Optional[str],
     processing_type: Optional[str],
     entry_type: Optional[str],
     app_status: Optional[str],
     app_type: Optional[str],
-    date_col,  # the SQLAlchemy column used for the year filter
-    classification: Optional[str] = None,  # ← NEW
+    date_col,
+    classification: Optional[str] = None,
 ):
     """Apply all optional filters to a query; return the modified query."""
-    if year:
-        query = query.filter(func.year(func.str_to_date(date_col, "%Y-%m-%d")) == year)
+    if years:  # ← CHANGED
+        query = query.filter(
+            func.year(func.str_to_date(date_col, "%Y-%m-%d")).in_(years)
+        )
     if doc_type:
         query = query.filter(MainDB.DB_TYPE_DOC_RELEASED == doc_type)
     if processing_type:
@@ -511,7 +513,7 @@ def _build_processing_filters(
         query = query.filter(MainDB.DB_APP_STATUS == app_status)
     if app_type:
         query = query.filter(MainDB.DB_APP_TYPE == app_type)
-    if classification:  # ← NEW
+    if classification:
         query = query.filter(MainDB.DB_PROD_CLASS_PRESCRIP == classification)
     return query
 
@@ -534,7 +536,7 @@ def _get_distinct_values(db: Session, column) -> list:
 
 def get_processing_trend(
     db: Session,
-    year: Optional[int] = None,
+    years: Optional[list] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     doc_type: Optional[str] = None,
@@ -560,7 +562,7 @@ def get_processing_trend(
     )
     received_q = _build_processing_filters(
         received_q,
-        year,
+        years,
         doc_type,
         processing_type,
         entry_type,
@@ -594,7 +596,7 @@ def get_processing_trend(
     )
     released_q = _build_processing_filters(
         released_q,
-        year,
+        years,
         doc_type,
         processing_type,
         entry_type,
@@ -650,49 +652,66 @@ _DIMENSION_MAP = {
 def get_processing_breakdown(
     db: Session,
     dimension: str = "doc_type",
-    year: Optional[int] = None,
+    basis: str = "received",
+    years: Optional[list] = None,
     doc_type: Optional[str] = None,
     processing_type: Optional[str] = None,
     entry_type: Optional[str] = None,
     app_status: Optional[str] = None,
     app_type: Optional[str] = None,
-    classification: Optional[str] = None,  # ← NEW
+    classification: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
 ) -> dict:
     """
     Groups all matching MainDB records by *dimension* and returns counts.
     Useful for pie / bar breakdown charts.
+
+    `basis` controls which date column anchors the year / date_from / date_to
+    filters:
+      - "received" (default): DB_DATE_RECEIVED_CENT
+      - "released": DB_DATE_RELEASED (also excludes records not yet released)
     """
     col = _DIMENSION_MAP.get(dimension, MainDB.DB_TYPE_DOC_RELEASED)
+
+    # ← NEW: pick the date column based on basis
+    date_col = (
+        MainDB.DB_DATE_RELEASED if basis == "released" else MainDB.DB_DATE_RECEIVED_CENT
+    )
 
     query = db.query(
         func.coalesce(col, "(None)").label("label"),
         func.count(MainDB.DB_ID).label("count"),
     )
 
-    # Apply shared filters (use DB_DATE_RECEIVED_CENT for the year axis)
+    # ← NEW: when grouping by released date, only count records that have
+    # actually been released
+    if basis == "released":
+        query = query.filter(
+            MainDB.DB_DATE_RELEASED.isnot(None),
+            MainDB.DB_DATE_RELEASED != "",
+            MainDB.DB_DATE_RELEASED != "N/A",
+        )
+
     query = _build_processing_filters(
         query,
-        year,
+        years,
         doc_type,
         processing_type,
         entry_type,
         app_status,
         app_type,
-        date_col=MainDB.DB_DATE_RECEIVED_CENT,
-        classification=classification,  # ← NEW
+        date_col=date_col,  # ← CHANGED: was hardcoded to DB_DATE_RECEIVED_CENT
+        classification=classification,
     )
 
     if date_from:
         query = query.filter(
-            func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"))
-            >= date_from
+            func.date(func.str_to_date(date_col, "%Y-%m-%d")) >= date_from  # ← CHANGED
         )
     if date_to:
         query = query.filter(
-            func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"))
-            <= date_to
+            func.date(func.str_to_date(date_col, "%Y-%m-%d")) <= date_to  # ← CHANGED
         )
 
     rows = query.group_by(col).order_by(func.count(MainDB.DB_ID).desc()).all()
@@ -701,6 +720,7 @@ def get_processing_breakdown(
 
     return {
         "dimension": dimension,
+        "basis": basis,  # ← NEW: echo back so frontend/UI can confirm
         "data": data,
         **_dropdown_options(db),
     }
@@ -733,13 +753,13 @@ def get_summary(
     db: Session,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    year: Optional[int] = None,
+    years: Optional[list] = None,
     doc_type: Optional[str] = None,
     processing_type: Optional[str] = None,
     entry_type: Optional[str] = None,
     app_status: Optional[str] = None,
     app_type: Optional[str] = None,
-    classification: Optional[str] = None,  # ← NEW
+    classification: Optional[str] = None,
 ) -> dict:
     """
     Table 1 — per app_type breakdown:
@@ -751,16 +771,19 @@ def get_summary(
     Table 2 — overall DB_APP_STATUS counts (unfiltered by date,
                but filtered by categorical params).
     """
-    if not date_from and year:
-        date_from = f"{year}-01-01"
-    if not date_to and year:
-        date_to = f"{year}-12-31"
+    if not date_from and years:
+        date_from = f"{min(years)}-01-01"  # ← CHANGED
+    if not date_to and years:
+        date_to = f"{max(years)}-12-31"
 
     def _apply_cat_filters(q, skip_year=False):
-        if year and not skip_year:
+        if years and not skip_year:  # ← CHANGED
             q = q.filter(
-                func.year(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"))
-                == year
+                func.year(
+                    func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")
+                ).in_(
+                    years
+                )  # ← CHANGED
             )
         if doc_type:
             q = q.filter(MainDB.DB_TYPE_DOC_RELEASED == doc_type)
@@ -901,8 +924,8 @@ def get_summary(
         period_label = f"From {date_from}"
     elif date_to:
         period_label = f"Until {date_to}"
-    elif year:
-        period_label = f"Year {year}"
+    elif years:
+        period_label = f"Years {', '.join(map(str, sorted(years)))}"
     else:
         period_label = "All Records"
 
@@ -919,7 +942,7 @@ def get_application_status_overview(
     db: Session,
     user_id: Optional[int] = None,
     group_id: Optional[int] = None,
-    year: Optional[int] = None,
+    years: Optional[list] = None,  # ← CHANGED (was: year: Optional[int])
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     doc_type: Optional[str] = None,
@@ -927,7 +950,7 @@ def get_application_status_overview(
     entry_type: Optional[str] = None,
     app_status: Optional[str] = None,
     app_type: Optional[str] = None,
-    classification: Optional[str] = None,  # ← NEW
+    classification: Optional[str] = None,
 ) -> dict:
     query = (
         db.query(
@@ -978,22 +1001,24 @@ def get_application_status_overview(
                 ),
             )
         )
-    elif year:
+    elif years:
+        min_year = min(years)
         query = query.filter(
             or_(
                 and_(
                     func.date(
                         func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")
                     )
-                    < f"{year}-01-01",
+                    < f"{min_year}-01-01",
                     or_(
                         MainDB.DB_DATE_RELEASED.is_(None),
                         MainDB.DB_DATE_RELEASED == "",
                         MainDB.DB_DATE_RELEASED == "N/A",
                     ),
                 ),
-                func.year(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"))
-                == year,
+                func.year(
+                    func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")
+                ).in_(years),
             )
         )
 

@@ -139,7 +139,7 @@ class ProcessingTrendResponse(BaseModel):
     entry_types: List[str]  # distinct DB_ENTRY_TYPE values
     app_statuses: List[str]  # distinct DB_APP_STATUS values
     app_types: List[str]  # distinct DB_APP_TYPE values
-    classifications: List[str]  # ← NEW
+    classifications: List[str]  # ← NEW: distinct DB_PROD_CLASS_PRESCRIP values
 
 
 class ProcessingStatsSummary(BaseModel):
@@ -152,11 +152,14 @@ class ProcessingStatsSummary(BaseModel):
 class ProcessingBreakdownResponse(BaseModel):
     """
     Breakdown of record counts by one dimension (doc_type, processing_type,
-    entry_type, app_status, or app_type) for the filtered result set.
-    Used to power pie / bar charts.
+    entry_type, app_status, app_type, or classification) for the filtered
+    result set. Used to power pie / bar charts.
     """
 
     dimension: str  # which column was grouped
+    basis: str = (
+        "received"  # ← NEW: "received" or "released" — which date anchored the filters
+    )
     data: List[ProcessingStatsSummary]
 
     # Same dropdown lists as ProcessingTrendResponse
@@ -165,7 +168,7 @@ class ProcessingBreakdownResponse(BaseModel):
     entry_types: List[str]
     app_statuses: List[str]
     app_types: List[str]
-    classifications: List[str]
+    classifications: List[str]  # ← NEW
 
 
 # ── Summary (formerly Weekly Status) ──────────────────────────────────────────

@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 from datetime import date
 
 from app.db.session import get_db
@@ -277,8 +277,8 @@ def cpr_trend_endpoint(  # ← renamed: was get_cpr_trend
 )
 def processing_trend_endpoint(
     group_by: str = Query("month", regex="^(month|year)$"),
-    year: Optional[int] = Query(
-        None, description="Restrict to a single year, e.g. 2025"
+    years: Optional[List[int]] = Query(
+        None, description="One or more years to filter by, e.g. ?years=2025&years=2026"
     ),
     date_from: Optional[str] = Query(
         None, description="Lower bound on DB_DATE_RECEIVED_CENT (YYYY-MM-DD)"
@@ -307,7 +307,7 @@ def processing_trend_endpoint(
     """
     return crud_monitoring.get_processing_trend(
         db=db,
-        year=year,
+        years=years,
         date_from=date_from,
         date_to=date_to,
         doc_type=doc_type,
@@ -333,18 +333,25 @@ def processing_trend_endpoint(
 def processing_breakdown_endpoint(
     dimension: str = Query(
         "doc_type",
-        regex="^(doc_type|processing_type|entry_type|app_status|app_type|classification)$",  # ← classification added
+        regex="^(doc_type|processing_type|entry_type|app_status|app_type|classification)$",
         description=(
             "Column to group by: "
             "doc_type | processing_type | entry_type | app_status | app_type | classification"
         ),
     ),
-    year: Optional[int] = Query(None, description="Restrict to a single year"),
+    basis: str = Query(  # ← NEW
+        "received",
+        regex="^(received|released)$",
+        description="Which date anchors the filters: received (DB_DATE_RECEIVED_CENT) or released (DB_DATE_RELEASED)",
+    ),
+    years: Optional[List[int]] = Query(
+        None, description="One or more years to filter by, e.g. ?years=2025&years=2026"
+    ),
     date_from: Optional[str] = Query(
-        None, description="Lower bound on DB_DATE_RECEIVED_CENT (YYYY-MM-DD)"
+        None, description="Lower bound on the chosen basis date (YYYY-MM-DD)"
     ),
     date_to: Optional[str] = Query(
-        None, description="Upper bound on DB_DATE_RECEIVED_CENT (YYYY-MM-DD)"
+        None, description="Upper bound on the chosen basis date (YYYY-MM-DD)"
     ),
     doc_type: Optional[str] = Query(None, description="Filter by DB_TYPE_DOC_RELEASED"),
     processing_type: Optional[str] = Query(
@@ -355,7 +362,7 @@ def processing_breakdown_endpoint(
     app_type: Optional[str] = Query(None, description="Filter by DB_APP_TYPE"),
     classification: Optional[str] = Query(
         None, description="Filter by DB_PROD_CLASS_PRESCRIP"
-    ),  # ← NEW
+    ),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
@@ -368,13 +375,14 @@ def processing_breakdown_endpoint(
     return crud_monitoring.get_processing_breakdown(
         db=db,
         dimension=dimension,
-        year=year,
+        basis=basis,
+        years=years,
         doc_type=doc_type,
         processing_type=processing_type,
         entry_type=entry_type,
         app_status=app_status,
         app_type=app_type,
-        classification=classification,  # ← NEW
+        classification=classification,
         date_from=date_from,
         date_to=date_to,
     )
@@ -388,7 +396,9 @@ def processing_breakdown_endpoint(
 def summary_endpoint(
     date_from: Optional[str] = Query(None, description="YYYY-MM-DD"),
     date_to: Optional[str] = Query(None, description="YYYY-MM-DD"),
-    year: Optional[int] = Query(None),
+    years: Optional[List[int]] = Query(
+        None, description="One or more years to filter by, e.g. ?years=2025&years=2026"
+    ),
     doc_type: Optional[str] = Query(None),
     processing_type: Optional[str] = Query(None),
     entry_type: Optional[str] = Query(None),
@@ -407,7 +417,7 @@ def summary_endpoint(
         db=db,
         date_from=date_from,
         date_to=date_to,
-        year=year,
+        years=years,
         doc_type=doc_type,
         processing_type=processing_type,
         entry_type=entry_type,
@@ -425,7 +435,9 @@ def summary_endpoint(
 def application_status_overview_endpoint(
     user_id: Optional[int] = Query(None),
     group_id: Optional[int] = Query(None),
-    year: Optional[int] = Query(None),
+    years: Optional[List[int]] = Query(
+        None, description="One or more years to filter by, e.g. ?years=2025&years=2026"
+    ),
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     doc_type: Optional[str] = Query(None),
@@ -447,7 +459,7 @@ def application_status_overview_endpoint(
         db=db,
         user_id=user_id,
         group_id=group_id,
-        year=year,
+        years=years,
         date_from=date_from,
         date_to=date_to,
         doc_type=doc_type,
