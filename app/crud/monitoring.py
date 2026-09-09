@@ -1,3 +1,5 @@
+# app/crud/monitoring.py
+
 from sqlalchemy.orm import Session
 from sqlalchemy import func, case, and_, or_, asc, desc, distinct
 from typing import Optional
@@ -494,6 +496,7 @@ def _build_processing_filters(
     app_status: Optional[str],
     app_type: Optional[str],
     date_col,  # the SQLAlchemy column used for the year filter
+    classification: Optional[str] = None,  # ← NEW
 ):
     """Apply all optional filters to a query; return the modified query."""
     if year:
@@ -508,6 +511,8 @@ def _build_processing_filters(
         query = query.filter(MainDB.DB_APP_STATUS == app_status)
     if app_type:
         query = query.filter(MainDB.DB_APP_TYPE == app_type)
+    if classification:  # ← NEW
+        query = query.filter(MainDB.DB_PROD_CLASS_PRESCRIP == classification)
     return query
 
 
@@ -530,13 +535,14 @@ def _get_distinct_values(db: Session, column) -> list:
 def get_processing_trend(
     db: Session,
     year: Optional[int] = None,
-    date_from: Optional[str] = None,  # ← NEW (YYYY-MM-DD)
-    date_to: Optional[str] = None,  # ← NEW (YYYY-MM-DD)
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     doc_type: Optional[str] = None,
     processing_type: Optional[str] = None,
     entry_type: Optional[str] = None,
     app_status: Optional[str] = None,
     app_type: Optional[str] = None,
+    classification: Optional[str] = None,  # ← NEW
     group_by: str = "month",
 ) -> dict:
     fmt = "%Y-%m" if group_by != "year" else "%Y"
@@ -561,8 +567,8 @@ def get_processing_trend(
         app_status,
         app_type,
         date_col=MainDB.DB_DATE_RECEIVED_CENT,
+        classification=classification,  # ← NEW
     )
-    # ← NEW: explicit date range on received
     if date_from:
         received_q = received_q.filter(
             func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"))
@@ -595,8 +601,8 @@ def get_processing_trend(
         app_status,
         app_type,
         date_col=MainDB.DB_DATE_RELEASED,
+        classification=classification,  # ← NEW
     )
-    # ← NEW: explicit date range on released
     if date_from:
         released_q = released_q.filter(
             func.date(func.str_to_date(MainDB.DB_DATE_RELEASED, "%Y-%m-%d"))
@@ -637,6 +643,7 @@ _DIMENSION_MAP = {
     "entry_type": MainDB.DB_ENTRY_TYPE,
     "app_status": MainDB.DB_APP_STATUS,
     "app_type": MainDB.DB_APP_TYPE,
+    "classification": MainDB.DB_PROD_CLASS_PRESCRIP,  # ← NEW
 }
 
 
@@ -649,8 +656,9 @@ def get_processing_breakdown(
     entry_type: Optional[str] = None,
     app_status: Optional[str] = None,
     app_type: Optional[str] = None,
-    date_from: Optional[str] = None,  # YYYY-MM-DD
-    date_to: Optional[str] = None,  # YYYY-MM-DD
+    classification: Optional[str] = None,  # ← NEW
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
 ) -> dict:
     """
     Groups all matching MainDB records by *dimension* and returns counts.
@@ -673,9 +681,9 @@ def get_processing_breakdown(
         app_status,
         app_type,
         date_col=MainDB.DB_DATE_RECEIVED_CENT,
+        classification=classification,  # ← NEW
     )
 
-    # Optional explicit date range on DB_DATE_RECEIVED_CENT
     if date_from:
         query = query.filter(
             func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"))
@@ -710,6 +718,9 @@ def _dropdown_options(db: Session) -> dict:
         "entry_types": _get_distinct_values(db, MainDB.DB_ENTRY_TYPE),
         "app_statuses": _get_distinct_values(db, MainDB.DB_APP_STATUS),
         "app_types": _get_distinct_values(db, MainDB.DB_APP_TYPE),
+        "classifications": _get_distinct_values(
+            db, MainDB.DB_PROD_CLASS_PRESCRIP
+        ),  # ← NEW
     }
 
 
@@ -720,14 +731,15 @@ def _dropdown_options(db: Session) -> dict:
 
 def get_summary(
     db: Session,
-    date_from: Optional[str] = None,  # YYYY-MM-DD  (start of period)
-    date_to: Optional[str] = None,  # YYYY-MM-DD  (end of period)
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     year: Optional[int] = None,
     doc_type: Optional[str] = None,
     processing_type: Optional[str] = None,
     entry_type: Optional[str] = None,
     app_status: Optional[str] = None,
     app_type: Optional[str] = None,
+    classification: Optional[str] = None,  # ← NEW
 ) -> dict:
     """
     Table 1 — per app_type breakdown:
@@ -760,6 +772,8 @@ def get_summary(
             q = q.filter(MainDB.DB_APP_STATUS == app_status)
         if app_type:
             q = q.filter(MainDB.DB_APP_TYPE == app_type)
+        if classification:  # ← NEW
+            q = q.filter(MainDB.DB_PROD_CLASS_PRESCRIP == classification)
         return q
 
     # ── Carry over: received before date_from, not yet released by date_from ──
@@ -776,7 +790,6 @@ def get_summary(
             func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"))
             < date_from
         )
-        # Not yet released by date_from
         carry_q = carry_q.filter(
             or_(
                 MainDB.DB_DATE_RELEASED.is_(None),
@@ -882,7 +895,6 @@ def get_summary(
         for r in status_rows
     ]
 
-    # Build period label
     if date_from and date_to:
         period_label = f"{date_from}  →  {date_to}"
     elif date_from:
@@ -915,6 +927,7 @@ def get_application_status_overview(
     entry_type: Optional[str] = None,
     app_status: Optional[str] = None,
     app_type: Optional[str] = None,
+    classification: Optional[str] = None,  # ← NEW
 ) -> dict:
     query = (
         db.query(
@@ -994,6 +1007,8 @@ def get_application_status_overview(
         query = query.filter(MainDB.DB_APP_STATUS == app_status)
     if app_type:
         query = query.filter(MainDB.DB_APP_TYPE == app_type)
+    if classification:  # ← NEW
+        query = query.filter(MainDB.DB_PROD_CLASS_PRESCRIP == classification)
 
     rows = (
         query.group_by(ApplicationLogs.application_step)
