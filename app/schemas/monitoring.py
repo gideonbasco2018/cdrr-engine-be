@@ -1,3 +1,4 @@
+# app/schemas/monitoring.py
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List
 
@@ -138,6 +139,7 @@ class ProcessingTrendResponse(BaseModel):
     entry_types: List[str]  # distinct DB_ENTRY_TYPE values
     app_statuses: List[str]  # distinct DB_APP_STATUS values
     app_types: List[str]  # distinct DB_APP_TYPE values
+    classifications: List[str]  # ← NEW
 
 
 class ProcessingStatsSummary(BaseModel):
@@ -163,6 +165,7 @@ class ProcessingBreakdownResponse(BaseModel):
     entry_types: List[str]
     app_statuses: List[str]
     app_types: List[str]
+    classifications: List[str]
 
 
 # ── Summary (formerly Weekly Status) ──────────────────────────────────────────
