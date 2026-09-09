@@ -290,7 +290,9 @@ def processing_trend_endpoint(
     processing_type: Optional[str] = Query(None),
     entry_type: Optional[str] = Query(None),
     app_status: Optional[str] = Query(None),
-    app_type: Optional[str] = Query(None),
+    app_types: Optional[List[str]] = Query(
+        None, description="One or more application types to filter by"
+    ),
     classification: Optional[str] = Query(
         None, description="Filter by DB_PROD_CLASS_PRESCRIP"
     ),  # ← NEW
@@ -314,7 +316,7 @@ def processing_trend_endpoint(
         processing_type=processing_type,
         entry_type=entry_type,
         app_status=app_status,
-        app_type=app_type,
+        app_types=app_types,
         classification=classification,  # ← NEW
         group_by=group_by,
     )
@@ -359,7 +361,9 @@ def processing_breakdown_endpoint(
     ),
     entry_type: Optional[str] = Query(None, description="Filter by DB_ENTRY_TYPE"),
     app_status: Optional[str] = Query(None, description="Filter by DB_APP_STATUS"),
-    app_type: Optional[str] = Query(None, description="Filter by DB_APP_TYPE"),
+    app_types: Optional[List[str]] = Query(
+        None, description="One or more application types to filter by"
+    ),
     classification: Optional[str] = Query(
         None, description="Filter by DB_PROD_CLASS_PRESCRIP"
     ),
@@ -381,7 +385,7 @@ def processing_breakdown_endpoint(
         processing_type=processing_type,
         entry_type=entry_type,
         app_status=app_status,
-        app_type=app_type,
+        app_types=app_types,
         classification=classification,
         date_from=date_from,
         date_to=date_to,
@@ -403,7 +407,9 @@ def summary_endpoint(
     processing_type: Optional[str] = Query(None),
     entry_type: Optional[str] = Query(None),
     app_status: Optional[str] = Query(None),
-    app_type: Optional[str] = Query(None),
+    app_types: Optional[List[str]] = Query(
+        None, description="One or more application types to filter by"
+    ),
     classification: Optional[str] = Query(None),  # ← NEW
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
@@ -422,7 +428,7 @@ def summary_endpoint(
         processing_type=processing_type,
         entry_type=entry_type,
         app_status=app_status,
-        app_type=app_type,
+        app_types=app_types,
         classification=classification,
     )
 
@@ -444,7 +450,9 @@ def application_status_overview_endpoint(
     processing_type: Optional[str] = Query(None),
     entry_type: Optional[str] = Query(None),
     app_status: Optional[str] = Query(None),
-    app_type: Optional[str] = Query(None),
+    app_types: Optional[List[str]] = Query(
+        None, description="One or more application types to filter by"
+    ),
     classification: Optional[str] = Query(None),  # ← NEW
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
@@ -466,6 +474,6 @@ def application_status_overview_endpoint(
         processing_type=processing_type,
         entry_type=entry_type,
         app_status=app_status,
-        app_type=app_type,
+        app_types=app_types,
         classification=classification,  # ← NEW
     )

@@ -494,12 +494,12 @@ def _build_processing_filters(
     processing_type: Optional[str],
     entry_type: Optional[str],
     app_status: Optional[str],
-    app_type: Optional[str],
+    app_types: Optional[list],  # ← CHANGED (was: app_type: Optional[str])
     date_col,
     classification: Optional[str] = None,
 ):
     """Apply all optional filters to a query; return the modified query."""
-    if years:  # ← CHANGED
+    if years:
         query = query.filter(
             func.year(func.str_to_date(date_col, "%Y-%m-%d")).in_(years)
         )
@@ -511,8 +511,8 @@ def _build_processing_filters(
         query = query.filter(MainDB.DB_ENTRY_TYPE == entry_type)
     if app_status:
         query = query.filter(MainDB.DB_APP_STATUS == app_status)
-    if app_type:
-        query = query.filter(MainDB.DB_APP_TYPE == app_type)
+    if app_types:  # ← CHANGED
+        query = query.filter(MainDB.DB_APP_TYPE.in_(app_types))
     if classification:
         query = query.filter(MainDB.DB_PROD_CLASS_PRESCRIP == classification)
     return query
@@ -543,8 +543,8 @@ def get_processing_trend(
     processing_type: Optional[str] = None,
     entry_type: Optional[str] = None,
     app_status: Optional[str] = None,
-    app_type: Optional[str] = None,
-    classification: Optional[str] = None,  # ← NEW
+    app_types: Optional[list] = None,
+    classification: Optional[str] = None,
     group_by: str = "month",
 ) -> dict:
     fmt = "%Y-%m" if group_by != "year" else "%Y"
@@ -567,7 +567,7 @@ def get_processing_trend(
         processing_type,
         entry_type,
         app_status,
-        app_type,
+        app_types,
         date_col=MainDB.DB_DATE_RECEIVED_CENT,
         classification=classification,  # ← NEW
     )
@@ -601,7 +601,7 @@ def get_processing_trend(
         processing_type,
         entry_type,
         app_status,
-        app_type,
+        app_types,
         date_col=MainDB.DB_DATE_RELEASED,
         classification=classification,  # ← NEW
     )
@@ -658,7 +658,7 @@ def get_processing_breakdown(
     processing_type: Optional[str] = None,
     entry_type: Optional[str] = None,
     app_status: Optional[str] = None,
-    app_type: Optional[str] = None,
+    app_types: Optional[list] = None,  # ← CHANGED
     classification: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
@@ -700,7 +700,7 @@ def get_processing_breakdown(
         processing_type,
         entry_type,
         app_status,
-        app_type,
+        app_types,
         date_col=date_col,  # ← CHANGED: was hardcoded to DB_DATE_RECEIVED_CENT
         classification=classification,
     )
@@ -758,7 +758,7 @@ def get_summary(
     processing_type: Optional[str] = None,
     entry_type: Optional[str] = None,
     app_status: Optional[str] = None,
-    app_type: Optional[str] = None,
+    app_types: Optional[list] = None,  # ← CHANGED
     classification: Optional[str] = None,
 ) -> dict:
     """
@@ -793,8 +793,8 @@ def get_summary(
             q = q.filter(MainDB.DB_ENTRY_TYPE == entry_type)
         if app_status:
             q = q.filter(MainDB.DB_APP_STATUS == app_status)
-        if app_type:
-            q = q.filter(MainDB.DB_APP_TYPE == app_type)
+        if app_types:  # ← CHANGED
+            q = q.filter(MainDB.DB_APP_TYPE.in_(app_types))
         if classification:  # ← NEW
             q = q.filter(MainDB.DB_PROD_CLASS_PRESCRIP == classification)
         return q
@@ -949,7 +949,7 @@ def get_application_status_overview(
     processing_type: Optional[str] = None,
     entry_type: Optional[str] = None,
     app_status: Optional[str] = None,
-    app_type: Optional[str] = None,
+    app_types: Optional[list] = None,  # ← CHANGED
     classification: Optional[str] = None,
 ) -> dict:
     query = (
@@ -1030,8 +1030,8 @@ def get_application_status_overview(
         query = query.filter(MainDB.DB_ENTRY_TYPE == entry_type)
     if app_status:
         query = query.filter(MainDB.DB_APP_STATUS == app_status)
-    if app_type:
-        query = query.filter(MainDB.DB_APP_TYPE == app_type)
+    if app_types:  # ← CHANGED
+        query = query.filter(MainDB.DB_APP_TYPE.in_(app_types))
     if classification:  # ← NEW
         query = query.filter(MainDB.DB_PROD_CLASS_PRESCRIP == classification)
 
