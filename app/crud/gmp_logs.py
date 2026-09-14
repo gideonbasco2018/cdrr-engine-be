@@ -10,15 +10,23 @@ Mirrors the production app/crud/application_logs.py pattern:
   - toggle_star   : flip is_starred
   - get_last_index: highest del_index for a record
 """
+import os
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, and_, or_
 from typing import Optional, List, Tuple, Dict, Any
 from datetime import datetime, timezone, timedelta
 from app.models.gmp_record import GMPApplicationLogs, GMPRecord
+from app.models.user import User
 from app.crud.notification import create_notification, already_notified_today
 from app.schemas.notification import NotificationCreate
 
 _PHT = timezone(timedelta(hours=8))
+
+# Strict-id task matching. Leave OFF until the one-time backfill has run
+# (scripts/backfill_gmp_log_user_ids.py) — until then, open task rows with no
+# user_id still need the username fallback or they'd vanish from "My Tasks".
+# Flip to "1"/"true" once the backfill is done and its unresolved list handled.
+_STRICT_ID_MATCHING = os.getenv("GMP_STRICT_ID_MATCHING", "").strip().lower() in ("1", "true", "yes")
 
 
 def _now() -> datetime:
@@ -136,18 +144,106 @@ def get_logs_for_record(db: Session, gmp_record_id: int) -> List[GMPApplicationL
     return completed + in_progress
 
 
+def previous_active_step_holder_id(
+    db: Session, gmp_record_id: int, step_label: str
+) -> Optional[int]:
+    """The most recent user_id seen at `step_label` for this record whose user
+    is still active. Used to default a "send back" action (Return to Evaluator /
+    QA Admin / LRD Chief Admin, and the Checker's return to Evaluator) to
+    whoever last held that step — so a bounced application lands right back with
+    the person who was working it. Returns None when no active prior holder
+    exists (then the caller falls back to whatever the frontend picked)."""
+    rows = (
+        db.query(GMPApplicationLogs.user_id)
+        .filter(
+            GMPApplicationLogs.gmp_record_id == gmp_record_id,
+            GMPApplicationLogs.application_step == step_label,
+            GMPApplicationLogs.user_id.isnot(None),
+        )
+        .order_by(GMPApplicationLogs.del_index.desc())
+        .all()
+    )
+    seen: List[int] = []
+    for (uid,) in rows:
+        if uid not in seen:
+            seen.append(uid)
+    for uid in seen:
+        if db.query(User.id).filter(User.id == uid, User.is_active.is_(True)).first():
+            return uid
+    return None
+
+
+def resolve_active_user(db: Session, user_id: Optional[int]) -> Optional[User]:
+    """Look up a user by id, but only if they're active. Returns the User row
+    or None. Write paths (deck / forward / reassign / reroute) call this and
+    raise 400 when it comes back None — an assignee must be a real, active
+    user, identified by their id."""
+    if user_id is None:
+        return None
+    return (
+        db.query(User)
+        .filter(User.id == user_id, User.is_active.is_(True))
+        .first()
+    )
+
+
+def attach_assignee_info(db: Session, logs: List[GMPApplicationLogs]) -> None:
+    """Resolve each log's user_id to the user's CURRENT username / name / alias
+    and hang them on the log as plain (non-persisted) attributes:
+      assignee_username, assignee_first_name, assignee_surname, assignee_alias
+
+    This is what the frontend shows — never the stored user_name, which can be
+    a stale username. Inactive users are still resolved here (you must be able
+    to see and reassign a task held by someone who has since been deactivated).
+    Falls back to the stored user_name only when the log carries no user_id at
+    all (legacy rows from before the backfill)."""
+    ids = {l.user_id for l in logs if getattr(l, "user_id", None) is not None}
+    users: Dict[int, User] = {}
+    if ids:
+        for u in db.query(User).filter(User.id.in_(ids)).all():
+            users[u.id] = u
+    for l in logs:
+        u = users.get(getattr(l, "user_id", None))
+        if u:
+            l.assignee_username   = u.username
+            l.assignee_first_name = u.first_name
+            l.assignee_surname    = u.surname
+            l.assignee_alias      = u.alias
+        else:
+            l.assignee_username   = getattr(l, "user_name", None)
+            l.assignee_first_name = None
+            l.assignee_surname    = None
+            l.assignee_alias      = None
+
+
 def _assignee_match(username: Optional[str], user_id: Optional[int]):
-    """A log belongs to this user if EITHER its stored user_id matches (stable
-    across a username change) OR its user_name matches the current username
-    (covers legacy / self-loop / deck / Excel-imported logs that never got a
-    user_id). Kept as one helper so every task query stays in sync."""
+    """Who owns a task.
+
+    Target state (GMP_STRICT_ID_MATCHING on): the log's user_id equals this
+    user's id — nothing else. user_id is our own users-table primary key:
+    stable, unique, never reused. Usernames get reassigned between different
+    people by company policy, so they never decide task ownership — that is
+    exactly how a critical application once got silently handed to the wrong
+    person. A log with no user_id then matches nobody and shows in the admin
+    "unassigned tasks" view for a manual reassign.
+
+    Transitional state (flag off, the default): id wins whenever the log has
+    one; a log with NO user_id still falls back to matching its stored
+    user_name. Needed only until the one-time backfill
+    (scripts/backfill_gmp_log_user_ids.py) has put an id on every open row.
+
+    Kept as one helper so every task query stays in sync."""
+    if _STRICT_ID_MATCHING:
+        if user_id is None:
+            return GMPApplicationLogs.id.is_(None)  # never true
+        return GMPApplicationLogs.user_id == user_id
+
     clauses = []
     if user_id is not None:
-        clauses.append(GMPApplicationLogs.user_id == user_id)
+        clauses.append(and_(GMPApplicationLogs.user_id.isnot(None), GMPApplicationLogs.user_id == user_id))
     if username:
-        clauses.append(GMPApplicationLogs.user_name == username)
+        clauses.append(and_(GMPApplicationLogs.user_id.is_(None), GMPApplicationLogs.user_name == username))
     if not clauses:
-        # No identity to match on — return a never-true clause.
         return GMPApplicationLogs.id.is_(None)
     return or_(*clauses)
 
@@ -163,7 +259,7 @@ def get_tasks_for_user(
 ) -> Tuple[List[GMPApplicationLogs], int]:
     """
     Return all open tasks assigned to a user, joined with GMPRecord.
-    Matched by user_id OR user_name (see _assignee_match).
+    Matched by user_id only (see _assignee_match).
     Defensively restricted to PRIMARY ('-01') reference numbers only —
     sibling issuance records (added via Add Issuance) should never carry
     their own application logs going forward (see add_gmp_issuance in
@@ -272,37 +368,47 @@ def get_tasks_for_user(
             log.from_step = None
             log.revision = 1
 
+    # Resolve each task's owner from user_id → current username / name / alias.
+    attach_assignee_info(db, logs)
+
     return logs, total
 
-def get_task_counts_for_users(db: Session, usernames: List[str]) -> Dict[str, int]:
+def get_task_counts_for_user_ids(db: Session, user_ids: List[int]) -> Dict[int, int]:
     """
-    Same open-task criteria as get_task_count_for_user(), for a batch of
-    usernames in one query — used by the Bulk Deck modal's evaluator checklist
-    to show each evaluator's current workload without an N+1 request per name.
-    Usernames with zero open tasks are simply absent from the returned dict.
+    Open-task count per user, matched by user_id, for a batch of ids in one
+    query — powers the Bulk Deck modal's evaluator checklist workload column.
+    Keyed by id so it agrees with get_tasks_for_user once the strict-id
+    backfill has run. Ids with zero open tasks are absent from the returned
+    dict.
+
+    NOTE: while GMP_STRICT_ID_MATCHING is still off (before the backfill), this
+    count can be slightly LOW for an evaluator who still has id-less open task
+    rows — those show in their own task list (via the username fallback) but
+    not here. It's a workload hint only, and it self-corrects the moment the
+    backfill fills in the missing ids.
     """
-    if not usernames:
+    if not user_ids:
         return {}
     rows = (
-        db.query(GMPApplicationLogs.user_name, func.count(GMPApplicationLogs.id))
+        db.query(GMPApplicationLogs.user_id, func.count(GMPApplicationLogs.id))
         .join(GMPRecord, GMPApplicationLogs.gmp_record_id == GMPRecord.GMP_ID)
         .filter(
-            GMPApplicationLogs.user_name.in_(usernames),
+            GMPApplicationLogs.user_id.in_(user_ids),
             GMPApplicationLogs.del_thread == "Open",
             GMPApplicationLogs.del_last_index == 1,
             or_(GMPRecord.GMP_REFERENCE_NO.is_(None), GMPRecord.GMP_REFERENCE_NO.like("%-01")),
         )
-        .group_by(GMPApplicationLogs.user_name)
+        .group_by(GMPApplicationLogs.user_id)
         .all()
     )
-    return {name: count for name, count in rows}
+    return {uid: count for uid, count in rows}
 
 
 def get_task_count_for_user(db: Session, username: str, user_id: Optional[int] = None) -> int:
     """
     Count of open tasks currently assigned to a user, across every step.
-    Matched by user_id OR user_name, same criteria as get_tasks_for_user, so a
-    task drops out the moment it's decked/advanced/reassigned/rerouted
+    Matched by user_id only, same criteria as get_tasks_for_user, so a task
+    drops out the moment it's decked/advanced/reassigned/rerouted
     (del_thread → "Close"). Same primary-only restriction.
     """
     return (

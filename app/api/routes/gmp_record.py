@@ -36,7 +36,24 @@ def _full_name(user) -> Optional[str]:
     first = getattr(user, "first_name", None) or ""
     last  = getattr(user, "surname", None) or ""
     full  = f"{first} {last}".strip()
-    return full or None
+    return full or getattr(user, "username", None) or None
+
+
+def _resolve_assignee(db: Session, user_id: Optional[int]) -> Optional[str]:
+    """Turn a picked assignee user_id into that user's current username, to
+    store on the new task row. The id is the real identifier; the username is
+    just the label we save alongside it. Raises 400 when the id isn't a real
+    active user. Returns None when no id was given (e.g. a "Return to X" action
+    that carries no assignee, or a terminal action)."""
+    if user_id is None:
+        return None
+    user = gmp_logs.resolve_active_user(db, user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Assignee user id {user_id} is not a valid active user.",
+        )
+    return user.username
 
 # ──────────────────────────────────────────────────────────────────────────────
 # IMPORTANT: All static / literal-segment routes MUST come before /{record_id}.
@@ -54,7 +71,7 @@ def download_template():
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="GMP_Upload_Template.xlsx"'},
+        headers={"Content-Disposition": 'attachment; filename="FGMP_Upload_Template.xlsx"'},
     )
 
 
@@ -586,11 +603,19 @@ def get_my_gmp_task_count(
 # workload before the preset split assigns applications to them.
 @router.get("/tasks/task-counts")
 def get_gmp_task_counts(
-    usernames: str = Query(..., description="Comma-separated usernames"),
+    user_ids: str = Query(..., description="Comma-separated user ids"),
     db: Session = Depends(get_db),
 ):
-    names = [u.strip() for u in usernames.split(",") if u.strip()]
-    return gmp_logs.get_task_counts_for_users(db, names)
+    ids: List[int] = []
+    for part in user_ids.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            ids.append(int(part))
+        except ValueError:
+            pass
+    return gmp_logs.get_task_counts_for_user_ids(db, ids)
 
 
 # ── Mark task received (static prefix /logs/ — must be before /{record_id}) ───
@@ -845,6 +870,10 @@ def get_logs(
 ):
     skip = (page - 1) * page_size
     logs, _ = get_gmp_logs(db=db, gmp_id=record_id, skip=skip, limit=page_size)
+    # Resolve each log's owner from user_id → current username / name / alias
+    # so the screen (WorkflowModal history, reassign/reroute "current assignee")
+    # never shows a stale user_name.
+    gmp_logs.attach_assignee_info(db, logs)
     return logs
 
 
@@ -898,11 +927,26 @@ def advance_step(
 
     next_del_index = GMP_STEP_DEL_INDEX.get(next_step_label) if next_step_label else None
 
+    # The assignee is identified by id; the username stored on the new row is
+    # looked up from it (the frontend no longer sends a name). A bad/inactive
+    # id is a 400 here, before anything is written.
+    next_assignee_id = req.next_assignee_id if next_step_label else None
+    # "Send back" actions (Return to X, and the Checker's return to Evaluator)
+    # default to whoever last held the step they're going back to, so a bounced
+    # application lands with the person who was working it. The frontend
+    # pre-fills the same person in an editable dropdown; this is the safety net
+    # for callers that don't (bulk endorse) or when the pick doesn't come through.
+    if next_assignee_id is None and next_step_label:
+        next_assignee_id = gmp_logs.previous_active_step_holder_id(
+            db, record_id, next_step_label
+        )
+    next_assignee_name = _resolve_assignee(db, next_assignee_id)
+
     new_log = gmp_logs.advance_step(
         db, record_id,
         req.current_step, req.action, req.recommendation, req.remarks,
-        req.next_assignee_name if next_step_label else None,
-        req.next_assignee_id if next_step_label else None,
+        next_assignee_name,
+        next_assignee_id,
         next_step_label, next_del_index,
         performed_by_name=getattr(current_user, "username", None),
         performed_by_id=getattr(current_user, "id", None),
@@ -954,6 +998,15 @@ def reassign_step(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    # Reassignment always targets a specific person — the id is required and
+    # must be a real active user; the username to store is looked up from it.
+    reassigned_to_user_name = _resolve_assignee(db, req.reassigned_to_user_id)
+    if not reassigned_to_user_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reassignment needs a valid assignee (reassigned_to_user_id).",
+        )
+
     new_log = gmp_logs.reassign(
         db,
         gmp_record_id=record_id,
@@ -962,7 +1015,7 @@ def reassign_step(
         reassigned_by_user_id=getattr(current_user, "id", None),
         reassigned_by_alias=getattr(current_user, "alias", None),
         reassigned_by_full_name=_full_name(current_user),
-        reassigned_to_user_name=req.reassigned_to_user_name,
+        reassigned_to_user_name=reassigned_to_user_name,
         reassigned_to_user_id=req.reassigned_to_user_id,
         reassignment_reason=req.reassignment_reason,
         reassignment_remarks=req.reassignment_remarks,
@@ -983,6 +1036,10 @@ def reroute_step(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    # Reroute may or may not name a specific person. When it does, the id is
+    # the identifier and the username is looked up from it; a bad id is a 400.
+    target_user_name = _resolve_assignee(db, req.target_user_id)
+
     new_log = gmp_logs.reroute(
         db,
         gmp_record_id=record_id,
@@ -992,7 +1049,7 @@ def reroute_step(
         rerouted_by_user_id=getattr(current_user, "id", None),
         rerouted_by_alias=getattr(current_user, "alias", None),
         rerouted_by_full_name=_full_name(current_user),
-        target_user_name=req.target_user_name,
+        target_user_name=target_user_name,
         target_user_id=req.target_user_id,
         reroute_reason=req.reroute_reason,
         reroute_remarks=req.reroute_remarks,
@@ -1045,7 +1102,10 @@ async def preview_gmp_excel(
     """
     import pandas as pd
     import numpy as np
-    from app.crud.gmp_upload import _parse_date as _parse_upload_date
+    from app.crud.gmp_upload import (
+        _parse_date as _parse_upload_date,
+        GMP_LOG_STEPS_EXCEL, resolve_step_assignee,
+    )
 
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(
@@ -1098,6 +1158,7 @@ async def preview_gmp_excel(
             return s, True  # present, but not a usable numeric DTN
 
     will_insert, will_skip = [], []
+    step_warnings = []   # per-row: a workflow step that will be skipped on import
     seen_dtns_in_file = set()
 
     for index, row in df.iterrows():
@@ -1143,12 +1204,26 @@ async def preview_gmp_excel(
         seen_dtns_in_file.add(dtn_val)
         will_insert.append(preview_row)
 
+        # Same assignee check the real upload runs — so "Check File" can show
+        # exactly which workflow steps will be skipped, and why.
+        for (step_label, user_col, id_col, *_rest) in GMP_LOG_STEPS_EXCEL:
+            _uid, _uname, w = resolve_step_assignee(
+                db, step_label, row.get(user_col.upper()), row.get(id_col.upper())
+            )
+            if w:
+                step_warnings.append({
+                    "row_number": index + 2,
+                    "dtn": str(dtn_val),
+                    "reason": w["reason"],
+                })
+
     return {
         "total_rows":   len(will_insert) + len(will_skip),
         "insert_count": len(will_insert),
         "skip_count":   len(will_skip),
         "will_insert":  will_insert,
         "will_skip":    will_skip,
+        "step_warnings": step_warnings,
     }
 
 
@@ -1161,7 +1236,7 @@ async def upload_gmp_excel(
     import pandas as pd
     import numpy as np
     from app.crud.gmp_upload import (
-        GMP_COLUMN_MAPPING, GMP_LOG_STEPS_EXCEL, _parse_date
+        GMP_COLUMN_MAPPING, GMP_LOG_STEPS_EXCEL, _parse_date, resolve_step_assignee
     )
     from app.models.gmp_record import GMPDelegation, GMPApplicationLogs
 
@@ -1196,6 +1271,7 @@ async def upload_gmp_excel(
     inserted  = 0
     skipped   = 0
     errors    = []
+    warnings  = []   # non-fatal: a step was skipped (bad/missing assignee ID)
 
     for index, row in df.iterrows():
         # A row needs a DTN to be treated as real data. Checking "is every
@@ -1303,18 +1379,25 @@ async def upload_gmp_excel(
 
             logs_inserted = 0
             for (step_label, user_col, id_col, dec_col, rem_col, date_col, thread_col, del_idx) in GMP_LOG_STEPS_EXCEL:
+                # A step is assigned by user_id only. The name column is a
+                # label — resolve_step_assignee() decides: valid active ID →
+                # use it (username taken from the user record); anything else
+                # with data in it → skip the step and record a reason for the
+                # "Check File" screen.
                 user_val = row.get(user_col.upper())
-                if pd.isna(user_val) or user_val is None or str(user_val).strip() == "":
+                raw_id   = row.get(id_col.upper())
+                user_id_val, user_name_val, step_warning = resolve_step_assignee(
+                    db, step_label, user_val, raw_id
+                )
+                if step_warning:
+                    warnings.append({
+                        "row_number": index + 2,
+                        "dtn": str(dtn_val) if dtn_val is not None else "-",
+                        "reason": step_warning["reason"],
+                    })
                     continue
-
-                # Parse user_id
-                raw_id = row.get(id_col.upper())
-                user_id_val = None
-                if raw_id is not None and not (isinstance(raw_id, float) and pd.isna(raw_id)):
-                    try:
-                        user_id_val = int(float(str(raw_id).strip()))
-                    except (ValueError, TypeError):
-                        user_id_val = None
+                if user_id_val is None:
+                    continue  # step not reached — nothing filled in
 
                 accomplished = _parse_date(row.get(date_col.upper()))
                 thread_raw   = row.get(thread_col.upper())
@@ -1338,7 +1421,7 @@ async def upload_gmp_excel(
                 log = GMPApplicationLogs(
                     gmp_record_id       = db_record.GMP_ID,
                     application_step    = step_label,
-                    user_name           = str(user_val).strip(),
+                    user_name           = user_name_val,
                     user_id             = user_id_val,
                     application_status  = log_status,
                     application_decision= dec_str,
@@ -1358,7 +1441,7 @@ async def upload_gmp_excel(
                 # Store delegation fields
                 if step_label in DELEGATION_FIELD_MAP:
                     name_f, dec_f, rem_f, date_f = DELEGATION_FIELD_MAP[step_label]
-                    delegation_kwargs[name_f] = str(user_val).strip()
+                    delegation_kwargs[name_f] = user_name_val
                     delegation_kwargs[dec_f]  = dec_str or None
                     delegation_kwargs[rem_f]  = rem_str or None
                     delegation_kwargs[date_f] = accomplished
@@ -1399,12 +1482,15 @@ async def upload_gmp_excel(
         "inserted": inserted,
         "skipped":  skipped,
         "errors":   errors[:20],
+        "warnings": warnings[:50],
         "message":  f"Upload complete: {inserted} record(s) inserted."
-                    + (f" {skipped} skipped." if skipped else ""),
+                    + (f" {skipped} skipped." if skipped else "")
+                    + (f" {len(warnings)} step(s) skipped — see warnings." if warnings else ""),
         "stats": {
             "total_processed": inserted + skipped + len(errors),
             "success":  inserted,
             "skipped":  skipped,
             "errors":   len(errors),
+            "warnings": len(warnings),
         },
     }
