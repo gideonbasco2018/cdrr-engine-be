@@ -11,6 +11,7 @@ from app.models.e_application_ref import EApplicationRef
 from app.models.cpr_application import CPRApplication
 from app.models.cpr_app_parties import CPRAppParty
 from app.models.cpr_app_history import CPRAppHistory
+from app.models.cpr_app_document import CPRAppDocument
 from app.schemas.cpr_applications import ApplicationCreate
 
 PARTY_TYPES = ["manufacturer", "trader", "repacker", "importer", "distributor"]
@@ -68,7 +69,11 @@ def _get_cpr_process_uuid(db: Session) -> str:
     return process.process_uuid
 
 
-def create_application(db: Session, payload: ApplicationCreate) -> CPRApplication:
+def create_application(
+    db: Session,
+    payload: ApplicationCreate,
+    documents: list[dict] | None = None,
+) -> CPRApplication:
     data = payload.model_dump(by_alias=False)
 
     # Resolve the process_uuid first, before creating any rows
@@ -143,6 +148,11 @@ def create_application(db: Session, payload: ApplicationCreate) -> CPRApplicatio
                 del_thread="Open",
             )
         )
+
+        # 5. Documents (kung meron)
+        if documents:
+            for doc_input in documents:
+                db.add(CPRAppDocument(application_uuid=ref_uuid, **doc_input))
 
         db.commit()
         db.refresh(db_application)
