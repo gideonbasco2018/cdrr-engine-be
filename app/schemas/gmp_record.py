@@ -129,6 +129,15 @@ class GMPApplicationLogResponse(BaseModel):
     reroute_target_step: Optional[str] = None
     reroute_reason: Optional[str] = None
     reroute_remarks: Optional[str] = None
+    # ── Assignee info, resolved live from user_id ─────────────────────────────
+    # The screen reads these, not user_name. Filled by
+    # gmp_logs.attach_assignee_info() from the users table each request, so a
+    # username change is picked up immediately. Falls back to the stored
+    # user_name only when the log has no user_id (pre-backfill legacy rows).
+    assignee_username: Optional[str] = None
+    assignee_first_name: Optional[str] = None
+    assignee_surname: Optional[str] = None
+    assignee_alias: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -192,8 +201,11 @@ class GMPApplicationLogUpdate(BaseModel):
 # ─────────────────────────────────────────────────────────────────────────────
 class GMPReassignRequest(BaseModel):
     application_step: str
-    reassigned_to_user_name: str
+    # The assignee is identified by id; the server looks the username up from
+    # it and returns a clean 400 if it's missing/invalid. `reassigned_to_user_name`
+    # is accepted for backward compatibility but ignored.
     reassigned_to_user_id: Optional[int] = None
+    reassigned_to_user_name: Optional[str] = None
     reassignment_reason: Optional[str] = None
     reassignment_remarks: Optional[str] = None
 
@@ -324,6 +336,12 @@ class GMPTaskResponse(BaseModel):
     # Populated in get_tasks_for_user, not model columns.
     from_step: Optional[str] = None
     revision: Optional[int] = None
+    # ── Assignee info, resolved live from user_id (see note on
+    # GMPApplicationLogResponse). The task list / WorkflowModal read these. ──
+    assignee_username: Optional[str] = None
+    assignee_first_name: Optional[str] = None
+    assignee_surname: Optional[str] = None
+    assignee_alias: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 

@@ -16,6 +16,65 @@ from dateutil import parser as dateutil_parser
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
 
+from app.models.user import User
+
+
+def _parse_step_user_id(raw_id):
+    """Pull a whole-number user id out of an Excel cell, or None."""
+    if raw_id is None or (isinstance(raw_id, float) and pd.isna(raw_id)):
+        return None
+    try:
+        return int(float(str(raw_id).strip()))
+    except (ValueError, TypeError):
+        return None
+
+
+def resolve_step_assignee(db, step_label, name_val, raw_id):
+    """One rule for both the upload and the 'Check File' preview.
+
+    FGMP task ownership is by user_id only. For each workflow step in the
+    sheet:
+      - ID given and it's a real ACTIVE user  -> assign to them; the username
+        stored on the row is that user's current username (the sheet's name
+        column is only a label).
+      - ID given but not a real active user   -> skip this step, with a reason.
+      - No ID but a name is filled             -> skip this step, with a reason
+        (a name alone can't assign a task).
+      - Nothing filled                         -> step simply not reached.
+
+    Returns (user_id, username, warning). `warning` is None, or a dict
+    {"step", "reason"} for the Check File screen. When a warning is returned
+    the caller must NOT create a log for that step.
+    """
+    has_name = not (pd.isna(name_val) or name_val is None or str(name_val).strip() == "")
+    name_str = str(name_val).strip() if has_name else None
+    user_id = _parse_step_user_id(raw_id)
+
+    if user_id is None and not has_name:
+        return None, None, None  # step not reached
+
+    if user_id is None:
+        return None, None, {
+            "step": step_label,
+            "reason": f"{step_label}: name \"{name_str}\" was given, but no {step_label} ID. "
+                      f"A task is assigned by ID, so this step will be skipped unless you add the ID.",
+        }
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return None, None, {
+            "step": step_label,
+            "reason": f"{step_label} ID {user_id}: no user found with this ID. "
+                      f"This step will be skipped unless you fix or remove the ID.",
+        }
+    if not user.is_active:
+        return None, None, {
+            "step": step_label,
+            "reason": f"{step_label} ID {user_id} ({user.username}) belongs to an inactive user. "
+                      f"This step will be skipped unless you use an active user's ID.",
+        }
+    return user.id, user.username, None
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Column mapping — Excel header → GMPRecord field
 # ─────────────────────────────────────────────────────────────────────────────
@@ -238,7 +297,9 @@ def _build_template_workbook() -> io.BytesIO:
                 "LRD Chief Admin step — 6 columns",
                 "OD-Receiving step — 6 columns",
                 "OD-Releasing step — 6 columns",
-                "e.g. 'DECKER ID' — numeric employee ID (e.g. 1001). Leave blank if unknown.",
+                "e.g. 'DECKER ID' — that person's numeric system user ID (e.g. 1001). "
+                "This is what actually identifies who a step belongs to — fill it in "
+                "whenever you know it, even if you also fill in the Name column.",
                 "Del Thread per step: 'Open' (in progress) or 'Close' (completed).",
                 "Preferred format is YYYY-MM-DD (e.g. 2025-01-15), but other common formats "
                 "and Excel date-formatted cells are auto-detected and normalized automatically.",
@@ -246,14 +307,18 @@ def _build_template_workbook() -> io.BytesIO:
             ],
             "Note": [
                 "All fields optional except where required by your workflow.",
-                "A log row is only created if the Name column (e.g. DECKER) has a value.",
+                "A log row is created if either the Name column (e.g. DECKER) or its "
+                "ID column has a value — ID alone is enough.",
                 "Same rule applies for all step columns.",
                 "Same rule applies for all step columns.",
                 "Same rule applies for all step columns.",
                 "Same rule applies for all step columns.",
                 "Same rule applies for all step columns.",
                 "Same rule applies for all step columns.",
-                "Leave blank if no employee ID. Must be a whole number if filled.",
+                "Fill this in whenever you know it — the ID is what the system relies on "
+                "to route the step to the right person. The Name column is just a label; "
+                "it isn't used to identify anyone once an ID is present, because usernames "
+                "can be reassigned to a different person later. Must be a whole number.",
                 "Defaults to 'Open' if left blank.",
                 "Leave blank if not applicable.",
                 "Leave blank if no DTN assigned yet.",
