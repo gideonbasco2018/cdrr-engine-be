@@ -107,19 +107,24 @@ async def create_application(
         if meta.get("category_code"):
             category_parts.append(meta["category_code"])
 
-        folder_id = get_or_create_folder_path(
-            "eApplication",
-            payload.application_type or "CPR",
-            category_parts,
-        )
+        try:
+            folder_id = get_or_create_folder_path(
+                "eApplication",
+                payload.application_type or "CPR",
+                category_parts,
+            )
 
-        drive_result = upload_file_to_drive(
-            file_bytes=file_bytes,
-            filename=file.filename,
-            mime_type=file.content_type,
-            folder_id=folder_id,
-        )
-
+            drive_result = upload_file_to_drive(
+                file_bytes=file_bytes,
+                filename=file.filename,
+                mime_type=file.content_type,
+                folder_id=folder_id,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Google Drive operation failed: {exc}",
+            )
         doc_inputs.append(
             dict(
                 application_type=meta.get("application_type")
