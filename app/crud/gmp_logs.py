@@ -10,7 +10,6 @@ Mirrors the production app/crud/application_logs.py pattern:
   - toggle_star   : flip is_starred
   - get_last_index: highest del_index for a record
 """
-import os
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, and_, or_
 from typing import Optional, List, Tuple, Dict, Any
@@ -22,11 +21,13 @@ from app.schemas.notification import NotificationCreate
 
 _PHT = timezone(timedelta(hours=8))
 
-# Strict-id task matching. Leave OFF until the one-time backfill has run
-# (scripts/backfill_gmp_log_user_ids.py) — until then, open task rows with no
-# user_id still need the username fallback or they'd vanish from "My Tasks".
-# Flip to "1"/"true" once the backfill is done and its unresolved list handled.
-_STRICT_ID_MATCHING = os.getenv("GMP_STRICT_ID_MATCHING", "").strip().lower() in ("1", "true", "yes")
+# Task ownership is by user_id alone — see _assignee_match below. This used
+# to be an env-var-gated rollout switch during the transition off username
+# matching; made permanent (2026-09) once the one-time backfill was confirmed
+# complete (0 open task rows with a NULL user_id, verified both before and
+# after this code went live) and every write path (deck/advance/reassign/
+# reroute, including the "Return to X" send-backs) was confirmed to always
+# set a user_id on a new task row.
 
 
 def _now() -> datetime:
@@ -217,35 +218,19 @@ def attach_assignee_info(db: Session, logs: List[GMPApplicationLogs]) -> None:
 
 
 def _assignee_match(username: Optional[str], user_id: Optional[int]):
-    """Who owns a task.
+    """Who owns a task: the log's user_id equals this user's id — nothing
+    else. user_id is our own users-table primary key: stable, unique, never
+    reused. Usernames get reassigned between different people by company
+    policy, so they never decide task ownership — that is exactly how a
+    critical application once got silently handed to the wrong person. A log
+    with no user_id then matches nobody — it needs a manual reassign (no
+    dedicated "unassigned tasks" view exists yet).
 
-    Target state (GMP_STRICT_ID_MATCHING on): the log's user_id equals this
-    user's id — nothing else. user_id is our own users-table primary key:
-    stable, unique, never reused. Usernames get reassigned between different
-    people by company policy, so they never decide task ownership — that is
-    exactly how a critical application once got silently handed to the wrong
-    person. A log with no user_id then matches nobody and shows in the admin
-    "unassigned tasks" view for a manual reassign.
-
-    Transitional state (flag off, the default): id wins whenever the log has
-    one; a log with NO user_id still falls back to matching its stored
-    user_name. Needed only until the one-time backfill
-    (scripts/backfill_gmp_log_user_ids.py) has put an id on every open row.
-
-    Kept as one helper so every task query stays in sync."""
-    if _STRICT_ID_MATCHING:
-        if user_id is None:
-            return GMPApplicationLogs.id.is_(None)  # never true
-        return GMPApplicationLogs.user_id == user_id
-
-    clauses = []
-    if user_id is not None:
-        clauses.append(and_(GMPApplicationLogs.user_id.isnot(None), GMPApplicationLogs.user_id == user_id))
-    if username:
-        clauses.append(and_(GMPApplicationLogs.user_id.is_(None), GMPApplicationLogs.user_name == username))
-    if not clauses:
-        return GMPApplicationLogs.id.is_(None)
-    return or_(*clauses)
+    `username` is accepted for call-signature compatibility but ignored —
+    every task query goes through this one helper, kept so they stay in sync."""
+    if user_id is None:
+        return GMPApplicationLogs.id.is_(None)  # never true
+    return GMPApplicationLogs.user_id == user_id
 
 
 def get_tasks_for_user(
@@ -377,15 +362,8 @@ def get_task_counts_for_user_ids(db: Session, user_ids: List[int]) -> Dict[int, 
     """
     Open-task count per user, matched by user_id, for a batch of ids in one
     query — powers the Bulk Deck modal's evaluator checklist workload column.
-    Keyed by id so it agrees with get_tasks_for_user once the strict-id
-    backfill has run. Ids with zero open tasks are absent from the returned
-    dict.
-
-    NOTE: while GMP_STRICT_ID_MATCHING is still off (before the backfill), this
-    count can be slightly LOW for an evaluator who still has id-less open task
-    rows — those show in their own task list (via the username fallback) but
-    not here. It's a workload hint only, and it self-corrects the moment the
-    backfill fills in the missing ids.
+    Keyed by id so it agrees with get_tasks_for_user (same id-only matching).
+    Ids with zero open tasks are absent from the returned dict.
     """
     if not user_ids:
         return {}
