@@ -20,6 +20,15 @@ def get_by_id(db: Session, trial_id: int) -> Optional[ClinicalTrial]:
     return db.query(ClinicalTrial).filter(ClinicalTrial.id == trial_id).first()
 
 
+def get_by_uuid(db: Session, trial_uuid: str) -> Optional[ClinicalTrial]:
+    return db.query(ClinicalTrial).filter(ClinicalTrial.uuid == trial_uuid).first()
+
+
+# NOTE: protocol_no is no longer unique in the DB, so this can return
+# multiple matches in theory. Kept as a single-result lookup for any
+# call sites that still need a "find one by protocol_no" convenience
+# (e.g. search suggestions), but it should NOT be used to block
+# duplicates on create/upload anymore.
 def get_by_protocol_no(db: Session, protocol_no: str) -> Optional[ClinicalTrial]:
     return (
         db.query(ClinicalTrial).filter(ClinicalTrial.protocol_no == protocol_no).first()

@@ -8,10 +8,11 @@ class ClinicalTrialAuditLogOut(BaseModel):
     id: int
     clinical_trial_id: int
     action: str
-    changed_fields: Optional[str] = None
-    old_values: Optional[str] = None
-    new_values: Optional[str] = None
+    changed_fields: str
+    old_values: str
+    new_values: str
     changed_by: Optional[int] = None
+    changed_by_name: Optional[str] = None  # resolved display name, not a DB column
     changed_at: Optional[datetime] = None
 
     class Config:
