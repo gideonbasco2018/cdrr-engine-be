@@ -1,9 +1,11 @@
 # FILE: app/api/routes/clinical_trials.py
+import re
 from datetime import datetime
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.db.session import get_db  # adjust import to match your DB session dependency
 from app.core.deps import (
@@ -17,6 +19,8 @@ from app.schemas.clinical_trial import (
     ClinicalTrialOut,
     ClinicalTrialListResponse,
     ClinicalTrialUploadResult,
+    ClinicalTrialUploadPreviewRow,
+    ClinicalTrialUploadPreviewResult,
 )
 from app.schemas.clinical_trial_audit_log import ClinicalTrialAuditLogOut
 from app.services.clinical_trial_excel import (
@@ -26,6 +30,22 @@ from app.services.clinical_trial_excel import (
 )
 
 router = APIRouter(prefix="/api/clinical-trials", tags=["Clinical Trials"])
+
+
+def _friendly_integrity_error(exc: IntegrityError) -> str:
+    """
+    Turns a raw MySQL duplicate-key error, e.g.
+    "Duplicate entry '2012-CT0015' for key 'clinical_trials.ix_clinical_trials_ct_ref_no'",
+    into a message that names the actual column instead of the internal
+    index name.
+    """
+    raw_msg = str(exc.orig) if getattr(exc, "orig", None) else str(exc)
+    match = re.search(r"Duplicate entry '(.+?)' for key '([^']+)'", raw_msg)
+    if not match:
+        return raw_msg
+    value, key = match.groups()
+    field = key.split(".")[-1].replace("ix_clinical_trials_", "").replace("_", " ")
+    return f"duplicate {field} '{value}' - a record with this value already exists"
 
 
 @router.get("/template/download")
@@ -70,23 +90,65 @@ def upload_clinical_trials(
     file_bytes = file.file.read()
     rows, errors = parse_upload_workbook(file_bytes)
 
+    # Rows are inserted one at a time, each in its own commit. Uploaded
+    # trackers commonly carry a stray duplicate (e.g. a repeated CT
+    # Reference Number); a single such row should be skipped and reported,
+    # not cause the entire batch - including every otherwise-valid row -
+    # to roll back.
     inserted = 0
-    if rows:
-        valid_rows = []
-        for row in rows:
-            if crud_clinical_trial.get_by_protocol_no(db, row.protocol_no):
-                errors.append(f"Protocol '{row.protocol_no}' already exists, skipped")
-                continue
-            valid_rows.append(row)
-
-        if valid_rows:
-            crud_clinical_trial.bulk_create(db, valid_rows, user_id=current_user.id)
-            inserted = len(valid_rows)
+    for row_idx, row in rows:
+        try:
+            crud_clinical_trial.create(db, row, user_id=current_user.id)
+            inserted += 1
+        except IntegrityError as exc:
+            db.rollback()
+            errors.append(f"Row {row_idx}: skipped - {_friendly_integrity_error(exc)}")
+        except Exception as exc:
+            db.rollback()
+            errors.append(f"Row {row_idx}: skipped - {exc}")
 
     return ClinicalTrialUploadResult(
         total_rows=inserted + len(errors),
         inserted=inserted,
         skipped=len(errors),
+        errors=errors,
+    )
+
+
+@router.post("/upload/preview", response_model=ClinicalTrialUploadPreviewResult)
+def preview_clinical_trials_upload(
+    file: UploadFile = File(...),
+    current_user=Depends(get_current_user),
+):
+    """
+    Parses and validates the uploaded workbook the same way the real
+    upload does, but never touches the database. Lets the frontend show
+    the user what will be inserted and what will fail before they commit
+    to the actual upload.
+    """
+    if not file.filename.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=400, detail="Only .xlsx files are supported")
+
+    file_bytes = file.file.read()
+    rows, errors = parse_upload_workbook(file_bytes)
+
+    valid_rows = [
+        ClinicalTrialUploadPreviewRow(
+            row_number=row_idx,
+            protocol_no=row.protocol_no,
+            study_title=row.study_title,
+            phase=row.phase,
+            sponsor_name=row.sponsor_name,
+            ct_ref_no=row.ct_ref_no,
+        )
+        for row_idx, row in rows
+    ]
+
+    return ClinicalTrialUploadPreviewResult(
+        total_rows=len(valid_rows) + len(errors),
+        valid_count=len(valid_rows),
+        error_count=len(errors),
+        valid_rows=valid_rows,
         errors=errors,
     )
 
@@ -119,9 +181,11 @@ def create_clinical_trial(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    if crud_clinical_trial.get_by_protocol_no(db, payload.protocol_no):
-        raise HTTPException(status_code=400, detail="Protocol number already exists")
-    return crud_clinical_trial.create(db, payload, user_id=current_user.id)
+    try:
+        return crud_clinical_trial.create(db, payload, user_id=current_user.id)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=_friendly_integrity_error(exc))
 
 
 @router.get("/{trial_id}", response_model=ClinicalTrialOut)
@@ -142,7 +206,11 @@ def update_clinical_trial(
     trial = crud_clinical_trial.get_by_id(db, trial_id)
     if not trial:
         raise HTTPException(status_code=404, detail="Clinical trial not found")
-    return crud_clinical_trial.update(db, trial, payload, user_id=current_user.id)
+    try:
+        return crud_clinical_trial.update(db, trial, payload, user_id=current_user.id)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=_friendly_integrity_error(exc))
 
 
 @router.get("/{trial_id}/audit-logs", response_model=List[ClinicalTrialAuditLogOut])

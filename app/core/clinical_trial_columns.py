@@ -4,12 +4,13 @@ Official 17-column list for the Clinical Trial module.
 Used by: download-template, upload/import parser, and export — so all
 three always stay in sync with the same column order and labels.
 
-Only "Protocol Number" is required. Every other column may be left blank
-on upload or manual entry.
+No column is required anymore. Protocol Number may repeat across rows
+and may be left blank; it is identified by primary key (id) and uuid
+instead of being treated as a unique business key.
 """
 
 CLINICAL_TRIAL_COLUMNS = [
-    {"field": "protocol_no", "label": "Protocol Number", "required": True},
+    {"field": "protocol_no", "label": "Protocol Number", "required": False},
     {"field": "study_title", "label": "Study Title", "required": False},
     {"field": "phase", "label": "Phase (Roman Numeral)", "required": False},
     {"field": "sponsor_name", "label": "Sponsor Name", "required": False},

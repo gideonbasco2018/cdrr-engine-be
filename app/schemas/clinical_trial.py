@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 
 class ClinicalTrialBase(BaseModel):
-    protocol_no: str = Field(..., max_length=50)
+    protocol_no: Optional[str] = Field(None, max_length=50)
 
     study_title: Optional[str] = None
     phase: Optional[str] = Field(None, max_length=10)
@@ -55,6 +55,7 @@ class ClinicalTrialUpdate(BaseModel):
 
 class ClinicalTrialOut(ClinicalTrialBase):
     id: int
+    uuid: str
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -73,4 +74,21 @@ class ClinicalTrialUploadResult(BaseModel):
     total_rows: int
     inserted: int
     skipped: int
+    errors: List[str] = []
+
+
+class ClinicalTrialUploadPreviewRow(BaseModel):
+    row_number: int
+    protocol_no: Optional[str] = None
+    study_title: Optional[str] = None
+    phase: Optional[str] = None
+    sponsor_name: Optional[str] = None
+    ct_ref_no: Optional[str] = None
+
+
+class ClinicalTrialUploadPreviewResult(BaseModel):
+    total_rows: int
+    valid_count: int
+    error_count: int
+    valid_rows: List[ClinicalTrialUploadPreviewRow]
     errors: List[str] = []

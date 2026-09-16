@@ -1,8 +1,8 @@
 # FILE: app/services/clinical_trial_excel.py
 import io
 import re
-from datetime import date, datetime
-from typing import List, Tuple
+from datetime import date, datetime, timedelta
+from typing import List, Optional, Tuple
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
@@ -30,6 +30,17 @@ _DATE_FORMATS = [
     "%Y/%m/%d",  # 2026/06/01
     "%m-%d-%Y",  # 06-01-2026
 ]
+
+# Maps a plain Arabic numeral phase (as seen in a lot of legacy trackers) to
+# its Roman numeral equivalent.
+_ARABIC_TO_ROMAN_PHASE = {
+    "1": "I",
+    "2": "II",
+    "3": "III",
+    "4": "IV",
+}
+
+_PHASE_MAX_LEN = 10  # matches ClinicalTrial.phase column width
 
 
 def _write_header(ws):
@@ -78,6 +89,12 @@ def _fill_merged_cells(ws) -> None:
                 ws.cell(row=row, column=col, value=top_left_value)
 
 
+# Excel's date epoch (serial number 1 = Jan 1, 1900, with Excel's
+# well-known leap-year bug baked in - this offset matches how Excel
+# and openpyxl both interpret serial dates).
+_EXCEL_EPOCH = datetime(1899, 12, 30)
+
+
 def _parse_date(value):
     if value in (None, ""):
         return None
@@ -85,6 +102,15 @@ def _parse_date(value):
         return value.date()
     if isinstance(value, date):
         return value
+
+    # Some cells that are visually formatted as dates in the source file
+    # aren't recognized as such by openpyxl and come through as a raw
+    # numeric Excel serial date (e.g. 44757) instead of a datetime object.
+    if isinstance(value, (int, float)):
+        try:
+            return (_EXCEL_EPOCH + timedelta(days=value)).date()
+        except (OverflowError, ValueError):
+            raise ValueError(f"Unrecognized date value: '{value}'")
 
     text = str(value).strip()
     if not text:
@@ -112,19 +138,94 @@ def _parse_int(value) -> int:
     return int(float(value))
 
 
-def _normalize_phase(value) -> str:
+def _clean_text(value) -> Optional[str]:
+    """
+    Normalize a raw Excel cell into a plain string, or None if empty.
+
+    Excel silently stores numeric-looking values (e.g. a protocol number
+    that happens to look like a number) as int/float instead of text. Left
+    as-is, this makes Pydantic reject the row (protocol_no expects a str,
+    not a float). This converts those back into text, dropping the
+    spurious trailing ".0" that shows up for whole numbers.
+    """
     if value is None:
-        return ""
+        return None
+    if isinstance(value, float):
+        text = str(int(value)) if value.is_integer() else str(value)
+    elif isinstance(value, int):
+        text = str(value)
+    else:
+        text = str(value)
+    text = text.strip()
+    return text or None
+
+
+def _normalize_phase(value) -> Optional[str]:
+    """
+    Best-effort normalization of the Phase column.
+
+    Real trackers are inconsistent: some use Arabic numerals ("3" instead
+    of "III"), some mark sub-phases ("2b" -> "IIb"), some list combined
+    phases for adaptive studies ("I/II"), and some rows have garbage or
+    misaligned data in this column entirely (a date, free text like
+    "Epidemiological Study", etc).
+
+    Rather than rejecting the whole row over a messy Phase cell, we
+    normalize what we can recognize and leave anything else blank -
+    Phase is not a required field.
+    """
+    if value is None:
+        return None
+
     text = str(value).strip()
-    # Strip an optional "Phase" prefix (e.g. "Phase I" -> "I") and normalize
-    # case, since trackers don't always follow the template exactly.
+    if not text:
+        return None
+
+    # Strip an optional "Phase" prefix (e.g. "Phase I" -> "I")
     text = re.sub(r"(?i)^phase\s*", "", text).strip()
-    return text.upper()
+    if not text:
+        return None
+
+    # Combined phases for adaptive studies, e.g. "I/II" or "2/3"
+    if "/" in text:
+        parts = [_normalize_phase(part) for part in text.split("/")]
+        parts = [part for part in parts if part]
+        result = "/".join(parts) if parts else None
+        return result[:_PHASE_MAX_LEN] if result else None
+
+    # Arabic numeral with an optional sub-phase letter, e.g. "2b" -> "IIb"
+    match = re.match(r"^(\d+)\s*([a-zA-Z]?)$", text)
+    if match:
+        digit, suffix = match.groups()
+        roman = _ARABIC_TO_ROMAN_PHASE.get(digit)
+        if roman:
+            result = f"{roman}{suffix.upper()}" if suffix else roman
+            return result[:_PHASE_MAX_LEN]
+
+    # Roman numeral already, with an optional sub-phase letter, e.g. "IIIb"
+    text_upper = text.upper()
+    if text_upper in VALID_PHASES:
+        return text_upper
+    match = re.match(r"^(I{1,3}|IV)([A-Z]?)$", text_upper)
+    if match:
+        roman, suffix = match.groups()
+        result = f"{roman}{suffix}" if suffix else roman
+        return result[:_PHASE_MAX_LEN]
+
+    # Anything else (free text, a stray date from a misaligned row, etc.)
+    # isn't a recognizable phase - leave it blank instead of failing the row.
+    return None
 
 
 def parse_upload_workbook(
     file_bytes: bytes,
-) -> Tuple[List[ClinicalTrialCreate], List[str]]:
+) -> Tuple[List[Tuple[int, ClinicalTrialCreate]], List[str]]:
+    """
+    Returns (rows, errors), where rows is a list of (excel_row_number, data)
+    pairs - the row number is kept so the caller can report which source
+    row a later database-level error (e.g. a duplicate CT Reference Number)
+    came from.
+    """
     wb = load_workbook(io.BytesIO(file_bytes), data_only=True)
     ws = wb.active
 
@@ -138,7 +239,7 @@ def parse_upload_workbook(
             "Uploaded file does not match the official template headers. Please use Download Template."
         ]
 
-    rows: List[ClinicalTrialCreate] = []
+    rows: List[Tuple[int, ClinicalTrialCreate]] = []
     errors: List[str] = []
 
     for row_idx, raw_row in enumerate(
@@ -158,24 +259,15 @@ def parse_upload_workbook(
                     value = _parse_date(value)
                 elif column["field"] == "total_qty_approve":
                     value = _parse_int(value)
-                elif isinstance(value, str):
-                    value = value.strip() or None
+                else:
+                    value = _clean_text(value)
 
                 if column["required"] and (value is None or value == ""):
                     raise ValueError(f"'{column['label']}' is required")
 
                 row_data[column["field"]] = value
 
-            phase_value = row_data.get("phase")
-            if phase_value and phase_value not in VALID_PHASES:
-                raise ValueError(
-                    f"Phase must be one of {VALID_PHASES} "
-                    f"(got '{raw_row[2] if len(raw_row) > 2 else ''}')"
-                )
-            if not phase_value:
-                row_data["phase"] = None
-
-            rows.append(ClinicalTrialCreate(**row_data))
+            rows.append((row_idx, ClinicalTrialCreate(**row_data)))
         except Exception as exc:
             errors.append(f"Row {row_idx}: {exc}")
 
