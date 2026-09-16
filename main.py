@@ -47,6 +47,7 @@ from app.api.routes import (
     cpr_app_document,
     priority_meds,
     doctrack_system,
+    clinical_trials,
 )
 
 # ── Scheduler setup ───────────────────────────────────────────────────
@@ -154,6 +155,7 @@ app.include_router(cpr_applications.router)
 app.include_router(cpr_app_document.router)
 app.include_router(priority_meds.router)
 app.include_router(doctrack_system.router)
+app.include_router(clinical_trials.router)
 
 
 @app.get("/")

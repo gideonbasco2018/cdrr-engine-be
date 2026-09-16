@@ -32,6 +32,8 @@ from app.models.cpr_app_document import CPRAppDocument
 
 from app.models.e_application_ref import EApplicationRef
 from app.models.e_process import EProcess
+from app.models.clinical_trial_audit_log import ClinicalTrialAuditLog
+from app.models.clinical_trial import ClinicalTrial
 
 __all__ = [
     "MainDB",
@@ -67,4 +69,6 @@ __all__ = [
     "CPRAppDocument",
     "EApplicationRef",
     "EProcess",
+    "ClinicalTrialAuditLog",
+    "ClinicalTrial",
 ]
