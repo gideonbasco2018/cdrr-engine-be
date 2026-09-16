@@ -34,6 +34,7 @@ from app.models.oauth_otp import OAuthOTP
 from app.models.cpr_app_history import CPRAppHistory
 from app.models.cpr_app_parties import CPRAppParty
 from app.models.cpr_application import CPRApplication
+from app.models.donation import Donation, DonationChangeLog
 
 config = context.config
 
