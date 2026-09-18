@@ -52,10 +52,10 @@ router = APIRouter(
 
 #  ── 5 MB hard limit ──────────────────────────────────────────────────
 # MAX_FILE_SIZE = 5 * 1024 * 1024
-# ── 200 MB hard limit ─────────────────────────────────────────────────
-MAX_FILE_SIZE = 200 * 1024 * 1024
-# ── GMP folder uploads allow larger files (500 MB) ───────────────────
-GMP_MAX_FILE_SIZE = 500 * 1024 * 1024
+# ── 1000 MB hard limit ────────────────────────────────────────────────
+MAX_FILE_SIZE = 1000 * 1024 * 1024
+# ── GMP folder uploads allow larger files (2500 MB) ───────────────────
+GMP_MAX_FILE_SIZE = 2500 * 1024 * 1024
 
 ALLOWED_MIME_TYPES = {
     "application/pdf",
@@ -113,7 +113,9 @@ def _resolve_drive_folder(
         _mark_folder_verified(explicit_folder_id)
         return explicit_folder_id
 
-    candidate_id = crud_doc.get_existing_folder_id(db, db_entry_type, db_dtn, doc_category)
+    candidate_id = crud_doc.get_existing_folder_id(
+        db, db_entry_type, db_dtn, doc_category
+    )
     if candidate_id and (
         _folder_recently_verified(candidate_id) or folder_exists(candidate_id)
     ):
@@ -146,7 +148,7 @@ async def upload_document(
 
     file_bytes = await file.read()
     if len(file_bytes) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="File exceeds the 5 MB limit.")
+        raise HTTPException(status_code=413, detail="File exceeds the 1000 MB limit.")
 
     # ── Get or create the nested folder ───────────────────────────────
     folder_id = crud_doc.get_existing_folder_id(db, db_entry_type, db_dtn, doc_category)
