@@ -11,7 +11,7 @@ COLUMNS = [
     ("Username", 16),
     ("Full Name", 26),
     ("Drug / Application", 60),
-    ("Date Received", 14),
+    ("Date Received From Center", 26),
     ("Entry Type", 14),
     ("Step", 22),
     ("Timeline", 12),
