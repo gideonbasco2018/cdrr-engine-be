@@ -1,3 +1,4 @@
+from datetime import datetime
 from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.cell import WriteOnlyCell
@@ -23,9 +24,14 @@ def _clean(v) -> str:
     return " ".join(str(v).split()) if v is not None else ""
 
 
-def _date_ymd(v) -> str:
-    """'YYYY-MM-DD...' -> 'YYYY-MM-DD'."""
-    return str(v)[:10] if v else ""
+def _to_date(v):
+    """'YYYY-MM-DD...' -> real date object. Kapag hindi ma-parse, ibabalik ang original text."""
+    if not v:
+        return None
+    try:
+        return datetime.strptime(str(v)[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return _clean(v)
 
 
 def build_records_xlsx(rows: list[dict]) -> BytesIO:
@@ -50,20 +56,24 @@ def build_records_xlsx(rows: list[dict]) -> BytesIO:
     ws.append(header_cells)
 
     for r in rows:
+        # Real Excel date, naka-format na yyyy-mm-dd
+        date_cell = WriteOnlyCell(ws, value=_to_date(r.get("date_received_cent")))
+        date_cell.number_format = "yyyy-mm-dd"
+
         ws.append(
             [
                 _clean(r.get("dtn")),  # str -> text cell, plain
                 _clean(r.get("user_name")),
                 _clean(r.get("full_name")),
                 _clean(r.get("drug_name")),
-                _date_ymd(r.get("date_received_cent")),  # 2026-01-29
+                date_cell,  # 2026-01-29 (real date)
                 _clean(r.get("entry_type")),
                 _clean(r.get("app_step")),
                 _clean(r.get("timeline")),
                 _clean(r.get("app_status")),
             ]
         )
-
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(COLUMNS))}{len(rows) + 1}"
     out = BytesIO()
     wb.save(out)
     out.seek(0)
