@@ -1,9 +1,10 @@
 # app/api/routes/monitoring.py
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import Optional, List
-from datetime import date
+from datetime import date, datetime
 
 from app.db.session import get_db
 from app.core.deps import get_current_active_user
@@ -23,6 +24,7 @@ from app.schemas.monitoring import (
 )
 from app.crud import monitoring as crud_monitoring
 from app.models.group import Group
+from app.services.records_export import build_records_xlsx
 
 router = APIRouter(
     prefix="/api/monitoring",
@@ -130,6 +132,51 @@ def get_all_records(
         dtn_date_to=dtn_date_to,
     )
     return AllRecordsResponse(**result)
+
+
+@router.get("/all-records/export", summary="Export filtered records to Excel")
+def export_all_records(
+    user_id: Optional[int] = Query(None),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    sort_col: str = Query("date"),
+    sort_dir: str = Query("desc", regex="^(asc|desc)$"),
+    application_status: Optional[str] = Query(None),
+    dtn: Optional[str] = Query(None),
+    app_step: Optional[str] = Query(None),
+    dtn_date_from: Optional[str] = Query(None, min_length=8, max_length=8),
+    dtn_date_to: Optional[str] = Query(None, min_length=8, max_length=8),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    rows = crud_monitoring.get_all_records_for_export(
+        db=db,
+        user_id=user_id,
+        date_from=date_from,
+        date_to=date_to,
+        sort_col=sort_col,
+        sort_dir=sort_dir,
+        application_status=application_status,
+        dtn=dtn,
+        app_step=app_step,
+        dtn_date_from=dtn_date_from,
+        dtn_date_to=dtn_date_to,
+    )
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="No records found to export")
+
+    output = build_records_xlsx(rows)
+    filename = f"records_report_{datetime.now():%Y-%m-%d}.xlsx"
+
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(output.getbuffer().nbytes),
+        },
+    )
 
 
 @router.get("/groups", summary="List all groups for filtering")

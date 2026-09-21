@@ -316,7 +316,7 @@ async def upload_documents_batch(
                     BatchUploadResult(
                         filename=file.filename,
                         success=False,
-                        error="File exceeds the 5 MB limit.",
+                        error=f"File exceeds the {MAX_FILE_SIZE // (1024 * 1024)} MB limit.",
                     )
                 )
                 continue
@@ -527,9 +527,9 @@ async def upload_documents_folder(
             )
             return
 
-        # ── Size check ────────────────────────────────────────
+            # ── Size check ────────────────────────────────────────
         if len(file_bytes) > MAX_FILE_SIZE:
-            error_msg = "File exceeds the 5 MB limit."
+            error_msg = f"File exceeds the {MAX_FILE_SIZE // (1024 * 1024)} MB limit."
             _log(
                 db_dtn=db_dtn,
                 doc_category=doc_category,
