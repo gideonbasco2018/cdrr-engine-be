@@ -106,6 +106,7 @@ def get_all_records(
         min_length=8,
         max_length=8,
     ),
+    latest_only: bool = Query(False, description="Show only the latest log per DTN"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
@@ -130,6 +131,7 @@ def get_all_records(
         app_step=app_step,
         dtn_date_from=dtn_date_from,
         dtn_date_to=dtn_date_to,
+        latest_only=latest_only,
     )
     return AllRecordsResponse(**result)
 
@@ -146,6 +148,7 @@ def export_all_records(
     app_step: Optional[str] = Query(None),
     dtn_date_from: Optional[str] = Query(None, min_length=8, max_length=8),
     dtn_date_to: Optional[str] = Query(None, min_length=8, max_length=8),
+    latest_only: bool = Query(False, description="Show only the latest log per DTN"),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
@@ -161,6 +164,7 @@ def export_all_records(
         app_step=app_step,
         dtn_date_from=dtn_date_from,
         dtn_date_to=dtn_date_to,
+        latest_only=latest_only,
     )
 
     if not rows:

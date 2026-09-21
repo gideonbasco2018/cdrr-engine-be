@@ -85,3 +85,20 @@ def pneumococcal_breakdown(
     items = crud.get_pneumococcal_breakdown(db)
     grand_total = sum(item.total_count for item in items)
     return VaccineBreakdownResponse(items=items, grand_total=grand_total)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  GET /monitoring/priority-meds/tb-meds
+# ══════════════════════════════════════════════════════════════════════
+@router.get(
+    "/tb-meds",
+    response_model=VaccineBreakdownResponse,
+    summary="TB meds breakdown (in-progress applications)",
+)
+def tb_meds_breakdown(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    items = crud.get_tb_meds_breakdown(db)
+    grand_total = sum(item.total_count for item in items)
+    return VaccineBreakdownResponse(items=items, grand_total=grand_total)
