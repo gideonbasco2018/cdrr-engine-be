@@ -98,6 +98,7 @@ def _build_all_records_query(
     app_step: Optional[str] = None,
     dtn_date_from: Optional[str] = None,
     dtn_date_to: Optional[str] = None,
+    latest_only: bool = False,
 ):
     """Shared by the table (paginated) and the export (all rows)."""
     query = _exclude_action_types(
@@ -132,6 +133,16 @@ def _build_all_records_query(
         query = query.filter(func.left(MainDB.DB_DTN, 8) >= dtn_date_from)
     if dtn_date_to and len(dtn_date_to) == 8 and dtn_date_to.isdigit():
         query = query.filter(func.left(MainDB.DB_DTN, 8) <= dtn_date_to)
+
+    # Optional: isang row na lang per DTN (yung pinakabagong log
+    # sa loob ng kasalukuyang filters)
+    if latest_only:
+        latest_ids = (
+            query.with_entities(func.max(ApplicationLogs.id).label("max_id"))
+            .group_by(ApplicationLogs.main_db_id)
+            .subquery()
+        )
+        query = query.filter(ApplicationLogs.id.in_(latest_ids))
 
     sort_map = {
         "date": func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"),
@@ -196,6 +207,7 @@ def get_all_records(
     app_step: Optional[str] = None,
     dtn_date_from: Optional[str] = None,
     dtn_date_to: Optional[str] = None,
+    latest_only: bool = False,
 ) -> dict:
     query = _build_all_records_query(
         db,
@@ -209,6 +221,7 @@ def get_all_records(
         app_step=app_step,
         dtn_date_from=dtn_date_from,
         dtn_date_to=dtn_date_to,
+        latest_only=latest_only,
     )
 
     total = query.count()
@@ -236,6 +249,7 @@ def get_all_records_for_export(
     app_step: Optional[str] = None,
     dtn_date_from: Optional[str] = None,
     dtn_date_to: Optional[str] = None,
+    latest_only: bool = False,
 ) -> list[dict]:
     """Same filters as get_all_records, pero walang pagination."""
     query = _build_all_records_query(
@@ -250,6 +264,7 @@ def get_all_records_for_export(
         app_step=app_step,
         dtn_date_from=dtn_date_from,
         dtn_date_to=dtn_date_to,
+        latest_only=latest_only,
     )
     return [_record_row(log, main, user) for log, main, user in query.all()]
 

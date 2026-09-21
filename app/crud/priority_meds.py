@@ -1,5 +1,5 @@
 # app/crud/priority_meds.py
-from sqlalchemy import case, func
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 from app.models.main_db import MainDB
@@ -157,6 +157,20 @@ RARE_DISEASE_GENERIC_NAMES = [
 ]
 
 
+TB_PHARMA_CAT_PATTERNS = [
+    "%Antimycobacterial%",
+    "%Antituberculosis%",
+    "%Dipeptidyl Peptidase 4 (Dpp-4) Inhibitor%",
+    "%Anti-Tb%",
+    "%Combination of Drugs for Treatment of Tuberculosis%",
+]
+
+TB_GEN_NAME_PATTERNS = [
+    "%Moxifloxacin hydrochloride%",
+    "%Linezolid%",
+]
+
+
 def get_cancer_meds_breakdown(db: Session):
     type_expr = func.trim(MainDB.DB_PROD_PHARMA_CAT)
     total_pending = func.count().label("total_pending")
@@ -249,6 +263,28 @@ def get_pneumococcal_breakdown(db: Session):
         .filter(
             MainDB.DB_PROD_GEN_NAME.like("%Pneumococcal%"),
             func.lower(func.trim(MainDB.DB_APP_STATUS)) == "in progress",
+        )
+        .group_by(MainDB.DB_PROD_GEN_NAME, MainDB.DB_PROD_PHARMA_CAT)
+        .order_by(total_count.desc(), MainDB.DB_PROD_GEN_NAME)
+        .all()
+    )
+
+
+def get_tb_meds_breakdown(db: Session):
+    total_count = func.count().label("total_count")
+
+    cat_conditions = [MainDB.DB_PROD_PHARMA_CAT.like(p) for p in TB_PHARMA_CAT_PATTERNS]
+    gen_conditions = [MainDB.DB_PROD_GEN_NAME.like(p) for p in TB_GEN_NAME_PATTERNS]
+
+    return (
+        db.query(
+            MainDB.DB_PROD_PHARMA_CAT.label("pharma_category"),
+            MainDB.DB_PROD_GEN_NAME.label("generic_name"),
+            total_count,
+        )
+        .filter(
+            or_(*cat_conditions, *gen_conditions),
+            MainDB.DB_APP_STATUS == "IN PROGRESS",
         )
         .group_by(MainDB.DB_PROD_GEN_NAME, MainDB.DB_PROD_PHARMA_CAT)
         .order_by(total_count.desc(), MainDB.DB_PROD_GEN_NAME)
