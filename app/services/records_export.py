@@ -24,6 +24,14 @@ def _clean(v) -> str:
     return " ".join(str(v).split()) if v is not None else ""
 
 
+def _to_int(v):
+    """DTN -> real number. Kapag hindi ma-convert, ibabalik ang original text."""
+    try:
+        return int(str(v).strip())
+    except (ValueError, TypeError):
+        return _clean(v)
+
+
 def _to_date(v):
     """'YYYY-MM-DD...' -> real date object. Kapag hindi ma-parse, ibabalik ang original text."""
     if not v:
@@ -56,13 +64,18 @@ def build_records_xlsx(rows: list[dict]) -> BytesIO:
     ws.append(header_cells)
 
     for r in rows:
+        # DTN: real number, format "0" (walang E+13, walang green triangle)
+        dtn_cell = WriteOnlyCell(ws, value=_to_int(r.get("dtn")))
+        dtn_cell.number_format = "0"
+        dtn_cell.alignment = Alignment(horizontal="left")
+
         # Real Excel date, naka-format na yyyy-mm-dd
         date_cell = WriteOnlyCell(ws, value=_to_date(r.get("date_received_cent")))
         date_cell.number_format = "yyyy-mm-dd"
 
         ws.append(
             [
-                _clean(r.get("dtn")),  # str -> text cell, plain
+                dtn_cell,  # str -> text cell, plain
                 _clean(r.get("user_name")),
                 _clean(r.get("full_name")),
                 _clean(r.get("drug_name")),
