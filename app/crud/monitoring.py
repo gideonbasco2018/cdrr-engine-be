@@ -86,10 +86,8 @@ def get_users_task_summary(db: Session, group_id: Optional[int] = None) -> list:
 
 
 # ── All Records ────────────────────────────────────────────────────────────────
-def get_all_records(
+def _build_all_records_query(
     db: Session,
-    page: int = 1,
-    page_size: int = 12,
     user_id: Optional[int] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
@@ -100,7 +98,8 @@ def get_all_records(
     app_step: Optional[str] = None,
     dtn_date_from: Optional[str] = None,
     dtn_date_to: Optional[str] = None,
-) -> dict:
+):
+    """Shared by the table (paginated) and the export (all rows)."""
     query = _exclude_action_types(
         db.query(ApplicationLogs, MainDB, User)
         .join(MainDB, MainDB.DB_ID == ApplicationLogs.main_db_id)
@@ -143,59 +142,116 @@ def get_all_records(
         "step": ApplicationLogs.application_step,
     }
     sort_column = sort_map.get(sort_col, sort_map["date"])
-    query = query.order_by(
+    return query.order_by(
         sort_column.desc() if sort_dir == "desc" else sort_column.asc()
+    )
+
+
+def _timeline(log: ApplicationLogs, main: MainDB) -> str:
+    try:
+        received = datetime.strptime(main.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")
+        end = (
+            datetime.strptime(main.DB_DATE_RELEASED, "%Y-%m-%d")
+            if main.DB_DATE_RELEASED and main.DB_DATE_RELEASED != "N/A"
+            else datetime.now()
+        )
+        diff = abs((end - received).days)
+        charter = int(main.DB_TIMELINE_CITIZEN_CHARTER or 0)
+        return "Within" if diff <= charter else "Beyond"
+    except Exception:
+        return "N/A"
+
+
+def _record_row(log: ApplicationLogs, main: MainDB, user: Optional[User]) -> dict:
+    brand = main.DB_PROD_BR_NAME or ""
+    generic = main.DB_PROD_GEN_NAME or ""
+    drug_name = f"{brand} ({generic})" if brand and generic else brand or generic or "—"
+    full_name = f"{user.first_name} {user.surname}".strip() if user else None
+    return {
+        "id": main.DB_ID,
+        "dtn": str(main.DB_DTN) if main.DB_DTN else None,
+        "user_name": user.username if user else None,
+        "full_name": full_name,
+        "drug_name": drug_name,
+        "date_received_cent": main.DB_DATE_RECEIVED_CENT,
+        "timeline": _timeline(log, main),
+        "app_step": log.application_step,
+        "app_status": log.application_status,
+        "prescription": main.DB_PROD_CLASS_PRESCRIP,
+        "entry_type": main.DB_ENTRY_TYPE,
+    }
+
+
+def get_all_records(
+    db: Session,
+    page: int = 1,
+    page_size: int = 12,
+    user_id: Optional[int] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    sort_col: str = "date",
+    sort_dir: str = "desc",
+    application_status: Optional[str] = None,
+    dtn: Optional[str] = None,
+    app_step: Optional[str] = None,
+    dtn_date_from: Optional[str] = None,
+    dtn_date_to: Optional[str] = None,
+) -> dict:
+    query = _build_all_records_query(
+        db,
+        user_id=user_id,
+        date_from=date_from,
+        date_to=date_to,
+        sort_col=sort_col,
+        sort_dir=sort_dir,
+        application_status=application_status,
+        dtn=dtn,
+        app_step=app_step,
+        dtn_date_from=dtn_date_from,
+        dtn_date_to=dtn_date_to,
     )
 
     total = query.count()
     total_pages = max(1, -(-total // page_size))
     rows = query.offset((page - 1) * page_size).limit(page_size).all()
 
-    def _timeline(log: ApplicationLogs, main: MainDB) -> str:
-        try:
-            received = datetime.strptime(main.DB_DATE_RECEIVED_CENT, "%Y-%m-%d")
-            end = (
-                datetime.strptime(main.DB_DATE_RELEASED, "%Y-%m-%d")
-                if main.DB_DATE_RELEASED and main.DB_DATE_RELEASED != "N/A"
-                else datetime.now()
-            )
-            diff = abs((end - received).days)
-            charter = int(main.DB_TIMELINE_CITIZEN_CHARTER or 0)
-            return "Within" if diff <= charter else "Beyond"
-        except Exception:
-            return "N/A"
-
-    data = []
-    for log, main, user in rows:
-        brand = main.DB_PROD_BR_NAME or ""
-        generic = main.DB_PROD_GEN_NAME or ""
-        drug_name = (
-            f"{brand} ({generic})" if brand and generic else brand or generic or "—"
-        )
-        full_name = f"{user.first_name} {user.surname}".strip() if user else None
-        data.append(
-            {
-                "id": main.DB_ID,
-                "dtn": str(main.DB_DTN) if main.DB_DTN else None,
-                "user_name": user.username if user else None,
-                "full_name": full_name,
-                "drug_name": drug_name,
-                "date_received_cent": main.DB_DATE_RECEIVED_CENT,
-                "timeline": _timeline(log, main),
-                "app_step": log.application_step,
-                "app_status": log.application_status,
-                "prescription": main.DB_PROD_CLASS_PRESCRIP,
-                "entry_type": main.DB_ENTRY_TYPE,  # ← NEW
-            }
-        )
-
     return {
         "total": total,
         "page": page,
         "page_size": page_size,
         "total_pages": total_pages,
-        "data": data,
+        "data": [_record_row(log, main, user) for log, main, user in rows],
     }
+
+
+def get_all_records_for_export(
+    db: Session,
+    user_id: Optional[int] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    sort_col: str = "date",
+    sort_dir: str = "desc",
+    application_status: Optional[str] = None,
+    dtn: Optional[str] = None,
+    app_step: Optional[str] = None,
+    dtn_date_from: Optional[str] = None,
+    dtn_date_to: Optional[str] = None,
+) -> list[dict]:
+    """Same filters as get_all_records, pero walang pagination."""
+    query = _build_all_records_query(
+        db,
+        user_id=user_id,
+        date_from=date_from,
+        date_to=date_to,
+        sort_col=sort_col,
+        sort_dir=sort_dir,
+        application_status=application_status,
+        dtn=dtn,
+        app_step=app_step,
+        dtn_date_from=dtn_date_from,
+        dtn_date_to=dtn_date_to,
+    )
+    return [_record_row(log, main, user) for log, main, user in query.all()]
 
 
 # -----------------------------
