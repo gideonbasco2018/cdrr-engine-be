@@ -12,6 +12,7 @@ COLUMNS = [
     ("Full Name", 26),
     ("Drug / Application", 60),
     ("Date Received From Center", 26),
+    ("Date Decked/Assigned", 22),
     ("Entry Type", 14),
     ("Step", 22),
     ("Timeline", 12),
@@ -30,6 +31,16 @@ def _to_int(v):
         return int(str(v).strip())
     except (ValueError, TypeError):
         return _clean(v)
+
+
+def _to_datetime(v):
+    """'YYYY-MM-DD HH:MM:SS' -> real datetime. Kapag wala/hindi ma-parse, None."""
+    if not v:
+        return None
+    try:
+        return datetime.strptime(str(v)[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
 
 
 def _to_date(v):
@@ -73,13 +84,17 @@ def build_records_xlsx(rows: list[dict]) -> BytesIO:
         date_cell = WriteOnlyCell(ws, value=_to_date(r.get("date_received_cent")))
         date_cell.number_format = "yyyy-mm-dd"
 
+        assigned_cell = WriteOnlyCell(ws, value=_to_datetime(r.get("date_assigned")))
+        assigned_cell.number_format = "yyyy-mm-dd hh:mm:ss"
+
         ws.append(
             [
-                dtn_cell,  # str -> text cell, plain
+                dtn_cell,  # 20260518112632 (number)
                 _clean(r.get("user_name")),
                 _clean(r.get("full_name")),
                 _clean(r.get("drug_name")),
-                date_cell,  # 2026-01-29 (real date)
+                date_cell,  # Date Received From Center
+                assigned_cell,  # Date Decked/Assigned
                 _clean(r.get("entry_type")),
                 _clean(r.get("app_step")),
                 _clean(r.get("timeline")),

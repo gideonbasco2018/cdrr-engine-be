@@ -1,7 +1,7 @@
 # app/crud/monitoring.py
 
-from sqlalchemy.orm import Session
-from sqlalchemy import func, case, and_, or_, asc, desc, distinct
+from sqlalchemy.orm import Session, aliased
+from sqlalchemy import func, case, and_, or_, asc, desc, distinct, select
 from typing import Optional
 from datetime import datetime, date
 from app.models.main_db import MainDB
@@ -85,6 +85,39 @@ def get_users_task_summary(db: Session, group_id: Optional[int] = None) -> list:
     return query.all()
 
 
+def _date_assigned_expr():
+    """
+    Date Decked/Assigned = accomplished_date ng naunang log ng parehong DTN.
+    1) Una, sundan ang del_previous (del_index == current.del_previous)
+    2) Fallback (kapag walang del_previous, gaya ng galing Excel upload):
+       del_index == current.del_index - 1
+    """
+    PrevLink = aliased(ApplicationLogs)
+    PrevIdx = aliased(ApplicationLogs)
+
+    by_link = (
+        select(PrevLink.accomplished_date)
+        .where(
+            PrevLink.main_db_id == ApplicationLogs.main_db_id,
+            PrevLink.del_index == ApplicationLogs.del_previous,
+        )
+        .order_by(PrevLink.id.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+    by_index = (
+        select(PrevIdx.accomplished_date)
+        .where(
+            PrevIdx.main_db_id == ApplicationLogs.main_db_id,
+            PrevIdx.del_index == ApplicationLogs.del_index - 1,
+        )
+        .order_by(PrevIdx.id.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+    return func.coalesce(by_link, by_index)
+
+
 # ── All Records ────────────────────────────────────────────────────────────────
 def _build_all_records_query(
     db: Session,
@@ -102,7 +135,12 @@ def _build_all_records_query(
 ):
     """Shared by the table (paginated) and the export (all rows)."""
     query = _exclude_action_types(
-        db.query(ApplicationLogs, MainDB, User)
+        db.query(
+            ApplicationLogs,
+            MainDB,
+            User,
+            _date_assigned_expr().label("date_assigned"),
+        )
         .join(MainDB, MainDB.DB_ID == ApplicationLogs.main_db_id)
         .outerjoin(User, User.id == ApplicationLogs.user_id)
     )
@@ -173,7 +211,12 @@ def _timeline(log: ApplicationLogs, main: MainDB) -> str:
         return "N/A"
 
 
-def _record_row(log: ApplicationLogs, main: MainDB, user: Optional[User]) -> dict:
+def _record_row(
+    log: ApplicationLogs,
+    main: MainDB,
+    user: Optional[User],
+    date_assigned=None,
+) -> dict:
     brand = main.DB_PROD_BR_NAME or ""
     generic = main.DB_PROD_GEN_NAME or ""
     drug_name = f"{brand} ({generic})" if brand and generic else brand or generic or "—"
@@ -190,6 +233,11 @@ def _record_row(log: ApplicationLogs, main: MainDB, user: Optional[User]) -> dic
         "app_status": log.application_status,
         "prescription": main.DB_PROD_CLASS_PRESCRIP,
         "entry_type": main.DB_ENTRY_TYPE,
+        "date_assigned": (
+            date_assigned.strftime("%Y-%m-%d %H:%M:%S")
+            if hasattr(date_assigned, "strftime")
+            else (str(date_assigned) if date_assigned else None)
+        ),
     }
 
 
@@ -233,7 +281,7 @@ def get_all_records(
         "page": page,
         "page_size": page_size,
         "total_pages": total_pages,
-        "data": [_record_row(log, main, user) for log, main, user in rows],
+        "data": [_record_row(log, main, user, da) for log, main, user, da in rows],
     }
 
 
@@ -266,7 +314,7 @@ def get_all_records_for_export(
         dtn_date_to=dtn_date_to,
         latest_only=latest_only,
     )
-    return [_record_row(log, main, user) for log, main, user in query.all()]
+    return [_record_row(log, main, user, da) for log, main, user, da in query.all()]
 
 
 # -----------------------------

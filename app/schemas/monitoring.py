@@ -40,6 +40,7 @@ class RecordItem(BaseModel):
     app_status: Optional[str] = None
     prescription: Optional[str] = None
     entry_type: Optional[str] = None
+    date_assigned: Optional[str] = None
 
     class Config:
         orm_mode = True
