@@ -87,35 +87,27 @@ def get_users_task_summary(db: Session, group_id: Optional[int] = None) -> list:
 
 def _date_assigned_expr():
     """
-    Date Decked/Assigned = accomplished_date ng naunang log ng parehong DTN.
-    1) Una, sundan ang del_previous (del_index == current.del_previous)
-    2) Fallback (kapag walang del_previous, gaya ng galing Excel upload):
-       del_index == current.del_index - 1
-    """
-    PrevLink = aliased(ApplicationLogs)
-    PrevIdx = aliased(ApplicationLogs)
+    Date Decked/Assigned = accomplished_date ng pinakamalapit na naunang log
+    (mas mababang del_index) ng parehong DTN na MAY accomplished_date.
 
-    by_link = (
-        select(PrevLink.accomplished_date)
+    Halimbawa para sa del_index 5:
+      del_index 4 may date -> yun ang gamit
+      del_index 4 NULL     -> del_index 3
+      del_index 3 NULL     -> del_index 2 ... at pataas pababa hanggang may makita
+    """
+    Prev = aliased(ApplicationLogs)
+
+    return (
+        select(Prev.accomplished_date)
         .where(
-            PrevLink.main_db_id == ApplicationLogs.main_db_id,
-            PrevLink.del_index == ApplicationLogs.del_previous,
+            Prev.main_db_id == ApplicationLogs.main_db_id,
+            Prev.del_index < ApplicationLogs.del_index,
+            Prev.accomplished_date.isnot(None),
         )
-        .order_by(PrevLink.id.desc())
+        .order_by(Prev.del_index.desc(), Prev.id.desc())
         .limit(1)
         .scalar_subquery()
     )
-    by_index = (
-        select(PrevIdx.accomplished_date)
-        .where(
-            PrevIdx.main_db_id == ApplicationLogs.main_db_id,
-            PrevIdx.del_index == ApplicationLogs.del_index - 1,
-        )
-        .order_by(PrevIdx.id.desc())
-        .limit(1)
-        .scalar_subquery()
-    )
-    return func.coalesce(by_link, by_index)
 
 
 # ── All Records ────────────────────────────────────────────────────────────────
