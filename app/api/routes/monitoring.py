@@ -107,6 +107,10 @@ def get_all_records(
         max_length=8,
     ),
     latest_only: bool = Query(False, description="Show only the latest log per DTN"),
+    first_only: bool = Query(
+        False,
+        description="Show only the first log per DTN that matches the current filters",
+    ),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
@@ -149,6 +153,10 @@ def export_all_records(
     dtn_date_from: Optional[str] = Query(None, min_length=8, max_length=8),
     dtn_date_to: Optional[str] = Query(None, min_length=8, max_length=8),
     latest_only: bool = Query(False, description="Show only the latest log per DTN"),
+    first_only: bool = Query(
+        False,
+        description="Show only the first log per DTN that matches the current filters",
+    ),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
