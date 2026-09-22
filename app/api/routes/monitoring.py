@@ -136,6 +136,7 @@ def get_all_records(
         dtn_date_from=dtn_date_from,
         dtn_date_to=dtn_date_to,
         latest_only=latest_only,
+        first_only=first_only,
     )
     return AllRecordsResponse(**result)
 
@@ -173,6 +174,7 @@ def export_all_records(
         dtn_date_from=dtn_date_from,
         dtn_date_to=dtn_date_to,
         latest_only=latest_only,
+        first_only=first_only,
     )
 
     if not rows:
