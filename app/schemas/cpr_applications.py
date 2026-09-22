@@ -4,6 +4,16 @@ from typing import Optional, List
 from pydantic import BaseModel, Field, ConfigDict
 
 
+class TableOfChangeInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    current_value: Optional[str] = Field(None, alias="Current")
+    proposed_value: Optional[str] = Field(None, alias="Proposed Changes")
+    specific_type_of_variation: Optional[str] = Field(
+        None, alias="Specific Type of Variation"
+    )
+
+
 class ApplicationCreate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -76,10 +86,24 @@ class ApplicationCreate(BaseModel):
     start_date: Optional[datetime] = None
     step_duedate: Optional[str] = None
 
+    # ── Table of Changes (Post-Approval Changes Particulars) ──
+    table_of_changes: List[TableOfChangeInput] = Field(
+        default_factory=list, alias="Table of Changes"
+    )
+
+
+class TableOfChangeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    change_uuid: str
+    row_order: int
+    current_value: Optional[str] = None
+    proposed_value: Optional[str] = None
+    specific_type_of_variation: Optional[str] = None
+
 
 class AppPartyOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-
     party_uuid: str
     party_type: str
     name: Optional[str] = None
@@ -91,7 +115,70 @@ class AppPartyOut(BaseModel):
 
 class AppHistoryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+    history_uuid: str
+    reference_number: Optional[str] = None
+    application_step: Optional[str] = None
+    application_status: Optional[str] = None
+    start_date: Optional[datetime] = None
+    step_duedate: Optional[str] = None
 
+
+# app/schemas/cpr_applications.py
+from datetime import datetime
+from typing import Optional, List
+from pydantic import BaseModel, Field, ConfigDict
+
+
+class TableOfChangeInput(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    current_value: Optional[str] = Field(None, alias="Current")
+    proposed_value: Optional[str] = Field(None, alias="Proposed Changes")
+    specific_type_of_variation: Optional[str] = Field(
+        None, alias="Specific Type of Variation"
+    )
+
+
+class ApplicationCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    # ...existing fields stay as-is...
+
+    # ── initial history entry ──
+    application_step: Optional[str] = None
+    current_status: Optional[str] = None
+    start_date: Optional[datetime] = None
+    step_duedate: Optional[str] = None
+
+    # ── Table of Changes (Post-Approval Changes Particulars) ──
+    table_of_changes: List[TableOfChangeInput] = Field(
+        default_factory=list, alias="Table of Changes"
+    )
+
+
+class TableOfChangeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    change_uuid: str
+    row_order: int
+    current_value: Optional[str] = None
+    proposed_value: Optional[str] = None
+    specific_type_of_variation: Optional[str] = None
+
+
+class AppPartyOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    party_uuid: str
+    party_type: str
+    name: Optional[str] = None
+    address: Optional[str] = None
+    tin: Optional[str] = None
+    lto_no: Optional[str] = None
+    country: Optional[str] = None
+
+
+class AppHistoryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     history_uuid: str
     reference_number: Optional[str] = None
     application_step: Optional[str] = None
@@ -115,3 +202,4 @@ class ApplicationResponse(BaseModel):
 
     parties: List[AppPartyOut] = []
     history: List[AppHistoryOut] = []
+    table_of_changes: List[TableOfChangeOut] = []

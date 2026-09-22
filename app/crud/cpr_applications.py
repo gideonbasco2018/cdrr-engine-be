@@ -12,6 +12,7 @@ from app.models.cpr_application import CPRApplication
 from app.models.cpr_app_parties import CPRAppParty
 from app.models.cpr_app_history import CPRAppHistory
 from app.models.cpr_app_document import CPRAppDocument
+from app.models.cpr_table_of_changes import CPRTableOfChanges
 from app.schemas.cpr_applications import ApplicationCreate
 
 PARTY_TYPES = ["manufacturer", "trader", "repacker", "importer", "distributor"]
@@ -44,9 +45,23 @@ APPLICATION_FIELDS = {
     "old_rsn_other_dtn",
 }
 
-# TODO: confirm/update this to match the actual seeded value
-# of process_code in the e_process table (the "Minor Variation Notification" row).
+# Confirmed against the seeded e_process row: process_code="MVN",
+# process_title="Minor Variation Notification"
 CPR_PROCESS_CODE = "MVN"
+
+# Default "next actionable step" per process_code, applied right after
+# Initial Submission when the caller doesn't explicitly pass application_step.
+# Add an entry here whenever a new process_code is onboarded.
+DEFAULT_NEXT_STEP_BY_PROCESS_CODE = {
+    "MVN": "Assessor",
+}
+DEFAULT_NEXT_STEP_FALLBACK = "Assessor"
+
+
+def _get_default_next_step(process_code: str) -> str:
+    return DEFAULT_NEXT_STEP_BY_PROCESS_CODE.get(
+        process_code, DEFAULT_NEXT_STEP_FALLBACK
+    )
 
 
 def _get_cpr_process_uuid(db: Session) -> str:
@@ -131,14 +146,15 @@ def create_application(
             )
         )
 
-        # 4b. Step 2 — Decking (next actionable step, open/active thread)
+        # 4b. Step 2 — next actionable step, based on process_code (open/active thread)
+        default_next_step = _get_default_next_step(CPR_PROCESS_CODE)
         db.add(
             CPRAppHistory(
                 application_uuid=ref_uuid,
                 process_uuid=process_uuid,
                 user_uuid=None,
                 reference_number=data.get("reference_number"),
-                application_step=data.get("application_step") or "Decking",
+                application_step=data.get("application_step") or default_next_step,
                 application_status=data.get("current_status") or "In Progress",
                 start_date=now,
                 step_duedate=data.get("step_duedate"),
@@ -148,11 +164,22 @@ def create_application(
                 del_thread="Open",
             )
         )
-
         # 5. Documents (kung meron)
         if documents:
             for doc_input in documents:
                 db.add(CPRAppDocument(application_uuid=ref_uuid, **doc_input))
+
+        # 6. Table of Changes (kung meron)
+        for idx, row in enumerate(payload.table_of_changes):
+            db.add(
+                CPRTableOfChanges(
+                    application_uuid=ref_uuid,
+                    row_order=idx,
+                    current_value=row.current_value,
+                    proposed_value=row.proposed_value,
+                    specific_type_of_variation=row.specific_type_of_variation,
+                )
+            )
 
         db.commit()
         db.refresh(db_application)
