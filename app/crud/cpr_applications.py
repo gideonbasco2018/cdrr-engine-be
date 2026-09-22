@@ -45,9 +45,23 @@ APPLICATION_FIELDS = {
     "old_rsn_other_dtn",
 }
 
-# TODO: confirm/update this to match the actual seeded value
-# of process_code in the e_process table (the "Minor Variation Notification" row).
+# Confirmed against the seeded e_process row: process_code="MVN",
+# process_title="Minor Variation Notification"
 CPR_PROCESS_CODE = "MVN"
+
+# Default "next actionable step" per process_code, applied right after
+# Initial Submission when the caller doesn't explicitly pass application_step.
+# Add an entry here whenever a new process_code is onboarded.
+DEFAULT_NEXT_STEP_BY_PROCESS_CODE = {
+    "MVN": "Assessor",
+}
+DEFAULT_NEXT_STEP_FALLBACK = "Assessor"
+
+
+def _get_default_next_step(process_code: str) -> str:
+    return DEFAULT_NEXT_STEP_BY_PROCESS_CODE.get(
+        process_code, DEFAULT_NEXT_STEP_FALLBACK
+    )
 
 
 def _get_cpr_process_uuid(db: Session) -> str:
@@ -132,14 +146,15 @@ def create_application(
             )
         )
 
-        # 4b. Step 2 — Assessor (next actionable step, open/active thread)
+        # 4b. Step 2 — next actionable step, based on process_code (open/active thread)
+        default_next_step = _get_default_next_step(CPR_PROCESS_CODE)
         db.add(
             CPRAppHistory(
                 application_uuid=ref_uuid,
                 process_uuid=process_uuid,
                 user_uuid=None,
                 reference_number=data.get("reference_number"),
-                application_step=data.get("application_step") or "Assessor",
+                application_step=data.get("application_step") or default_next_step,
                 application_status=data.get("current_status") or "In Progress",
                 start_date=now,
                 step_duedate=data.get("step_duedate"),
