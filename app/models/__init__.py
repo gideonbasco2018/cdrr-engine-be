@@ -29,6 +29,10 @@ from app.models.cpr_app_history import CPRAppHistory
 from app.models.cpr_app_parties import CPRAppParty
 from app.models.cpr_application import CPRApplication
 from app.models.cpr_app_document import CPRAppDocument
+from app.models.cpr_order_of_payment import CPROrderOfPayment
+from app.models.cpr_payment_verification import CPRPaymentVerification
+from app.models.cpr_table_of_changes import CPRTableOfChanges
+
 
 from app.models.e_application_ref import EApplicationRef
 from app.models.e_process import EProcess
@@ -71,4 +75,7 @@ __all__ = [
     "EProcess",
     "ClinicalTrialAuditLog",
     "ClinicalTrial",
+    "CPROrderOfPayment",
+    "CPRPaymentVerification",
+    "CPRTableOfChanges",
 ]
