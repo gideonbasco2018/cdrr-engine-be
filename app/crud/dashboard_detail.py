@@ -79,6 +79,7 @@ def _row_to_detail(row: ApplicationLogs) -> ApplicationLogDetail:
         app_type=main.DB_APP_TYPE if main else None,
         reg_no=main.DB_REG_NO if main else None,
         atta_released=main.DB_ATTA_RELEASED if main else None,
+        type_doc_released=main.DB_TYPE_DOC_RELEASED if main else None,
         # ── correction/reconstruction fields ────────────────────────
         old_rsn=main.DB_OLD_RSN if main else None,
         entry_type=main.DB_ENTRY_TYPE if main else None,
