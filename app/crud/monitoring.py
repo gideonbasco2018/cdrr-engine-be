@@ -124,6 +124,7 @@ def _build_all_records_query(
     dtn_date_from: Optional[str] = None,
     dtn_date_to: Optional[str] = None,
     latest_only: bool = False,
+    first_only: bool = False,
 ):
     """Shared by the table (paginated) and the export (all rows)."""
     query = _exclude_action_types(
@@ -164,8 +165,8 @@ def _build_all_records_query(
     if dtn_date_to and len(dtn_date_to) == 8 and dtn_date_to.isdigit():
         query = query.filter(func.left(MainDB.DB_DTN, 8) <= dtn_date_to)
 
-    # Optional: isang row na lang per DTN (yung pinakabagong log
-    # sa loob ng kasalukuyang filters)
+    # Optional: only one row per DTN (the most recent log
+    # within the current filters)
     if latest_only:
         latest_ids = (
             query.with_entities(func.max(ApplicationLogs.id).label("max_id"))
@@ -173,6 +174,17 @@ def _build_all_records_query(
             .subquery()
         )
         query = query.filter(ApplicationLogs.id.in_(latest_ids))
+
+    # Optional: only one row per DTN — the FIRST time it matched
+    # the current filters (e.g. the first "S&E" occurrence, before
+    # it comes back to "S&E" a third time).
+    if first_only:
+        first_ids = (
+            query.with_entities(func.min(ApplicationLogs.id).label("min_id"))
+            .group_by(ApplicationLogs.main_db_id)
+            .subquery()
+        )
+        query = query.filter(ApplicationLogs.id.in_(first_ids))
 
     sort_map = {
         "date": func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"),
@@ -248,6 +260,7 @@ def get_all_records(
     dtn_date_from: Optional[str] = None,
     dtn_date_to: Optional[str] = None,
     latest_only: bool = False,
+    first_only: bool = False,
 ) -> dict:
     query = _build_all_records_query(
         db,
@@ -262,6 +275,7 @@ def get_all_records(
         dtn_date_from=dtn_date_from,
         dtn_date_to=dtn_date_to,
         latest_only=latest_only,
+        first_only=first_only,
     )
 
     total = query.count()
@@ -290,8 +304,9 @@ def get_all_records_for_export(
     dtn_date_from: Optional[str] = None,
     dtn_date_to: Optional[str] = None,
     latest_only: bool = False,
+    first_only: bool = False,
 ) -> list[dict]:
-    """Same filters as get_all_records, pero walang pagination."""
+    """Same filters as get_all_records, but without pagination."""
     query = _build_all_records_query(
         db,
         user_id=user_id,
@@ -305,6 +320,7 @@ def get_all_records_for_export(
         dtn_date_from=dtn_date_from,
         dtn_date_to=dtn_date_to,
         latest_only=latest_only,
+        first_only=first_only,
     )
     return [_record_row(log, main, user, da) for log, main, user, da in query.all()]
 
