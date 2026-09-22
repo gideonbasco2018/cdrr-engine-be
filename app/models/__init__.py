@@ -84,4 +84,3 @@ __all__ = [
     "Donation",
     "DonationChangeLog",
 ]
-

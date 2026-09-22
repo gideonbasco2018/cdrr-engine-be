@@ -499,11 +499,26 @@ def get_gmp_filter_counts(
             "FOR DECKING": "#06b6d4",
             "DECKED":      "#6366f1",
             "DISAPPROVED": "#ef4444",
-            "IN PROGRESS": "#f97316",
+            "IN PROGRESS": "#facc15",   # yellow
+            "RELEASED":    "#10b981",   # green
+            # "No Status" (the empty bucket) isn't listed here on purpose —
+            # it falls through to the "#94a3b8" gray default below.
         },
-        "est_category":     "#f59e0b",   # amber
-        "transaction_type": "#8b5cf6",   # purple
-        "type_of_issuance": "#06b6d4",   # cyan
+        # Real category values listed explicitly so they render cyan
+        # (matching the Category group's header accent); "No Category" (the
+        # empty bucket) isn't listed on purpose — it falls through to the
+        # gray default below, same pattern as "No Status" above.
+        "est_category": {
+            "PIC/S":               "#06b6d4",
+            "NON PIC/S":           "#06b6d4",
+            "LETTER and CORRECTION": "#06b6d4",
+        },
+        # These match each group's own header/accent color on the frontend
+        # (QueueFilters.jsx GROUP_ACCENT) — item dots used to use an
+        # unrelated palette here, so a group's items didn't visually match
+        # its own header color.
+        "transaction_type": "#f97316",   # orange — matches Transaction Type group accent
+        "type_of_issuance": "#8b5cf6",   # purple — matches Issuance Type group accent
     }
 
     def _colored_group(field, label, key, empty_value=None, empty_label="(Empty)"):
@@ -530,7 +545,8 @@ def get_gmp_filter_counts(
             # despite counting toward "All".
             _colored_group("GMP_APP_STATUS",       "Application Status", "app_status",
                             empty_value="__EMPTY__", empty_label="No Status"),
-            _colored_group("GMP_EST_CATEGORY",     "Category",           "est_category"),
+            _colored_group("GMP_EST_CATEGORY",     "Category",           "est_category",
+                            empty_value="__EMPTY__", empty_label="No Category"),
             _colored_group("GMP_TRANSACTION_TYPE", "Transaction Type",   "transaction_type"),
             _colored_group("GMP_TYPE_OF_ISSUANCE", "Issuance Type",      "type_of_issuance"),
         ],
