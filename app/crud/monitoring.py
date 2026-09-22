@@ -165,8 +165,9 @@ def _build_all_records_query(
     if dtn_date_to and len(dtn_date_to) == 8 and dtn_date_to.isdigit():
         query = query.filter(func.left(MainDB.DB_DTN, 8) <= dtn_date_to)
 
-    # Optional: only one row per DTN (the most recent log
-    # within the current filters)
+    # Optional: only one row per application (main_db_id) — the most
+    # recent log within the current filters. Grouped by main_db_id,
+    # the true unique key of an application.
     if latest_only:
         latest_ids = (
             query.with_entities(func.max(ApplicationLogs.id).label("max_id"))
@@ -175,9 +176,12 @@ def _build_all_records_query(
         )
         query = query.filter(ApplicationLogs.id.in_(latest_ids))
 
-    # Optional: only one row per DTN — the FIRST time it matched
-    # the current filters (e.g. the first "S&E" occurrence, before
-    # it comes back to "S&E" a third time).
+    # Optional: only one row per application (main_db_id) — the FIRST
+    # time it matched the current filters (e.g. the first "S&E"
+    # occurrence, before it comes back to "S&E" a third time).
+    # Grouped by main_db_id, the true unique key of an application —
+    # two applications can share the same DTN text and are still
+    # counted separately.
     if first_only:
         first_ids = (
             query.with_entities(func.min(ApplicationLogs.id).label("min_id"))
