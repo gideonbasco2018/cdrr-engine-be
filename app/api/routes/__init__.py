@@ -89,8 +89,5 @@ api_router.include_router(cpr_app_document.router)
 api_router.include_router(priority_meds.router)
 api_router.include_router(doctrack_system.router)
 api_router.include_router(clinical_trials.router)
-<<<<<<< HEAD
 api_router.include_router(cpr_order_of_payment.router)
-=======
 api_router.include_router(donation.router)
->>>>>>> 013bcb8 (Add donation tracking module, resolve conflicts with clinical trials additions)
