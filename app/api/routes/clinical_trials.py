@@ -140,6 +140,7 @@ def preview_clinical_trials_upload(
             phase=row.phase,
             sponsor_name=row.sponsor_name,
             ct_ref_no=row.ct_ref_no,
+            drug_count=len(row.drugs),
         )
         for row_idx, row in rows
     ]

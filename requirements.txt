@@ -51,3 +51,7 @@ google-auth-httplib2>=0.1.1
 
 # Rar extraction (Batch Folder Upload)
 rarfile
+
+# PDF generation from HTML (Order of Payment, Certificates, etc.)
+weasyprint
+jinja2
