@@ -351,13 +351,12 @@ async def upload_donation_excel(
                 row_dict[key] = str(value).strip()
         rows.append(row_dict)
 
-    created, skipped_duplicates, skipped_no_dtn, skipped_invalid_dtn, errors = crud.bulk_create_donations(
+    created, skipped_duplicates, skipped_invalid_dtn, errors = crud.bulk_create_donations(
         db, rows, current_user.username
     )
     return DonationUploadResult(
         created=created,
         skipped_duplicates=skipped_duplicates,
-        skipped_no_dtn=skipped_no_dtn,
         skipped_invalid_dtn=skipped_invalid_dtn,
         failed=len(errors),
         errors=errors,
@@ -430,20 +429,18 @@ async def preview_donation_excel(
             "date_received": row_dict.get("date_received") or "-",
         }
 
-        if not dtn:
-            will_skip.append({**preview_row, "reason": "No Letter DTN in this row — a row needs a Letter DTN to be imported."})
-            continue
-        if not crud.LETTER_DTN_RE.match(dtn):
+        if dtn and not crud.LETTER_DTN_RE.match(dtn):
             will_skip.append({**preview_row, "reason": f"Letter DTN \"{dtn}\" isn't a 14-digit number — won't import."})
             continue
-        if dtn in seen_in_file:
+        if dtn and dtn in seen_in_file:
             will_skip.append({**preview_row, "reason": "Duplicate Letter DTN — appears more than once in this file."})
             continue
-        if dtn in existing_dtns:
+        if dtn and dtn in existing_dtns:
             will_skip.append({**preview_row, "reason": "Letter DTN already exists in the system — will be skipped, not overwritten."})
             continue
 
-        seen_in_file.add(dtn)
+        if dtn:
+            seen_in_file.add(dtn)
         will_insert.append(preview_row)
 
     return {

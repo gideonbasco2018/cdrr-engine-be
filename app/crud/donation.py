@@ -138,11 +138,16 @@ def create_donation(db: Session, payload: DonationCreate, username: str) -> Dona
     data = payload.model_dump()
     data["status"] = data.get("status") or "For Evaluation"
 
-    existing = (
-        db.query(Donation).filter(Donation.letter_dtn == data["letter_dtn"]).first()
-    )
-    if existing:
-        raise DuplicateLetterDtnError(data["letter_dtn"], existing.id)
+    # Letter DTN is optional — only check for a duplicate when one was
+    # actually given. Without this guard, `Donation.letter_dtn == None`
+    # would match on IS NULL and wrongly flag every blank-DTN row after
+    # the first as a "duplicate" of it.
+    if data.get("letter_dtn"):
+        existing = (
+            db.query(Donation).filter(Donation.letter_dtn == data["letter_dtn"]).first()
+        )
+        if existing:
+            raise DuplicateLetterDtnError(data["letter_dtn"], existing.id)
 
     donation = Donation(
         **data,
@@ -207,14 +212,14 @@ def get_change_log(db: Session, donation_id: int) -> List[DonationChangeLog]:
 
 def bulk_create_donations(
     db: Session, rows: List[dict], username: str
-) -> tuple[int, int, int, int, list[str]]:
-    """Insert many donations at once (Excel import). Skips fully-blank
-    rows, rows with no Letter DTN or one that isn't a 14-digit number (a
-    DTN is required to insert a row — it's how duplicates are detected
-    and how the record is identified everywhere else), and rows whose
+) -> tuple[int, int, int, list[str]]:
+    """Insert many donations at once (Excel import). Letter DTN is optional
+    (a lot of real historical rows never had one) — skips only fully-blank
+    rows, rows whose Letter DTN isn't a 14-digit number, and rows whose
     Letter DTN already exists (already-imported or duplicated within the
-    same file). Returns (created_count, skipped_duplicate_count,
-    skipped_no_dtn_count, skipped_invalid_dtn_count, error_messages) —
+    same file); a row with no Letter DTN at all is always inserted, since
+    there's nothing to dedupe against. Returns (created_count,
+    skipped_duplicate_count, skipped_invalid_dtn_count, error_messages) —
     one failed row doesn't abort the rest, each is attempted
     independently."""
     existing_dtns = {
@@ -225,7 +230,6 @@ def bulk_create_donations(
 
     created = 0
     skipped_duplicates = 0
-    skipped_no_dtn = 0
     skipped_invalid_dtn = 0
     errors: list[str] = []
     for idx, row in enumerate(rows, start=2):  # row 1 is the header
@@ -233,18 +237,15 @@ def bulk_create_donations(
             continue
 
         dtn = (row.get("letter_dtn") or "").strip()
-        if not dtn:
-            skipped_no_dtn += 1
-            continue
-        if not LETTER_DTN_RE.match(dtn):
+        if dtn and not LETTER_DTN_RE.match(dtn):
             skipped_invalid_dtn += 1
             continue
-        if dtn in existing_dtns or dtn in seen_in_file:
+        if dtn and (dtn in existing_dtns or dtn in seen_in_file):
             skipped_duplicates += 1
             continue
 
         row = dict(row)
-        row["letter_dtn"] = dtn
+        row["letter_dtn"] = dtn or None
         row["status"] = row.get("status") or "For Evaluation"
         try:
             donation = Donation(
@@ -253,8 +254,9 @@ def bulk_create_donations(
             db.add(donation)
             db.commit()
             created += 1
-            seen_in_file.add(dtn)
+            if dtn:
+                seen_in_file.add(dtn)
         except Exception as exc:  # noqa: BLE001
             db.rollback()
             errors.append(f"Row {idx}: {exc}")
-    return created, skipped_duplicates, skipped_no_dtn, skipped_invalid_dtn, errors
+    return created, skipped_duplicates, skipped_invalid_dtn, errors

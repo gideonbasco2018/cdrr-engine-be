@@ -5,10 +5,23 @@ from pydantic import BaseModel, field_validator
 from typing import Optional, List
 from datetime import datetime
 
-# Letter DTN is a 14-digit code (e.g. a YYYYMMDDHHMMSS-style timestamp id)
-# — mirrors LETTER_DTN_RE in crud/donation.py (Excel import uses that copy)
-# so a manual create/update and an import row are held to the same rule.
+# Letter DTN is optional — a lot of real historical rows never had one (the
+# CRR-only field wasn't always filled in). When one IS given, it's a 14-digit
+# code (e.g. a YYYYMMDDHHMMSS-style timestamp id) — mirrors LETTER_DTN_RE in
+# crud/donation.py (Excel import uses that copy) so a manual create/update
+# and an import row are held to the same format rule.
 LETTER_DTN_RE = re.compile(r"^\d{14}$")
+
+
+def _validate_letter_dtn_format(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return v
+    v = v.strip()
+    if not v:
+        return None
+    if not LETTER_DTN_RE.match(v):
+        raise ValueError("Letter DTN must be a 14-digit number.")
+    return v
 
 
 class DonationBase(BaseModel):
@@ -35,20 +48,12 @@ class DonationBase(BaseModel):
 
 
 class DonationCreate(DonationBase):
-    # A row needs a Letter DTN to be inserted — it's how duplicates are
-    # detected on import and how the record is identified everywhere else.
-    letter_dtn: str
     status: str = "For Evaluation"
 
     @field_validator("letter_dtn")
     @classmethod
-    def letter_dtn_not_blank(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("Letter DTN is required.")
-        if not LETTER_DTN_RE.match(v):
-            raise ValueError("Letter DTN must be a 14-digit number.")
-        return v
+    def letter_dtn_format(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_letter_dtn_format(v)
 
 
 class DonationUpdate(DonationBase):
@@ -60,17 +65,8 @@ class DonationUpdate(DonationBase):
 
     @field_validator("letter_dtn")
     @classmethod
-    def letter_dtn_not_blank(cls, v: Optional[str]) -> str:
-        # The frontend always resends the whole form on save (not a partial
-        # patch), so a null/blank here means the user cleared the field —
-        # reject it the same way DonationCreate does, so a row can't lose
-        # its Letter DTN after the fact.
-        if v is None or not v.strip():
-            raise ValueError("Letter DTN is required.")
-        v = v.strip()
-        if not LETTER_DTN_RE.match(v):
-            raise ValueError("Letter DTN must be a 14-digit number.")
-        return v
+    def letter_dtn_format(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_letter_dtn_format(v)
 
 
 class DonationResponse(DonationBase):
@@ -104,7 +100,6 @@ class DonationChangeLogResponse(BaseModel):
 class DonationUploadResult(BaseModel):
     created: int
     skipped_duplicates: int
-    skipped_no_dtn: int = 0
     skipped_invalid_dtn: int = 0
     failed: int
     errors: List[str] = []
