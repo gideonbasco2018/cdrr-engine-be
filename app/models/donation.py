@@ -38,19 +38,19 @@ class Donation(Base):
     version = Column(Integer, nullable=False, default=1, server_default="1")
 
     letter_dtn = Column(String(50), nullable=True, index=True)
-    date_received = Column(String(50), nullable=True)
-    date_received_by_evaluator = Column(String(50), nullable=True)
+    date_received = Column(Text, nullable=True)
+    date_received_by_evaluator = Column(Text, nullable=True)
     donor = Column(String(255), nullable=True)
     donee = Column(String(255), nullable=True)
     registration_dtn = Column(String(50), nullable=True, index=True)
     product_name = Column(Text, nullable=True)
     packaging = Column(Text, nullable=True)
     manufacturer = Column(Text, nullable=True)
-    batch_lot_no = Column(String(255), nullable=True)
-    expiration_date = Column(String(100), nullable=True)
+    batch_lot_no = Column(Text, nullable=True)
+    expiration_date = Column(Text, nullable=True)
     total_quantity = Column(String(255), nullable=True)
-    validity = Column(String(100), nullable=True)
-    date_issued = Column(String(50), nullable=True)
+    validity = Column(Text, nullable=True)
+    date_issued = Column(Text, nullable=True)
     evaluator = Column(String(50), nullable=True)
     status = Column(
         String(30),
@@ -60,8 +60,8 @@ class Donation(Base):
         index=True,
     )
     donation_reg_no = Column(String(50), nullable=True)
-    date_forwarded_to_checker = Column(String(50), nullable=True)
-    date_released = Column(String(50), nullable=True)
+    date_forwarded_to_checker = Column(Text, nullable=True)
+    date_released = Column(Text, nullable=True)
     remarks = Column(Text, nullable=True)
 
     upload_date = Column(DateTime(timezone=True), server_default=func.now())
