@@ -4,9 +4,27 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 
 
+class ClinicalTrialDrugBase(BaseModel):
+    ip_name: Optional[str] = None
+    dosage_strength: Optional[str] = None
+    pharma_form: Optional[str] = None
+    drug_type: Optional[str] = None
+    total_qty_approve: int = 0
+
+
+class ClinicalTrialDrugCreate(ClinicalTrialDrugBase):
+    pass
+
+
+class ClinicalTrialDrugOut(ClinicalTrialDrugBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
 class ClinicalTrialBase(BaseModel):
     protocol_no: Optional[str] = Field(None, max_length=50)
-
     study_title: Optional[str] = None
     phase: Optional[str] = Field(None, max_length=10)
 
@@ -19,18 +37,13 @@ class ClinicalTrialBase(BaseModel):
     cro_contact: Optional[str] = None
 
     ct_ref_no: Optional[str] = Field(None, max_length=50)
-    ip_name: Optional[str] = None
-    dosage_strength: Optional[str] = None
-    pharma_form: Optional[str] = None
-    drug_type: Optional[str] = None
 
     il_approval_no: Optional[str] = Field(None, max_length=50)
     il_approval_date: Optional[date] = None
-    total_qty_approve: int = 0
 
 
 class ClinicalTrialCreate(ClinicalTrialBase):
-    pass
+    drugs: List[ClinicalTrialDrugCreate] = []
 
 
 class ClinicalTrialUpdate(BaseModel):
@@ -44,18 +57,15 @@ class ClinicalTrialUpdate(BaseModel):
     cro_address: Optional[str] = None
     cro_contact: Optional[str] = None
     ct_ref_no: Optional[str] = None
-    ip_name: Optional[str] = None
-    dosage_strength: Optional[str] = None
-    pharma_form: Optional[str] = None
-    drug_type: Optional[str] = None
     il_approval_no: Optional[str] = None
     il_approval_date: Optional[date] = None
-    total_qty_approve: Optional[int] = None
+    drugs: Optional[List[ClinicalTrialDrugCreate]] = None
 
 
 class ClinicalTrialOut(ClinicalTrialBase):
     id: int
     uuid: str
+    drugs: List[ClinicalTrialDrugOut] = []
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -78,12 +88,13 @@ class ClinicalTrialUploadResult(BaseModel):
 
 
 class ClinicalTrialUploadPreviewRow(BaseModel):
-    row_number: int
+    row_number: int  # first row of the group
     protocol_no: Optional[str] = None
     study_title: Optional[str] = None
     phase: Optional[str] = None
     sponsor_name: Optional[str] = None
     ct_ref_no: Optional[str] = None
+    drug_count: int = 0
 
 
 class ClinicalTrialUploadPreviewResult(BaseModel):
