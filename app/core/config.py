@@ -56,6 +56,7 @@ class Settings:
     REMOTE_DATABASE_URL = os.getenv("REMOTE_DATABASE_URL")
     REMOTE_FDA_ESERVICES_URL = os.getenv("REMOTE_FDA_ESERVICES_URL")
     REMOTE_OTC_URL = os.getenv("REMOTE_OTC_URL")
+    REMOTE_FDA_CPR_DRUGS_ESERVICES_URL = os.getenv("REMOTE_FDA_CPR_DRUGS_ESERVICES_URL")
 
     GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
     SMTP_HOST = os.getenv("SMTP_HOST")
@@ -70,6 +71,8 @@ class Settings:
     EXTERNAL_SYSTEM_TOKEN = os.getenv("EXTERNAL_SYSTEM_TOKEN")
     # External system auth (for machine-to-machine Doctrack endpoints)
     EXTERNAL_DOCTRACK_TOKEN = os.getenv("EXTERNAL_DOCTRACK_TOKEN")
+
+    REMOTE_FDA_CPR_DRUGS_ESERVICES_URL = os.getenv("REMOTE_FDA_CPR_DRUGS_ESERVICES_URL")
 
 
 settings = Settings()
