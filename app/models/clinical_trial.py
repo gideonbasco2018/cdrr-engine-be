@@ -19,7 +19,7 @@ class ClinicalTrial(Base):
 
     protocol_no = Column(String(50), nullable=True, index=True)
     study_title = Column(Text, nullable=True)
-    phase = Column(String(10), nullable=True)
+    phase = Column(String(20), nullable=True)
 
     sponsor_name = Column(String(255), nullable=True)
     sponsor_address = Column(String(500), nullable=True)
