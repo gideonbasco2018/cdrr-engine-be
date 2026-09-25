@@ -976,6 +976,7 @@ def advance_step(
         deadline_date=req.deadline_date,
         working_days=req.working_days,
         completion_status=req.completion_status,
+        auto_complete_next_step=req.auto_complete_next_step,
     )
 
     if not new_log:

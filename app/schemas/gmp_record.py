@@ -163,6 +163,12 @@ class GMPAdvanceStepRequest(BaseModel):
     # normalized automatically instead of erroring.
     deadline_date: Optional[datetime] = None
     working_days: Optional[int] = None
+    # When true and this action routes to a next step, that step's log is
+    # created already closed/RELEASED instead of left open — for actions
+    # that must show a step in the record's history (e.g. "QA Admin") but
+    # require no one to actually act on it. See advance_step() in
+    # app/crud/gmp_logs.py.
+    auto_complete_next_step: bool = False
 
     @field_validator("deadline_date", mode="before")
     @classmethod
