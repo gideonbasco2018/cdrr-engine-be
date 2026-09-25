@@ -34,7 +34,7 @@ _DATE_FORMATS = [
 ]
 
 _ARABIC_TO_ROMAN_PHASE = {"1": "I", "2": "II", "3": "III", "4": "IV"}
-_PHASE_MAX_LEN = 10
+_PHASE_MAX_LEN = 20
 
 _EXCEL_EPOCH = datetime(1899, 12, 30)
 
