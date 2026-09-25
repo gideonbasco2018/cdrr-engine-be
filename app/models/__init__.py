@@ -39,6 +39,7 @@ from app.models.e_process import EProcess
 from app.models.clinical_trial_audit_log import ClinicalTrialAuditLog
 from app.models.clinical_trial import ClinicalTrial
 from app.models.clinical_trial_drug import ClinicalTrialDrug
+from app.models.donation import Donation, DonationChangeLog
 
 __all__ = [
     "MainDB",
@@ -80,4 +81,6 @@ __all__ = [
     "CPRPaymentVerification",
     "CPRTableOfChanges",
     "ClinicalTrialDrug",
+    "Donation",
+    "DonationChangeLog",
 ]

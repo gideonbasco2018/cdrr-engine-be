@@ -3,7 +3,7 @@
 import re
 import uuid
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, desc, or_, and_, case, cast, String, nullslast
+from sqlalchemy import func, desc, or_, and_, case, cast, String
 from typing import Optional, List, Tuple, Dict
 from datetime import date, datetime, timezone, timedelta
 from app.models.gmp_record import GMPRecord, GMPDelegation, GMPApplicationLogs, GMPFieldAuditLog
@@ -102,7 +102,11 @@ GMP_ACTION_ROUTES: Dict[tuple, Optional[str]] = {
     # stays on their queue, but now with a logged history trail.
     ("Evaluator", "For Compliance"):              "Evaluator",
 
-    ("Checker", "Endorsed to Evaluator"):         "Evaluator",
+    # Split from a single "Endorsed to Evaluator" action — both still route
+    # back to the Evaluator, they just distinguish "done checking, forward
+    # it" from "sending it back for another look."
+    ("Checker", "Checked and returned to evaluator"): "Evaluator",
+    ("Checker", "Return to evaluator for review (Not Checked, Doctrack Remarks Off)"): "Evaluator",
 
     ("QA Admin", "Endorsed to LRD Chief Admin"):  "LRD Chief Admin",
     ("QA Admin", "Return to Evaluator"):          "Evaluator",
@@ -473,8 +477,16 @@ def get_gmp_records(
 
     if app_status:
         if app_status == "__EMPTY__":
+            # Mirrors _effective_status_col() / the sidebar's "No Status"
+            # count: blank status AND no active step either. Without the
+            # current_step exclusion, this pulled in records that the
+            # sidebar count had already reclassified as IN PROGRESS — so
+            # clicking "No Status" returned more (and different) rows than
+            # the number shown next to it, several visibly tagged "IN
+            # PROGRESS" in the table despite the filter just clicked.
             query = query.filter(
-                or_(GMPRecord.GMP_APP_STATUS.is_(None), GMPRecord.GMP_APP_STATUS == "")
+                or_(GMPRecord.GMP_APP_STATUS.is_(None), GMPRecord.GMP_APP_STATUS == ""),
+                or_(GMPRecord.GMP_CURRENT_STEP.is_(None), GMPRecord.GMP_CURRENT_STEP == ""),
             )
         elif app_status == "IN PROGRESS":
             # Mirrors _effective_status_col(): a non-terminal (or blank)
@@ -494,7 +506,12 @@ def get_gmp_records(
             query = query.filter(GMPRecord.GMP_APP_STATUS == app_status)
 
     if est_category:
-        query = query.filter(GMPRecord.GMP_EST_CATEGORY == est_category)
+        if est_category == "__EMPTY__":
+            query = query.filter(
+                or_(GMPRecord.GMP_EST_CATEGORY.is_(None), GMPRecord.GMP_EST_CATEGORY == "")
+            )
+        else:
+            query = query.filter(GMPRecord.GMP_EST_CATEGORY == est_category)
     if pics_nonpics:
         query = query.filter(GMPRecord.GMP_PICS_NONPICS == pics_nonpics)
     if transaction_type:
@@ -643,15 +660,25 @@ def get_gmp_records(
             func.coalesce(GMPRecord.GMP_RELEASED_DATE, func.curdate()),
             GMPRecord.GMP_DATE_RECEIVED,
         )
+        # MySQL has no NULLS LAST syntax — nullslast() here compiled straight
+        # to the literal keyword, which MySQL rejects outright (1064), making
+        # the whole request fail and the list appear empty on the frontend.
+        # `(days_expr IS NULL)` evaluates to 0/1, so ordering by it first puts
+        # non-null rows (0) ahead of null ones (1) regardless of direction —
+        # the standard MySQL-compatible stand-in for NULLS LAST.
         query = query.order_by(
-            nullslast(desc(days_expr) if sort_order.lower() == "desc" else days_expr),
+            days_expr.is_(None),
+            desc(days_expr) if sort_order.lower() == "desc" else days_expr,
             GMPRecord.GMP_ID,
         )
     elif sort_by in delegation_sort_fields:
         query = query.outerjoin(GMPDelegation, GMPRecord.GMP_ID == GMPDelegation.GMP_MAIN_ID)
         col = getattr(GMPDelegation, sort_by)
+        # Same MySQL-incompatible NULLS LAST issue as the STATUS_TIMELINE_DAYS
+        # branch above — replaced with the (col IS NULL) stand-in.
         query = query.order_by(
-            nullslast(desc(col)) if sort_order.lower() == "desc" else nullslast(col),
+            col.is_(None),
+            desc(col) if sort_order.lower() == "desc" else col,
             GMPRecord.GMP_ID,
         )
     elif hasattr(GMPRecord, sort_by):

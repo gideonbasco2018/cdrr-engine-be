@@ -45,6 +45,7 @@ from app.api.routes import (
     doctrack_system,
     clinical_trials,
     cpr_order_of_payment,
+    donation,
     eservices_drug_group_summary,
 )
 
@@ -90,4 +91,5 @@ api_router.include_router(priority_meds.router)
 api_router.include_router(doctrack_system.router)
 api_router.include_router(clinical_trials.router)
 api_router.include_router(cpr_order_of_payment.router)
+api_router.include_router(donation.router)
 api_router.include_router(eservices_drug_group_summary.router)
