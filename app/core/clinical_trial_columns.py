@@ -78,4 +78,14 @@ ALL_EXCEL_COLUMNS = [
     _column_lookup["total_qty_approve"],
 ]
 
-VALID_PHASES = ["I", "II", "III", "IV"]
+VALID_PHASES = [
+    "I",
+    "II",
+    "III",
+    "IV",
+    "I/II",
+    "II/III",
+    "III/IV",
+    "I/II/III",
+    "Others",
+]

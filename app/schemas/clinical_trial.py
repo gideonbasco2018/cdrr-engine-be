@@ -26,7 +26,9 @@ class ClinicalTrialDrugOut(ClinicalTrialDrugBase):
 class ClinicalTrialBase(BaseModel):
     protocol_no: Optional[str] = Field(None, max_length=50)
     study_title: Optional[str] = None
-    phase: Optional[str] = Field(None, max_length=10)
+    # Widened to match the "Others" free-text option in the Update form,
+    # not just the fixed I/II/III/IV/combo presets.
+    phase: Optional[str] = Field(None, max_length=20)
 
     sponsor_name: Optional[str] = None
     sponsor_address: Optional[str] = None
