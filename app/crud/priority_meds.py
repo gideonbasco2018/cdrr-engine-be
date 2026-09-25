@@ -160,7 +160,6 @@ RARE_DISEASE_GENERIC_NAMES = [
 TB_PHARMA_CAT_PATTERNS = [
     "%Antimycobacterial%",
     "%Antituberculosis%",
-    "%Dipeptidyl Peptidase 4 (Dpp-4) Inhibitor%",
     "%Anti-Tb%",
     "%Combination of Drugs for Treatment of Tuberculosis%",
 ]

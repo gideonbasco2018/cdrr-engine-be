@@ -50,6 +50,7 @@ from app.api.routes import (
     clinical_trials,
     cpr_order_of_payment,
     donation,
+    eservices_drug_group_summary,
 )
 
 # ── Scheduler setup ───────────────────────────────────────────────────
@@ -160,6 +161,8 @@ app.include_router(doctrack_system.router)
 app.include_router(clinical_trials.router)
 app.include_router(cpr_order_of_payment.router)
 app.include_router(donation.router)
+app.include_router(eservices_drug_group_summary.router)
+
 
 @app.get("/")
 def root():
