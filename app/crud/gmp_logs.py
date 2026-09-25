@@ -459,11 +459,15 @@ def advance_step(
     deadline_date: Optional[datetime] = None,
     working_days: Optional[int] = None,
     completion_status: Optional[str] = None,
+    auto_complete_next_step: bool = False,
 ) -> Optional[GMPApplicationLogs]:
     """
     1. Find (or auto-create) the current OPEN log for current_step.
     2. Mark it COMPLETED with decision details.
-    3. Create new IN PROGRESS log for next step (if next_step_label provided).
+    3. Create new IN PROGRESS log for next step (if next_step_label provided) —
+       or, if auto_complete_next_step is set, create that step's log already
+       RELEASED/Closed instead, so it shows in the record's history without
+       leaving an open task for anyone to act on.
     Returns the new log (or the completed log if this is the final step).
     """
     now = _now()
@@ -559,20 +563,25 @@ def advance_step(
     new_log = GMPApplicationLogs(
         gmp_record_id       = gmp_record_id,
         application_step    = next_step_label,
-        application_status  = "IN PROGRESS",
+        application_status  = "RELEASED" if auto_complete_next_step else "IN PROGRESS",
         application_decision= "",
         application_remarks = "",
         start_date          = now,
         del_index           = next_index,
         del_previous        = current_log.del_index,
-        del_last_index      = 1,
-        del_thread          = "Open",
+        # del_last_index / del_thread mark whether this log is the open,
+        # actionable one for its step. auto_complete_next_step creates the
+        # step already closed — it needs to show in the record's history,
+        # but nothing should ever list it as an open task.
+        del_last_index      = 0 if auto_complete_next_step else 1,
+        del_thread          = "Close" if auto_complete_next_step else "Open",
         user_name           = next_assignee_name,
         user_id             = next_assignee_id,
-        is_received         = 1,
+        is_received         = 0 if auto_complete_next_step else 1,
         is_starred          = 0,
-        deadline_date       = deadline_date,
-        working_days        = working_days,
+        deadline_date        = None if auto_complete_next_step else deadline_date,
+        working_days         = None if auto_complete_next_step else working_days,
+        accomplished_date    = now if auto_complete_next_step else None,
         sent_by_user_id     = performed_by_id,
         sent_by_full_name   = performed_by_full_name,
         sent_by_user_name   = performed_by_name,
@@ -583,21 +592,29 @@ def advance_step(
     # Update GMP_CURRENT_STEP on the parent record, and mirror it onto every
     # sibling reference number under the same DTN — only the primary ('-01')
     # reference has real application logs / a task, but every issuance
-    # variant should visually progress in parallel with it.
+    # variant should visually progress in parallel with it. When the next
+    # step is auto-completed, the record isn't actionably "at" it — clear
+    # the current step instead, the same as any other terminal action.
+    next_current_step = None if auto_complete_next_step else next_step_label
     record = db.query(GMPRecord).filter(GMPRecord.GMP_ID == gmp_record_id).first()
     if record:
-        record.GMP_CURRENT_STEP = next_step_label
+        record.GMP_CURRENT_STEP = next_current_step
+        if auto_complete_next_step:
+            record.GMP_APP_STATUS = "RELEASED"
+            record.GMP_RELEASED_DATE = now.date()  # column is Date, not datetime
         if record.GMP_DTN:
             db.query(GMPRecord).filter(
                 GMPRecord.GMP_DTN == record.GMP_DTN,
                 GMPRecord.GMP_ID != record.GMP_ID,
-            ).update({"GMP_CURRENT_STEP": next_step_label}, synchronize_session=False)
+            ).update({"GMP_CURRENT_STEP": next_current_step}, synchronize_session=False)
 
     db.commit()
     db.refresh(new_log)
 
-    dtn = get_gmp_dtn(db, gmp_record_id)
-    _notify_gmp_assigned(db, new_log, dtn)
+    if not auto_complete_next_step:
+        # No open task was created — no one to notify.
+        dtn = get_gmp_dtn(db, gmp_record_id)
+        _notify_gmp_assigned(db, new_log, dtn)
 
     return new_log
 
