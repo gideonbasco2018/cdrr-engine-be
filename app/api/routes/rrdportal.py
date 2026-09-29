@@ -1,4 +1,5 @@
 # app/api/routes/rrdportal.py
+from enum import Enum
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -9,8 +10,10 @@ from sqlalchemy.orm import Session
 from app.core.rrdportal_db import get_rrdportal_db
 from app.crud import rrdportal as crud
 from app.schemas.rrdportal import (
-    CmdrInitialDetail,
-    CmdrInitialPage,
+    CmdrAllPage,
+    CmdrApplicationDetail,
+    CmdrApplicationPage,
+    CmdrFilterOptions,
     CmdrProductOut,
 )
 
@@ -37,42 +40,111 @@ def rrdportal_health(db: Session = Depends(get_rrdportal_db)):
 # ======================= CMDR =======================
 
 
-@router.get("/cmdr/initial", response_model=CmdrInitialPage, tags=["CMDR"])
-def list_cmdr_initial(
+class CmdrType(str, Enum):
+    initial = "initial"
+    initial_abridge = "initial_abridge"
+    renewal = "renewal"
+    amendment = "amendment"
+
+
+# NOTE: /cmdr/all and /cmdr/all/filters must stay ABOVE the /cmdr/{app_type}
+# routes, otherwise "all" would be treated as an app_type.
+
+
+@router.get("/cmdr/all", response_model=CmdrAllPage, tags=["CMDR"])
+def list_cmdr_all(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     search: Optional[str] = Query(None, description="Company name, DTN, or app number"),
     app_status: Optional[str] = None,
+    type_application: Optional[str] = Query(None, description="Exact TYPE_APPLICATION"),
+    application_option: Optional[str] = Query(
+        None, description="Exact APPLICATION_OPTION"
+    ),
+    cmdr_type: Optional[List[CmdrType]] = Query(
+        None,
+        description="Limit to these tables. Repeat the param: ?cmdr_type=renewal&cmdr_type=amendment",
+    ),
     db: Session = Depends(get_rrdportal_db),
 ):
+    """All CMDR tables in one list. Each row has CMDR_TYPE telling where it came from."""
     try:
-        items, total = crud.get_cmdr_initial_list(
-            db, skip=skip, limit=limit, search=search, app_status=app_status
+        items, total = crud.get_cmdr_all(
+            db,
+            skip=skip,
+            limit=limit,
+            search=search,
+            app_status=app_status,
+            type_application=type_application,
+            application_option=application_option,
+            types=[t.value for t in cmdr_type] if cmdr_type else None,
         )
     except SQLAlchemyError as e:
         raise _db_error(e)
     return {"items": items, "total": total, "skip": skip, "limit": limit}
 
 
-@router.get("/cmdr/initial/{app_uid}", response_model=CmdrInitialDetail, tags=["CMDR"])
-def get_cmdr_initial(app_uid: str, db: Session = Depends(get_rrdportal_db)):
+@router.get("/cmdr/all/filters", response_model=CmdrFilterOptions, tags=["CMDR"])
+def cmdr_filter_options(db: Session = Depends(get_rrdportal_db)):
+    """Distinct TYPE_APPLICATION / APPLICATION_OPTION / APP_STATUS values (for dropdowns)."""
     try:
-        record = crud.get_cmdr_initial(db, app_uid)
+        return crud.get_cmdr_filter_options(db)
+    except SQLAlchemyError as e:
+        raise _db_error(e)
+
+
+@router.get("/cmdr/{app_type}", response_model=CmdrApplicationPage, tags=["CMDR"])
+def list_cmdr(
+    app_type: CmdrType,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    search: Optional[str] = Query(None, description="Company name, DTN, or app number"),
+    app_status: Optional[str] = None,
+    type_application: Optional[str] = Query(None, description="Exact TYPE_APPLICATION"),
+    application_option: Optional[str] = Query(
+        None, description="Exact APPLICATION_OPTION"
+    ),
+    db: Session = Depends(get_rrdportal_db),
+):
+    try:
+        items, total = crud.get_cmdr_list(
+            db,
+            app_type.value,
+            skip=skip,
+            limit=limit,
+            search=search,
+            app_status=app_status,
+            type_application=type_application,
+            application_option=application_option,
+        )
+    except SQLAlchemyError as e:
+        raise _db_error(e)
+    return {"items": items, "total": total, "skip": skip, "limit": limit}
+
+
+@router.get(
+    "/cmdr/{app_type}/{app_uid}", response_model=CmdrApplicationDetail, tags=["CMDR"]
+)
+def get_cmdr(app_type: CmdrType, app_uid: str, db: Session = Depends(get_rrdportal_db)):
+    try:
+        record = crud.get_cmdr_application(db, app_type.value, app_uid)
         if record is None:
             raise HTTPException(status_code=404, detail="Application not found")
-        record["products"] = crud.get_cmdr_products(db, app_uid)
+        record["products"] = crud.get_cmdr_products(db, app_type.value, app_uid)
     except SQLAlchemyError as e:
         raise _db_error(e)
     return record
 
 
 @router.get(
-    "/cmdr/initial/{app_uid}/products",
+    "/cmdr/{app_type}/{app_uid}/products",
     response_model=List[CmdrProductOut],
     tags=["CMDR"],
 )
-def list_cmdr_products(app_uid: str, db: Session = Depends(get_rrdportal_db)):
+def list_cmdr_products(
+    app_type: CmdrType, app_uid: str, db: Session = Depends(get_rrdportal_db)
+):
     try:
-        return crud.get_cmdr_products(db, app_uid)
+        return crud.get_cmdr_products(db, app_type.value, app_uid)
     except SQLAlchemyError as e:
         raise _db_error(e)

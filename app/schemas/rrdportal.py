@@ -1,8 +1,12 @@
 # app/schemas/rrdportal.py
-from datetime import date
-from typing import List, Optional
+from datetime import date, datetime
+from typing import List, Optional, Union
 
 from pydantic import BaseModel
+
+# Some tables store these as DATE, some as DATETIME, some as VARCHAR.
+DateOrStr = Optional[Union[datetime, date, str]]
+
 
 # ======================= CMDR =======================
 
@@ -18,7 +22,7 @@ class CmdrProductOut(BaseModel):
     CLASS_TEMP: Optional[str] = None
 
 
-class CmdrInitialOut(BaseModel):
+class CmdrApplicationOut(BaseModel):
     APP_UID: str
     APP_NUMBER: Optional[int] = None
     APP_STATUS: Optional[str] = None
@@ -29,13 +33,13 @@ class CmdrInitialOut(BaseModel):
     PRODUCT_CAT_TEMP: Optional[str] = None
     DTN: Optional[str] = None
     RE_APPLICATION_DTN: Optional[str] = None
-    DATE_RECEIVED_FDAC: Optional[date] = None
+    DATE_RECEIVED_FDAC: DateOrStr = None
     DECKER_REMARKS: Optional[str] = None
     ASSIGNED_DECKER_CODE: Optional[str] = None
     ASSIGNED_DECKER_DISPLAYNAME: Optional[str] = None
-    DATE_DECKER_START: Optional[date] = None
+    DATE_DECKER_START: DateOrStr = None
     DATE_DECKER_START_HUMAN: Optional[str] = None
-    DATE_DECKER_END: Optional[date] = None
+    DATE_DECKER_END: DateOrStr = None
     DATE_DECKER_END_HUMAN: Optional[str] = None
     ASSIGN_DECKER_NO_DAYS: Optional[str] = None
     ASSIGN_DECKER_NO_DAYS_STATUS: Optional[str] = None
@@ -43,9 +47,9 @@ class CmdrInitialOut(BaseModel):
     ASSIGNED_EVALUATOR_DISPLAYNAME: Optional[str] = None
     EVALUATOR_FINAL_RECOMMENDATION: Optional[str] = None
     EVALUATOR_FINAL_REMARKS: Optional[str] = None
-    DATE_EVAL_START: Optional[date] = None
+    DATE_EVAL_START: DateOrStr = None
     DATE_EVAL_START_HUMAN: Optional[str] = None
-    DATE_EVAL_END: Optional[date] = None
+    DATE_EVAL_END: DateOrStr = None
     DATE_EVAL_END_HUMAN: Optional[str] = None
     ASSIGN_EVAL_NO_DAYS: Optional[str] = None
     ASSIGN_EVAL_NO_DAYS_STATUS: Optional[str] = None
@@ -76,15 +80,35 @@ class CmdrInitialOut(BaseModel):
     ASSIGN_DOC_RELEASING_NO_DAYS: Optional[str] = None
     ASSIGN_DOC_RELEASING_NO_DAYS_STATUS: Optional[str] = None
     TOTAL_NO_DAYS: Optional[str] = None
-    COMPANY_ADDRESS: Optional[str] = None
+    COMPANY_ADDRESS: Optional[str] = (
+        None  # only exists in PMT_CMDR_INITIAL; null elsewhere
+    )
 
 
-class CmdrInitialDetail(CmdrInitialOut):
+class CmdrApplicationDetail(CmdrApplicationOut):
     products: List[CmdrProductOut] = []
 
 
-class CmdrInitialPage(BaseModel):
-    items: List[CmdrInitialOut]
+class CmdrApplicationPage(BaseModel):
+    items: List[CmdrApplicationOut]
     total: int
     skip: int
     limit: int
+
+
+class CmdrAllItem(CmdrApplicationOut):
+    CMDR_TYPE: str  # which table the row came from: initial / initial_abridge / renewal / amendment
+
+
+class CmdrAllPage(BaseModel):
+    items: List[CmdrAllItem]
+    total: int
+    skip: int
+    limit: int
+
+
+class CmdrFilterOptions(BaseModel):
+    cmdr_types: List[str]
+    type_application: List[str]
+    application_option: List[str]
+    app_status: List[str]
