@@ -13,6 +13,7 @@ from app.schemas.rrdportal import (
     CmdrAllPage,
     CmdrApplicationDetail,
     CmdrApplicationPage,
+    CmdrDelegationOut,
     CmdrFilterOptions,
     CmdrProductOut,
 )
@@ -65,6 +66,12 @@ def list_cmdr_all(
         None,
         description="Limit to these tables. Repeat the param: ?cmdr_type=renewal&cmdr_type=amendment",
     ),
+    include_products: bool = Query(
+        False, description="Nest each application's products"
+    ),
+    include_delegations: bool = Query(
+        False, description="Nest each application's APP_DELEGATION rows"
+    ),
     db: Session = Depends(get_rrdportal_db),
 ):
     """All CMDR tables in one list. Each row has CMDR_TYPE telling where it came from."""
@@ -78,6 +85,8 @@ def list_cmdr_all(
             type_application=type_application,
             application_option=application_option,
             types=[t.value for t in cmdr_type] if cmdr_type else None,
+            include_products=include_products,
+            include_delegations=include_delegations,
         )
     except SQLAlchemyError as e:
         raise _db_error(e)
@@ -104,6 +113,12 @@ def list_cmdr(
     application_option: Optional[str] = Query(
         None, description="Exact APPLICATION_OPTION"
     ),
+    include_products: bool = Query(
+        False, description="Nest each application's products"
+    ),
+    include_delegations: bool = Query(
+        False, description="Nest each application's APP_DELEGATION rows"
+    ),
     db: Session = Depends(get_rrdportal_db),
 ):
     try:
@@ -116,6 +131,8 @@ def list_cmdr(
             app_status=app_status,
             type_application=type_application,
             application_option=application_option,
+            include_products=include_products,
+            include_delegations=include_delegations,
         )
     except SQLAlchemyError as e:
         raise _db_error(e)
@@ -131,6 +148,7 @@ def get_cmdr(app_type: CmdrType, app_uid: str, db: Session = Depends(get_rrdport
         if record is None:
             raise HTTPException(status_code=404, detail="Application not found")
         record["products"] = crud.get_cmdr_products(db, app_type.value, app_uid)
+        record["delegations"] = crud.get_cmdr_delegations(db, app_uid)
     except SQLAlchemyError as e:
         raise _db_error(e)
     return record
@@ -146,5 +164,20 @@ def list_cmdr_products(
 ):
     try:
         return crud.get_cmdr_products(db, app_type.value, app_uid)
+    except SQLAlchemyError as e:
+        raise _db_error(e)
+
+
+@router.get(
+    "/cmdr/{app_type}/{app_uid}/delegations",
+    response_model=List[CmdrDelegationOut],
+    tags=["CMDR"],
+)
+def list_cmdr_delegations(
+    app_type: CmdrType, app_uid: str, db: Session = Depends(get_rrdportal_db)
+):
+    """APP_DELEGATION rows of one application, ordered by DEL_INDEX."""
+    try:
+        return crud.get_cmdr_delegations(db, app_uid)
     except SQLAlchemyError as e:
         raise _db_error(e)

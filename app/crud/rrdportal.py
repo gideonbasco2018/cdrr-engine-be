@@ -1,10 +1,10 @@
 # app/crud/rrdportal.py
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
-from app.schemas.rrdportal import CmdrApplicationOut, CmdrProductOut
+from app.schemas.rrdportal import CmdrApplicationOut, CmdrDelegationOut, CmdrProductOut
 
 
 def _cols(model, exclude=()) -> str:
@@ -38,6 +38,13 @@ CMDR_TYPES: Dict[str, Dict[str, Any]] = {
 }
 
 PRODUCT_COLS = _cols(CmdrProductOut)
+
+# APP_DELEGATION is one-to-many per application. Joined on APP_UID
+# (part of its PK, so lookups are indexed). APP_NUMBER would also work.
+DELEGATION_TABLE = "APP_DELEGATION"
+DELEGATION_COLS = _cols(
+    CmdrDelegationOut
+)  # DEL_DATA is not in the schema, so not selected
 
 
 def _cfg(app_type: str) -> Dict[str, Any]:
@@ -87,6 +94,82 @@ def _filters(
     return where, params
 
 
+# ---------- children (one-to-many), batched to avoid N+1 queries ----------
+
+
+def get_cmdr_delegations(db: Session, app_uid: str) -> List[Dict[str, Any]]:
+    rows = (
+        db.execute(
+            text(
+                f"SELECT {DELEGATION_COLS} FROM {DELEGATION_TABLE} "
+                "WHERE APP_UID = :uid ORDER BY DEL_INDEX"
+            ),
+            {"uid": app_uid},
+        )
+        .mappings()
+        .all()
+    )
+    return [dict(r) for r in rows]
+
+
+def _delegations_map(
+    db: Session, app_uids: List[str]
+) -> Dict[str, List[Dict[str, Any]]]:
+    stmt = text(
+        f"SELECT {DELEGATION_COLS} FROM {DELEGATION_TABLE} "
+        "WHERE APP_UID IN :uids ORDER BY APP_UID, DEL_INDEX"
+    ).bindparams(bindparam("uids", expanding=True))
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for r in db.execute(stmt, {"uids": app_uids}).mappings().all():
+        out.setdefault(r["APP_UID"], []).append(dict(r))
+    return out
+
+
+def _products_map(
+    db: Session, app_type: str, app_uids: List[str]
+) -> Dict[str, List[Dict[str, Any]]]:
+    cfg = CMDR_TYPES[app_type]
+    stmt = text(
+        f"SELECT {PRODUCT_COLS} FROM {cfg['product_table']} "
+        "WHERE APP_UID IN :uids ORDER BY APP_UID, `ROW`"
+    ).bindparams(bindparam("uids", expanding=True))
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for r in db.execute(stmt, {"uids": app_uids}).mappings().all():
+        out.setdefault(r["APP_UID"], []).append(dict(r))
+    return out
+
+
+def _attach_children(
+    db: Session,
+    items: List[Dict[str, Any]],
+    include_products: bool,
+    include_delegations: bool,
+    app_type: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Add 'products' / 'delegations' to each item (null when not requested).
+    app_type=None means items carry their own CMDR_TYPE (the /all list)."""
+    for it in items:
+        it["products"] = None
+        it["delegations"] = None
+    if not items or not (include_products or include_delegations):
+        return items
+
+    if include_delegations:
+        dmap = _delegations_map(db, [i["APP_UID"] for i in items])
+        for it in items:
+            it["delegations"] = dmap.get(it["APP_UID"], [])
+
+    if include_products:
+        by_type: Dict[str, List[Dict[str, Any]]] = {}
+        for it in items:
+            by_type.setdefault(app_type or it["CMDR_TYPE"], []).append(it)
+        for t, group in by_type.items():
+            pmap = _products_map(db, t, [i["APP_UID"] for i in group])
+            for it in group:
+                it["products"] = pmap.get(it["APP_UID"], [])
+    return items
+
+
 # ---------- ALL types in one list (UNION ALL) ----------
 
 
@@ -99,6 +182,8 @@ def get_cmdr_all(
     type_application: Optional[str] = None,
     application_option: Optional[str] = None,
     types: Optional[List[str]] = None,
+    include_products: bool = False,
+    include_delegations: bool = False,
 ) -> Tuple[List[Dict[str, Any]], int]:
     keys = types or list(CMDR_TYPES)  # keys are whitelisted, safe to put in SQL
     where, params = _filters(search, app_status, type_application, application_option)
@@ -128,7 +213,9 @@ def get_cmdr_all(
         .mappings()
         .all()
     )
-    return [dict(r) for r in rows], int(total or 0)
+    items = [dict(r) for r in rows]
+    _attach_children(db, items, include_products, include_delegations)
+    return items, int(total or 0)
 
 
 def get_cmdr_filter_options(db: Session) -> Dict[str, List[str]]:
@@ -165,6 +252,8 @@ def get_cmdr_list(
     app_status: Optional[str] = None,
     type_application: Optional[str] = None,
     application_option: Optional[str] = None,
+    include_products: bool = False,
+    include_delegations: bool = False,
 ) -> Tuple[List[Dict[str, Any]], int]:
     cfg = _cfg(app_type)
     where, params = _filters(search, app_status, type_application, application_option)
@@ -186,7 +275,11 @@ def get_cmdr_list(
         .mappings()
         .all()
     )
-    return [dict(r) for r in rows], total
+    items = [dict(r) for r in rows]
+    _attach_children(
+        db, items, include_products, include_delegations, app_type=app_type
+    )
+    return items, total
 
 
 def get_cmdr_application(
