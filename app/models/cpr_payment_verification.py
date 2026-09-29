@@ -43,6 +43,11 @@ class CPRPaymentVerification(Base):
         index=True,
     )
 
+    # Groups multiple payment rows added in the same "Post" action, so
+    # they can all be traced back to the single Acknowledgement Receipt
+    # that was generated for that posting.
+    posting_batch_uuid = Column(String(36), nullable=True, index=True)
+
     # As typed/looked-up by the cashier — kept as a plain column too
     # (not just derived from op.op_number) in case OP number formatting
     # changes later or a manual reference is used.

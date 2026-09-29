@@ -40,6 +40,10 @@ from app.models.clinical_trial_audit_log import ClinicalTrialAuditLog
 from app.models.clinical_trial import ClinicalTrial
 from app.models.clinical_trial_drug import ClinicalTrialDrug
 from app.models.donation import Donation, DonationChangeLog
+from app.models.cpr_generated_document import CPRGeneratedDocument
+from app.models.cpr_app_note import CPRAppNote
+from app.models.cpr_email_notification import CPREmailNotification
+from app.models.cpr_email_notification_attempt import CPREmailNotificationAttempt
 
 __all__ = [
     "MainDB",
@@ -83,4 +87,8 @@ __all__ = [
     "ClinicalTrialDrug",
     "Donation",
     "DonationChangeLog",
+    "CPRAppNote",
+    "CPREmailNotification",
+    "CPREmailNotificationAttempt",
+    "CPRGeneratedDocument",
 ]

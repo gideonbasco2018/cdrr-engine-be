@@ -40,8 +40,8 @@ class CPRAppDocument(Base):
     file_size_bytes = Column(Integer, nullable=True)
 
     # Uploader information
-    uploaded_by_user_id = Column(
-        Integer, ForeignKey("users.id"), nullable=True, index=True
+    uploaded_by_user_uuid = Column(
+        String(36), ForeignKey("users.user_uuid"), nullable=True, index=True
     )
     uploaded_by_user_name = Column(String(255), nullable=True)
 
