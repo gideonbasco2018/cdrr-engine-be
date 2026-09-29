@@ -85,18 +85,58 @@ class CmdrApplicationOut(BaseModel):
     )
 
 
+class CmdrDelegationOut(BaseModel):
+    """One row of APP_DELEGATION (many per application). DEL_DATA is intentionally left out."""
+
+    APP_UID: str
+    DEL_INDEX: int
+    DELEGATION_ID: Optional[int] = None
+    APP_NUMBER: Optional[int] = None
+    DEL_PREVIOUS: Optional[int] = None
+    DEL_LAST_INDEX: Optional[int] = None
+    PRO_UID: Optional[str] = None
+    TAS_UID: Optional[str] = None
+    USR_UID: Optional[str] = None
+    DEL_TYPE: Optional[str] = None
+    DEL_THREAD: Optional[int] = None
+    DEL_THREAD_STATUS: Optional[str] = None
+    DEL_PRIORITY: Optional[str] = None
+    DEL_DELEGATE_DATE: DateOrStr = None
+    DEL_INIT_DATE: DateOrStr = None
+    DEL_FINISH_DATE: DateOrStr = None
+    DEL_TASK_DUE_DATE: DateOrStr = None
+    DEL_RISK_DATE: DateOrStr = None
+    DEL_DURATION: Optional[float] = None
+    DEL_QUEUE_DURATION: Optional[float] = None
+    DEL_DELAY_DURATION: Optional[float] = None
+    DEL_STARTED: Optional[int] = None
+    DEL_FINISHED: Optional[int] = None
+    DEL_DELAYED: Optional[int] = None
+    APP_OVERDUE_PERCENTAGE: Optional[float] = None
+    USR_ID: Optional[int] = None
+    PRO_ID: Optional[int] = None
+    TAS_ID: Optional[int] = None
+
+
 class CmdrApplicationDetail(CmdrApplicationOut):
     products: List[CmdrProductOut] = []
+    delegations: List[CmdrDelegationOut] = []
+
+
+class CmdrListItem(CmdrApplicationOut):
+    # null unless requested with include_products / include_delegations
+    products: Optional[List[CmdrProductOut]] = None
+    delegations: Optional[List[CmdrDelegationOut]] = None
 
 
 class CmdrApplicationPage(BaseModel):
-    items: List[CmdrApplicationOut]
+    items: List[CmdrListItem]
     total: int
     skip: int
     limit: int
 
 
-class CmdrAllItem(CmdrApplicationOut):
+class CmdrAllItem(CmdrListItem):
     CMDR_TYPE: str  # which table the row came from: initial / initial_abridge / renewal / amendment
 
 
