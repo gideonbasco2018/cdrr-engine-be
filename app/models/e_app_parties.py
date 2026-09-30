@@ -1,4 +1,4 @@
-# app/models/cpr_app_parties.py
+# app/models/e_app_parties.py
 import uuid
 from sqlalchemy import Column, ForeignKey, String
 from sqlalchemy.orm import relationship
@@ -6,8 +6,8 @@ from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 
 
-class CPRAppParty(Base):
-    __tablename__ = "cpr_app_parties"
+class EAppParty(Base):
+    __tablename__ = "e_app_parties"
 
     party_uuid = Column(
         String(36),
@@ -17,7 +17,7 @@ class CPRAppParty(Base):
     )
     application_uuid = Column(
         String(36),
-        ForeignKey("cpr_application.application_uuid"),
+        ForeignKey("e_application.application_uuid"),
         nullable=False,
     )
 
@@ -28,4 +28,4 @@ class CPRAppParty(Base):
     lto_no = Column(String(100), nullable=True)
     country = Column(String(100), nullable=True)
 
-    application = relationship("CPRApplication", back_populates="parties")
+    application = relationship("EApplication", back_populates="parties")

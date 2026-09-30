@@ -31,9 +31,9 @@ from app.models.target_assignment import TargetAssignment
 from app.models.directors_target import DirectorsTarget
 from app.models.unit import Unit
 from app.models.oauth_otp import OAuthOTP
-from app.models.cpr_app_history import CPRAppHistory
-from app.models.cpr_app_parties import CPRAppParty
-from app.models.cpr_application import CPRApplication
+from app.models.e_app_history import EAppHistory
+from app.models.e_app_parties import EAppParty
+from app.models.e_application import EApplication
 from app.models.donation import Donation, DonationChangeLog
 
 config = context.config

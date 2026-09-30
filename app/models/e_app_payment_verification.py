@@ -1,4 +1,4 @@
-# app/models/cpr_payment_verification.py
+# app/models/e_app_payment_verification.py
 import uuid
 from sqlalchemy import (
     Column,
@@ -14,19 +14,19 @@ from sqlalchemy.sql import func
 from app.db.base_class import Base
 
 
-class CPRPaymentVerification(Base):
+class EAppPaymentVerification(Base):
     """
-    Cashier-side verification of a payment made against a
-    CPROrderOfPayment. This is the "proof of payment" record — the fee
+    Cashier-side verification of a payment made against an
+    EAppOrderOfPayment. This is the "proof of payment" record — the fee
     breakdown itself (application fee, LRF, surcharge) already lives on
-    the related CPROrderOfPayment row, so it is not duplicated here.
+    the related EAppOrderOfPayment row, so it is not duplicated here.
 
     verified_by_user_uuid and verified_at are NOT form inputs — set
     them server-side from the logged-in cashier's session at the time
     the record is created, never from client-submitted data.
     """
 
-    __tablename__ = "cpr_payment_verification"
+    __tablename__ = "e_app_payment_verification"
 
     verification_uuid = Column(
         String(36),
@@ -38,7 +38,7 @@ class CPRPaymentVerification(Base):
     # Links this verification to the specific Order of Payment being paid
     op_uuid = Column(
         String(36),
-        ForeignKey("cpr_order_of_payment.op_uuid"),
+        ForeignKey("e_app_order_of_payment.op_uuid"),
         nullable=False,
         index=True,
     )
@@ -72,12 +72,12 @@ class CPRPaymentVerification(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     # ── Relationships ─────────────────────────────────────────────
-    order_of_payment = relationship("CPROrderOfPayment", backref="verifications")
+    order_of_payment = relationship("EAppOrderOfPayment", backref="verifications")
     verified_by_user = relationship("User", foreign_keys=[verified_by_user_uuid])
 
     def __repr__(self):
         return (
-            f"<CPRPaymentVerification(verification_uuid={self.verification_uuid}, "
+            f"<EAppPaymentVerification(verification_uuid={self.verification_uuid}, "
             f"op_uuid={self.op_uuid}, or_number={self.official_receipt_number}, "
             f"amount_paid={self.amount_paid}, verified_by={self.verified_by_user_uuid})>"
         )

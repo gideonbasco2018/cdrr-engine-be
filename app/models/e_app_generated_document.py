@@ -1,5 +1,4 @@
-# app/models/cpr_generated_document.py
-
+# app/models/e_app_generated_document.py
 import uuid
 
 from sqlalchemy import Column, DateTime, String, ForeignKey, Text
@@ -9,13 +8,13 @@ from sqlalchemy.sql import func
 from app.db.base_class import Base
 
 
-class CPRGeneratedDocument(Base):
-    __tablename__ = "cpr_generated_documents"
+class EAppGeneratedDocument(Base):
+    __tablename__ = "e_app_generated_documents"
 
     doc_uuid = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     application_uuid = Column(
         String(36),
-        ForeignKey("cpr_application.application_uuid"),
+        ForeignKey("e_application.application_uuid"),
         nullable=False,
         index=True,
     )
@@ -35,4 +34,4 @@ class CPRGeneratedDocument(Base):
     )
     generated_at = Column(DateTime, server_default=func.now())
 
-    application = relationship("CPRApplication", backref="generated_documents")
+    application = relationship("EApplication", backref="generated_documents")

@@ -1,4 +1,4 @@
-# app/models/cpr_email_notification.py
+# app/models/e_app_email_notification.py
 import uuid
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
@@ -7,16 +7,16 @@ from sqlalchemy.sql import func
 from app.db.base_class import Base
 
 
-class CPREmailNotification(Base):
+class EAppEmailNotification(Base):
     """
     One row per document (or note) that needs to be emailed to the
     applicant/client. Current status + attempt count live here;
     each individual send/resend attempt is a row in
-    CPREmailNotificationAttempt (so failed attempts are never lost
+    EAppEmailNotificationAttempt (so failed attempts are never lost
     when a resend succeeds).
     """
 
-    __tablename__ = "cpr_email_notification"
+    __tablename__ = "e_app_email_notification"
 
     notification_uuid = Column(
         String(36),
@@ -27,7 +27,7 @@ class CPREmailNotification(Base):
 
     application_uuid = Column(
         String(36),
-        ForeignKey("cpr_application.application_uuid"),
+        ForeignKey("e_application.application_uuid"),
         nullable=False,
         index=True,
     )
@@ -44,7 +44,7 @@ class CPREmailNotification(Base):
     # Optional link to the generated PDF, if this email has an attachment
     generated_doc_uuid = Column(
         String(36),
-        ForeignKey("cpr_generated_documents.doc_uuid"),
+        ForeignKey("e_app_generated_documents.doc_uuid"),
         nullable=True,
     )
 
@@ -61,11 +61,11 @@ class CPREmailNotification(Base):
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    application = relationship("CPRApplication", backref="email_notifications")
-    generated_document = relationship("CPRGeneratedDocument")
+    application = relationship("EApplication", backref="email_notifications")
+    generated_document = relationship("EAppGeneratedDocument")
     attempt_history = relationship(
-        "CPREmailNotificationAttempt",
+        "EAppEmailNotificationAttempt",
         back_populates="notification",
         cascade="all, delete-orphan",
-        order_by="CPREmailNotificationAttempt.attempt_number",
+        order_by="EAppEmailNotificationAttempt.attempt_number",
     )

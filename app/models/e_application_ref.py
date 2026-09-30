@@ -29,5 +29,5 @@ class EApplicationRef(Base):
 
     process = relationship("EProcess")
     history = relationship(
-        "CPRAppHistory", back_populates="app_ref", cascade="all, delete-orphan"
+        "EAppHistory", back_populates="app_ref", cascade="all, delete-orphan"
     )

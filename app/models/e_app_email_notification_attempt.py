@@ -1,4 +1,4 @@
-# app/models/cpr_email_notification_attempt.py
+# app/models/e_app_email_notification_attempt.py
 import uuid
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
@@ -7,7 +7,7 @@ from sqlalchemy.sql import func
 from app.db.base_class import Base
 
 
-class CPREmailNotificationAttempt(Base):
+class EAppEmailNotificationAttempt(Base):
     """
     One row per send/resend attempt. This is what powers the
     "History (N attempts)" list in the UI — each row keeps its own
@@ -15,7 +15,7 @@ class CPREmailNotificationAttempt(Base):
     the record of an earlier failure.
     """
 
-    __tablename__ = "cpr_email_notification_attempt"
+    __tablename__ = "e_app_email_notification_attempt"
 
     attempt_uuid = Column(
         String(36),
@@ -26,7 +26,7 @@ class CPREmailNotificationAttempt(Base):
 
     notification_uuid = Column(
         String(36),
-        ForeignKey("cpr_email_notification.notification_uuid", ondelete="CASCADE"),
+        ForeignKey("e_app_email_notification.notification_uuid", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -41,6 +41,6 @@ class CPREmailNotificationAttempt(Base):
     attempted_at = Column(DateTime, server_default=func.now())
 
     notification = relationship(
-        "CPREmailNotification", back_populates="attempt_history"
+        "EAppEmailNotification", back_populates="attempt_history"
     )
     attempted_by_user = relationship("User", foreign_keys=[attempted_by_user_uuid])

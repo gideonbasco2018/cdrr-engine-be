@@ -1,4 +1,4 @@
-# app/models/cpr_app_document.py
+# app/models/e_app_document.py
 from sqlalchemy import Column, Integer, SmallInteger, String, Text, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -6,14 +6,14 @@ from sqlalchemy.sql import func
 from app.db.base_class import Base
 
 
-class CPRAppDocument(Base):
-    __tablename__ = "cpr_app_documents"
+class EAppDocument(Base):
+    __tablename__ = "e_app_documents"
 
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
 
     application_uuid = Column(
         String(36),
-        ForeignKey("cpr_application.application_uuid", ondelete="CASCADE"),
+        ForeignKey("e_application.application_uuid", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -54,11 +54,11 @@ class CPRAppDocument(Base):
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
-    application = relationship("CPRApplication", backref="documents")
+    application = relationship("EApplication", backref="documents")
 
     def __repr__(self):
         return (
-            f"<CPRAppDocument(id={self.id}, "
+            f"<EAppDocument(id={self.id}, "
             f"application_uuid={self.application_uuid}, "
             f"requirement_group={self.requirement_group}, "
             f"category_code={self.category_code}, "
