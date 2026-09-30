@@ -25,13 +25,13 @@ from app.models.gmp_record import (
     GMPFieldAuditLog,
 )
 from app.models.oauth_otp import OAuthOTP
-from app.models.cpr_app_history import CPRAppHistory
-from app.models.cpr_app_parties import CPRAppParty
-from app.models.cpr_application import CPRApplication
-from app.models.cpr_app_document import CPRAppDocument
-from app.models.cpr_order_of_payment import CPROrderOfPayment
-from app.models.cpr_payment_verification import CPRPaymentVerification
-from app.models.cpr_table_of_changes import CPRTableOfChanges
+from app.models.e_app_history import EAppHistory
+from app.models.e_app_parties import EAppParty
+from app.models.e_application import EApplication
+from app.models.e_app_documents import EAppDocument
+from app.models.e_app_order_of_payment import EAppOrderOfPayment
+from app.models.e_app_payment_verification import EAppPaymentVerification
+from app.models.e_app_table_of_changes import EAppTableOfChanges
 
 
 from app.models.e_application_ref import EApplicationRef
@@ -40,10 +40,10 @@ from app.models.clinical_trial_audit_log import ClinicalTrialAuditLog
 from app.models.clinical_trial import ClinicalTrial
 from app.models.clinical_trial_drug import ClinicalTrialDrug
 from app.models.donation import Donation, DonationChangeLog
-from app.models.cpr_generated_document import CPRGeneratedDocument
-from app.models.cpr_app_note import CPRAppNote
-from app.models.cpr_email_notification import CPREmailNotification
-from app.models.cpr_email_notification_attempt import CPREmailNotificationAttempt
+from app.models.e_app_generated_document import EAppGeneratedDocument
+from app.models.e_app_note import EAppNote
+from app.models.e_app_email_notification import EAppEmailNotification
+from app.models.e_app_email_notification_attempt import EAppEmailNotificationAttempt
 
 __all__ = [
     "MainDB",
@@ -73,22 +73,22 @@ __all__ = [
     "GMPApplicationLogs",
     "GMPFieldAuditLog",
     "OAuthOTP",
-    "CPRAppHistory",
-    "CPRAppParty",
-    "CPRApplication",
-    "CPRAppDocument",
+    "EAppHistory",
+    "EAppParty",
+    "EApplication",
+    "EAppDocument",
     "EApplicationRef",
     "EProcess",
     "ClinicalTrialAuditLog",
     "ClinicalTrial",
-    "CPROrderOfPayment",
-    "CPRPaymentVerification",
-    "CPRTableOfChanges",
+    "EAppOrderOfPayment",
+    "EAppPaymentVerification",
+    "EAppTableOfChanges",
     "ClinicalTrialDrug",
     "Donation",
     "DonationChangeLog",
-    "CPRAppNote",
-    "CPREmailNotification",
-    "CPREmailNotificationAttempt",
-    "CPRGeneratedDocument",
+    "EAppNote",
+    "EAppEmailNotification",
+    "EAppEmailNotificationAttempt",
+    "EAppGeneratedDocument",
 ]

@@ -1,4 +1,4 @@
-# app/models/cpr_application.py
+# app/models/e_application.py
 from sqlalchemy import Column, DateTime, String, ForeignKey
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -6,8 +6,8 @@ from sqlalchemy.sql import func
 from app.db.base_class import Base
 
 
-class CPRApplication(Base):
-    __tablename__ = "cpr_application"
+class EApplication(Base):
+    __tablename__ = "e_application"
 
     application_uuid = Column(
         String(36),
@@ -46,6 +46,6 @@ class CPRApplication(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     parties = relationship(
-        "CPRAppParty", back_populates="application", cascade="all, delete-orphan"
+        "EAppParty", back_populates="application", cascade="all, delete-orphan"
     )
     app_ref = relationship("EApplicationRef")

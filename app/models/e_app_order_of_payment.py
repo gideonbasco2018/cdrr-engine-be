@@ -1,4 +1,4 @@
-# app/models/cpr_order_of_payment.py
+# app/models/e_app_order_of_payment.py
 import uuid
 from sqlalchemy import (
     Column,
@@ -15,9 +15,9 @@ from sqlalchemy.sql import func
 from app.db.base_class import Base
 
 
-class CPROrderOfPayment(Base):
+class EAppOrderOfPayment(Base):
     """
-    Order of Payment (OP) for a CPR application.
+    Order of Payment (OP) for an e-application.
 
     An application normally has ONE "INITIAL" OP. If the applicant's
     payment turns out to be wrong or insufficient, a follow-up row is
@@ -28,7 +28,7 @@ class CPROrderOfPayment(Base):
     table.
     """
 
-    __tablename__ = "cpr_order_of_payment"
+    __tablename__ = "e_app_order_of_payment"
 
     op_uuid = Column(
         String(36),
@@ -39,7 +39,7 @@ class CPROrderOfPayment(Base):
 
     application_uuid = Column(
         String(36),
-        ForeignKey("cpr_application.application_uuid"),
+        ForeignKey("e_application.application_uuid"),
         nullable=False,
         index=True,
     )
@@ -48,7 +48,7 @@ class CPROrderOfPayment(Base):
     # Points back to the original ("INITIAL") OP row for this application.
     parent_op_uuid = Column(
         String(36),
-        ForeignKey("cpr_order_of_payment.op_uuid"),
+        ForeignKey("e_app_order_of_payment.op_uuid"),
         nullable=True,
         index=True,
     )
@@ -92,18 +92,18 @@ class CPROrderOfPayment(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
     # ── Relationships ──────────────────────────────────────────────
-    application = relationship("CPRApplication", backref="orders_of_payment")
+    application = relationship("EApplication", backref="orders_of_payment")
     issued_by_user = relationship("User", foreign_keys=[issued_by_user_uuid])
 
     parent_op = relationship(
-        "CPROrderOfPayment",
+        "EAppOrderOfPayment",
         remote_side=[op_uuid],
         backref="additional_ops",
     )
 
     def __repr__(self):
         return (
-            f"<CPROrderOfPayment(op_uuid={self.op_uuid}, "
+            f"<EAppOrderOfPayment(op_uuid={self.op_uuid}, "
             f"application_uuid={self.application_uuid}, "
             f"op_type={self.op_type}, total_amount={self.total_amount}, "
             f"status={self.status})>"

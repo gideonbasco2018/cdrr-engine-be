@@ -1,4 +1,4 @@
-# app/models/cpr_table_of_changes.py
+# app/models/e_app_table_of_changes.py
 import uuid
 from sqlalchemy import Column, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
@@ -6,13 +6,13 @@ from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 
 
-class CPRTableOfChanges(Base):
+class EAppTableOfChanges(Base):
     """
     "Table of Changes" under Post-Approval Changes Particulars.
-    One row = one Current -> Proposed change entry for a CPR application.
+    One row = one Current -> Proposed change entry for an e-application.
     """
 
-    __tablename__ = "cpr_table_of_changes"
+    __tablename__ = "e_app_table_of_changes"
 
     change_uuid = Column(
         String(36),
@@ -20,10 +20,9 @@ class CPRTableOfChanges(Base):
         default=lambda: str(uuid.uuid4()),
         index=True,
     )
-
     application_uuid = Column(
         String(36),
-        ForeignKey("cpr_application.application_uuid", ondelete="CASCADE"),
+        ForeignKey("e_application.application_uuid", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -38,11 +37,11 @@ class CPRTableOfChanges(Base):
     # original variation code applied for the PCPR
     specific_type_of_variation = Column(String(255), nullable=True)
 
-    application = relationship("CPRApplication", backref="table_of_changes")
+    application = relationship("EApplication", backref="table_of_changes")
 
     def __repr__(self):
         return (
-            f"<CPRTableOfChanges(change_uuid={self.change_uuid}, "
+            f"<EAppTableOfChanges(change_uuid={self.change_uuid}, "
             f"application_uuid={self.application_uuid}, "
             f"variation={self.specific_type_of_variation})>"
         )

@@ -1,4 +1,4 @@
-# app/models/cpr_app_history.py
+# app/models/e_app_history.py
 import uuid
 from sqlalchemy import (
     Column,
@@ -16,8 +16,8 @@ from sqlalchemy.sql import func
 from app.db.base_class import Base
 
 
-class CPRAppHistory(Base):
-    __tablename__ = "cpr_app_history"
+class EAppHistory(Base):
+    __tablename__ = "e_app_history"
 
     history_uuid = Column(
         String(36),
