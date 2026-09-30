@@ -240,6 +240,75 @@ def get_cmdr_filter_options(db: Session) -> Dict[str, List[str]]:
     }
 
 
+def get_cmdr_facets(
+    db: Session,
+    search: Optional[str] = None,
+    app_status: Optional[str] = None,
+    type_application: Optional[str] = None,
+    application_option: Optional[str] = None,
+    types: Optional[List[str]] = None,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Counts per value for each filter (cascading: a facet ignores its own filter)."""
+    base = " UNION ALL ".join(
+        f"SELECT '{key}' AS CMDR_TYPE, APP_NUMBER, APP_STATUS, TYPE_APPLICATION, "
+        f"APPLICATION_OPTION, COMPANY_NAME, DTN FROM {cfg['table']}"
+        for key, cfg in CMDR_TYPES.items()  # keys/tables are whitelisted
+    )
+    columns = {  # facet name -> column (hardcoded, never user input)
+        "cmdr_type": "CMDR_TYPE",
+        "type_application": "TYPE_APPLICATION",
+        "application_option": "APPLICATION_OPTION",
+        "app_status": "APP_STATUS",
+    }
+    selected = {
+        "cmdr_type": types,
+        "type_application": type_application,
+        "application_option": application_option,
+        "app_status": app_status,
+    }
+
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for name, col in columns.items():
+        conditions = [f"{col} IS NOT NULL", f"{col} <> ''"]
+        params: Dict[str, Any] = {}
+        if search:
+            conditions.append(
+                "(COMPANY_NAME LIKE :search OR DTN LIKE :search "
+                "OR CAST(APP_NUMBER AS CHAR) LIKE :search)"
+            )
+            params["search"] = f"%{search}%"
+        expanding = False
+        for other, ocol in columns.items():
+            if other == name or not selected[other]:
+                continue
+            if other == "cmdr_type":
+                conditions.append("CMDR_TYPE IN :types")
+                params["types"] = selected[other]
+                expanding = True
+            else:
+                conditions.append(f"{ocol} = :{other}")
+                params[other] = selected[other]
+
+        stmt = text(
+            f"SELECT {col} AS v, COUNT(*) AS c FROM ({base}) AS u "
+            f"WHERE {' AND '.join(conditions)} GROUP BY {col}"
+        )
+        if expanding:
+            stmt = stmt.bindparams(bindparam("types", expanding=True))
+        rows = db.execute(stmt, params).all()
+
+        items = [{"value": str(r[0]), "count": int(r[1])} for r in rows]
+        if name == "cmdr_type":
+            order = list(CMDR_TYPES)
+            items.sort(
+                key=lambda i: order.index(i["value"]) if i["value"] in order else 99
+            )
+        else:
+            items.sort(key=lambda i: i["value"])
+        out[name] = items
+    return out
+
+
 # ---------- one type at a time ----------
 
 

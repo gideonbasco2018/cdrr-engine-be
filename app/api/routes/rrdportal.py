@@ -14,6 +14,7 @@ from app.schemas.rrdportal import (
     CmdrApplicationDetail,
     CmdrApplicationPage,
     CmdrDelegationOut,
+    CmdrFacets,
     CmdrFilterOptions,
     CmdrProductOut,
 )
@@ -98,6 +99,29 @@ def cmdr_filter_options(db: Session = Depends(get_rrdportal_db)):
     """Distinct TYPE_APPLICATION / APPLICATION_OPTION / APP_STATUS values (for dropdowns)."""
     try:
         return crud.get_cmdr_filter_options(db)
+    except SQLAlchemyError as e:
+        raise _db_error(e)
+
+
+@router.get("/cmdr/all/facets", response_model=CmdrFacets, tags=["CMDR"])
+def cmdr_facets(
+    search: Optional[str] = Query(None, description="Company name, DTN, or app number"),
+    app_status: Optional[str] = None,
+    type_application: Optional[str] = None,
+    application_option: Optional[str] = None,
+    cmdr_type: Optional[List[CmdrType]] = Query(None),
+    db: Session = Depends(get_rrdportal_db),
+):
+    """Counts per value for each filter, given the other filters that are active."""
+    try:
+        return crud.get_cmdr_facets(
+            db,
+            search=search,
+            app_status=app_status,
+            type_application=type_application,
+            application_option=application_option,
+            types=[t.value for t in cmdr_type] if cmdr_type else None,
+        )
     except SQLAlchemyError as e:
         raise _db_error(e)
 
