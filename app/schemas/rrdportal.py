@@ -10,7 +10,6 @@ DateOrStr = Optional[Union[datetime, date, str]]
 
 # ======================= CMDR =======================
 
-
 class CmdrProductOut(BaseModel):
     APP_UID: str
     APP_NUMBER: Optional[int] = None
@@ -80,9 +79,7 @@ class CmdrApplicationOut(BaseModel):
     ASSIGN_DOC_RELEASING_NO_DAYS: Optional[str] = None
     ASSIGN_DOC_RELEASING_NO_DAYS_STATUS: Optional[str] = None
     TOTAL_NO_DAYS: Optional[str] = None
-    COMPANY_ADDRESS: Optional[str] = (
-        None  # only exists in PMT_CMDR_INITIAL; null elsewhere
-    )
+    COMPANY_ADDRESS: Optional[str] = None  # only exists in PMT_CMDR_INITIAL; null elsewhere
 
 
 class CmdrDelegationOut(BaseModel):
@@ -152,3 +149,18 @@ class CmdrFilterOptions(BaseModel):
     type_application: List[str]
     application_option: List[str]
     app_status: List[str]
+
+
+class FacetItem(BaseModel):
+    value: str
+    count: int
+
+
+class CmdrFacets(BaseModel):
+    """Counts per value for each filter. Each facet ignores its own filter, so the
+    counts show what you would get by switching to that value."""
+
+    cmdr_type: List[FacetItem]
+    type_application: List[FacetItem]
+    application_option: List[FacetItem]
+    app_status: List[FacetItem]
