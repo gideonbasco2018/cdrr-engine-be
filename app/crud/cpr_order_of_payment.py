@@ -3,8 +3,8 @@ from fastapi import HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.models.cpr_application import CPRApplication
-from app.models.cpr_order_of_payment import CPROrderOfPayment
+from app.models.e_application import EApplication
+from app.models.e_app_order_of_payment import EAppOrderOfPayment
 from app.schemas.cpr_order_of_payment import (
     OrderOfPaymentCreate,
     OrderOfPaymentResponse,
@@ -17,8 +17,8 @@ def create_order_of_payment(
     payload: OrderOfPaymentCreate,
 ) -> OrderOfPaymentResponse:
     application = (
-        db.query(CPRApplication)
-        .filter(CPRApplication.application_uuid == application_uuid)
+        db.query(EApplication)
+        .filter(EApplication.application_uuid == application_uuid)
         .first()
     )
     if not application:
@@ -39,7 +39,7 @@ def create_order_of_payment(
     total_amount = payload.application_fee + payload.surcharge + payload.lrf_amount
 
     try:
-        db_op = CPROrderOfPayment(
+        db_op = EAppOrderOfPayment(
             application_uuid=application_uuid,
             parent_op_uuid=payload.parent_op_uuid,
             op_type=payload.op_type,

@@ -8,11 +8,11 @@ from sqlalchemy.orm import Session
 
 from app.models.e_process import EProcess
 from app.models.e_application_ref import EApplicationRef
-from app.models.cpr_application import CPRApplication
-from app.models.cpr_app_parties import CPRAppParty
-from app.models.cpr_app_history import CPRAppHistory
-from app.models.cpr_app_document import CPRAppDocument
-from app.models.cpr_table_of_changes import CPRTableOfChanges
+from app.models.e_application import EApplication
+from app.models.e_app_parties import EAppParty
+from app.models.e_app_history import EAppHistory
+from app.models.e_app_documents import EAppDocument
+from app.models.e_app_table_of_changes import EAppTableOfChanges
 from app.schemas.cpr_applications import ApplicationCreate
 
 PARTY_TYPES = ["manufacturer", "trader", "repacker", "importer", "distributor"]
@@ -88,7 +88,7 @@ def create_application(
     db: Session,
     payload: ApplicationCreate,
     documents: list[dict] | None = None,
-) -> CPRApplication:
+) -> EApplication:
     data = payload.model_dump(by_alias=False)
 
     # Resolve the process_uuid first, before creating any rows
@@ -107,7 +107,7 @@ def create_application(
 
         # 2. CPR-specific application row (application_uuid == ref_uuid)
         app_data = {k: data[k] for k in APPLICATION_FIELDS}
-        db_application = CPRApplication(application_uuid=ref_uuid, **app_data)
+        db_application = EApplication(application_uuid=ref_uuid, **app_data)
         db.add(db_application)
         db.flush()
 
@@ -117,7 +117,7 @@ def create_application(
             if not name:
                 continue
             db.add(
-                CPRAppParty(
+                EAppParty(
                     application_uuid=db_application.application_uuid,
                     party_type=ptype.capitalize(),
                     name=name,
@@ -130,7 +130,7 @@ def create_application(
 
             # 4a. Step 1 — Initial Submission (auto-completed, closed thread)
         db.add(
-            CPRAppHistory(
+            EAppHistory(
                 application_uuid=ref_uuid,
                 process_uuid=process_uuid,
                 user_uuid=None,  # TODO: set this once a current-user dependency exists
@@ -149,7 +149,7 @@ def create_application(
         # 4b. Step 2 — next actionable step, based on process_code (open/active thread)
         default_next_step = _get_default_next_step(CPR_PROCESS_CODE)
         db.add(
-            CPRAppHistory(
+            EAppHistory(
                 application_uuid=ref_uuid,
                 process_uuid=process_uuid,
                 user_uuid=None,
@@ -167,12 +167,12 @@ def create_application(
         # 5. Documents (kung meron)
         if documents:
             for doc_input in documents:
-                db.add(CPRAppDocument(application_uuid=ref_uuid, **doc_input))
+                db.add(EAppDocument(application_uuid=ref_uuid, **doc_input))
 
         # 6. Table of Changes (kung meron)
         for idx, row in enumerate(payload.table_of_changes):
             db.add(
-                CPRTableOfChanges(
+                EAppTableOfChanges(
                     application_uuid=ref_uuid,
                     row_order=idx,
                     current_value=row.current_value,

@@ -4,35 +4,33 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.cpr_app_document import CPRAppDocument
+from app.models.e_app_documents import EAppDocument
 from app.schemas.cpr_app_document import CPRAppDocumentCreate
 
 
-def create_document(db: Session, payload: CPRAppDocumentCreate) -> CPRAppDocument:
-    doc = CPRAppDocument(**payload.model_dump())
+def create_document(db: Session, payload: CPRAppDocumentCreate) -> EAppDocument:
+    doc = EAppDocument(**payload.model_dump())
     db.add(doc)
     db.commit()
     db.refresh(doc)
     return doc
 
 
-def get_document_by_id(db: Session, document_id: int) -> Optional[CPRAppDocument]:
+def get_document_by_id(db: Session, document_id: int) -> Optional[EAppDocument]:
     return (
-        db.query(CPRAppDocument)
-        .filter(CPRAppDocument.id == document_id, CPRAppDocument.is_deleted == 0)
+        db.query(EAppDocument)
+        .filter(EAppDocument.id == document_id, EAppDocument.is_deleted == 0)
         .first()
     )
 
 
 def get_documents_by_application_uuid(
     db: Session, application_uuid: str, include_deleted: bool = False
-) -> list[CPRAppDocument]:
-    q = db.query(CPRAppDocument).filter(
-        CPRAppDocument.application_uuid == application_uuid
-    )
+) -> list[EAppDocument]:
+    q = db.query(EAppDocument).filter(EAppDocument.application_uuid == application_uuid)
     if not include_deleted:
-        q = q.filter(CPRAppDocument.is_deleted == 0)
-    return q.order_by(CPRAppDocument.created_at.desc()).all()
+        q = q.filter(EAppDocument.is_deleted == 0)
+    return q.order_by(EAppDocument.created_at.desc()).all()
 
 
 def get_existing_folder_id(
@@ -42,16 +40,16 @@ def get_existing_folder_id(
     category_code: Optional[str],
     requirement_code: str,
 ) -> Optional[str]:
-    q = db.query(CPRAppDocument).filter(
-        CPRAppDocument.application_uuid == application_uuid,
-        CPRAppDocument.requirement_group == requirement_group,
-        CPRAppDocument.requirement_code == requirement_code,
-        CPRAppDocument.drive_folder_id.isnot(None),
+    q = db.query(EAppDocument).filter(
+        EAppDocument.application_uuid == application_uuid,
+        EAppDocument.requirement_group == requirement_group,
+        EAppDocument.requirement_code == requirement_code,
+        EAppDocument.drive_folder_id.isnot(None),
     )
     if category_code and category_code.strip():
-        q = q.filter(CPRAppDocument.category_code == category_code.strip())
+        q = q.filter(EAppDocument.category_code == category_code.strip())
     else:
-        q = q.filter(CPRAppDocument.category_code.is_(None))
+        q = q.filter(EAppDocument.category_code.is_(None))
     doc = q.first()
     return doc.drive_folder_id if doc else None
 
@@ -63,24 +61,24 @@ def get_existing_document_by_name(
     category_code: Optional[str],
     requirement_code: str,
     original_filename: str,
-) -> Optional[CPRAppDocument]:
-    q = db.query(CPRAppDocument).filter(
-        CPRAppDocument.application_uuid == application_uuid,
-        CPRAppDocument.requirement_group == requirement_group,
-        CPRAppDocument.requirement_code == requirement_code,
-        CPRAppDocument.original_filename == original_filename,
-        CPRAppDocument.is_deleted == 0,
+) -> Optional[EAppDocument]:
+    q = db.query(EAppDocument).filter(
+        EAppDocument.application_uuid == application_uuid,
+        EAppDocument.requirement_group == requirement_group,
+        EAppDocument.requirement_code == requirement_code,
+        EAppDocument.original_filename == original_filename,
+        EAppDocument.is_deleted == 0,
     )
     if category_code and category_code.strip():
-        q = q.filter(CPRAppDocument.category_code == category_code.strip())
+        q = q.filter(EAppDocument.category_code == category_code.strip())
     else:
-        q = q.filter(CPRAppDocument.category_code.is_(None))
+        q = q.filter(EAppDocument.category_code.is_(None))
     return q.first()
 
 
 def overwrite_document(
     db: Session,
-    doc: CPRAppDocument,
+    doc: EAppDocument,
     *,
     drive_file_id: str,
     drive_file_url: str,
@@ -89,7 +87,7 @@ def overwrite_document(
     file_size_bytes: Optional[int],
     uploaded_by_user_id: Optional[int],
     uploaded_by_user_name: Optional[str],
-) -> CPRAppDocument:
+) -> EAppDocument:
     doc.drive_file_id = drive_file_id
     doc.drive_file_url = drive_file_url
     doc.drive_folder_id = drive_folder_id
@@ -104,7 +102,7 @@ def overwrite_document(
 
 def soft_delete_document(
     db: Session, document_id: int, deleted_by: Optional[str] = None
-) -> Optional[CPRAppDocument]:
+) -> Optional[EAppDocument]:
     doc = get_document_by_id(db, document_id)
     if not doc:
         return None
