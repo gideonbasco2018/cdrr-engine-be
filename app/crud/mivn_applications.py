@@ -1,4 +1,4 @@
-# app/crud/cpr_applications.py
+# app/crud/mivn_applications.py
 import uuid
 from datetime import datetime, timezone
 
@@ -14,7 +14,7 @@ from app.models.e_app_parties import EAppParty
 from app.models.e_app_history import EAppHistory
 from app.models.e_app_documents import EAppDocument
 from app.models.e_app_table_of_changes import EAppTableOfChanges
-from app.schemas.cpr_applications import ApplicationCreate
+from app.schemas.mivn_applications import ApplicationCreate
 
 PARTY_TYPES = ["manufacturer", "trader", "repacker", "importer", "distributor"]
 

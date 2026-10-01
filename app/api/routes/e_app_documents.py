@@ -5,8 +5,8 @@ from typing import Annotated
 from app.core.deps import get_current_active_user
 from app.db.session import get_db
 from app.models.user import User
-from app.crud import cpr_app_document as crud_doc
-from app.schemas.cpr_app_document import (
+from app.crud import e_app_documents as crud_doc
+from app.schemas.e_app_documents import (
     CPRAppDocumentCreate,
     CPRAppDocumentListResponse,
     CPRAppDocumentUploadResponse,
@@ -147,7 +147,7 @@ async def upload_document(
             drive_folder_id=drive_result.get("folder_id") or folder_id,
             mime_type=file.content_type,
             file_size_bytes=len(file_bytes),
-            uploaded_by_user_id=current_user.id,
+            uploaded_by_user_uuid=current_user.user_uuid,
             uploaded_by_user_name=current_user.username,
         )
     else:
@@ -163,7 +163,7 @@ async def upload_document(
             original_filename=file.filename,
             mime_type=file.content_type,
             file_size_bytes=len(file_bytes),
-            uploaded_by_user_id=current_user.id,
+            uploaded_by_user_uuid=current_user.user_uuid,
             uploaded_by_user_name=current_user.username,
         )
         doc = crud_doc.create_document(db, payload)

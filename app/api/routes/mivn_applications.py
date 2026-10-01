@@ -1,4 +1,4 @@
-# api/routes/cpr_applications.py
+# api/routes/mivn_applications.py
 import json
 from typing import Annotated, List
 
@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.core.security_external import verify_bearer_token
-from app.schemas.cpr_applications import ApplicationCreate, ApplicationResponse
-from app.crud import cpr_applications as crud_application
+from app.schemas.mivn_applications import ApplicationCreate, ApplicationResponse
+from app.crud import mivn_applications as crud_application
 from app.services.google_drive import upload_file_to_drive, get_or_create_folder_path
 
 router = APIRouter(prefix="/api/applications", tags=["Applications"])

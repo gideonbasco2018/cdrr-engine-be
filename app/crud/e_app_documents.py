@@ -1,11 +1,11 @@
-# app/crud/cpr_app_document.py
+# app/crud/e_app_documents.py
 from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.e_app_documents import EAppDocument
-from app.schemas.cpr_app_document import CPRAppDocumentCreate
+from app.schemas.e_app_documents import CPRAppDocumentCreate
 
 
 def create_document(db: Session, payload: CPRAppDocumentCreate) -> EAppDocument:

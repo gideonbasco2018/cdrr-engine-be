@@ -1,4 +1,4 @@
-# app/schemas/cpr_applications.py
+# app/schemas/mivn_applications.py
 from datetime import datetime
 from typing import Optional, List
 from pydantic import AliasChoices, AliasPath, BaseModel, Field, ConfigDict

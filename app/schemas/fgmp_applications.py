@@ -3,7 +3,7 @@ from datetime import date, datetime
 from typing import Optional, List
 from pydantic import AliasChoices, AliasPath, BaseModel, Field, ConfigDict
 
-from app.schemas.cpr_applications import AppPartyOut
+from app.schemas.mivn_applications import AppPartyOut
 
 
 def _from_fgmp(name: str):

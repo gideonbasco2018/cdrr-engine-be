@@ -1,14 +1,14 @@
-# api/routes/cpr_order_of_payment.py
+# api/routes/e_app_order_of_payment.py
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.core.security_external import verify_bearer_token
-from app.schemas.cpr_order_of_payment import (
+from app.schemas.e_app_order_of_payment import (
     OrderOfPaymentCreate,
     OrderOfPaymentResponse,
 )
-from app.crud import cpr_order_of_payment as crud_op
+from app.crud import e_app_order_of_payment as crud_op
 
 router = APIRouter(prefix="/api/applications", tags=["Order of Payment"])
 

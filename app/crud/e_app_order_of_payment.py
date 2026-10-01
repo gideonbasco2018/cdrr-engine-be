@@ -1,11 +1,11 @@
-# app/crud/cpr_order_of_payment.py
+# app/crud/e_app_order_of_payment.py
 from fastapi import HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models.e_application import EApplication
 from app.models.e_app_order_of_payment import EAppOrderOfPayment
-from app.schemas.cpr_order_of_payment import (
+from app.schemas.e_app_order_of_payment import (
     OrderOfPaymentCreate,
     OrderOfPaymentResponse,
 )
