@@ -34,6 +34,8 @@ from app.models.oauth_otp import OAuthOTP
 from app.models.e_app_history import EAppHistory
 from app.models.e_app_parties import EAppParty
 from app.models.e_application import EApplication
+from app.models.e_application_mivn import EApplicationMivn
+from app.models.e_application_fgmp import EApplicationFgmp
 from app.models.donation import Donation, DonationChangeLog
 
 config = context.config

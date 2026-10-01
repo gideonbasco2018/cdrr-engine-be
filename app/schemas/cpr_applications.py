@@ -1,7 +1,7 @@
 # app/schemas/cpr_applications.py
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import AliasChoices, AliasPath, BaseModel, Field, ConfigDict
 
 
 class TableOfChangeInput(BaseModel):
@@ -134,9 +134,20 @@ class ApplicationResponse(BaseModel):
     activity: Optional[str] = None
     applicant_company: Optional[str] = None
     application_type: Optional[str] = None
-    brand_name: Optional[str] = None
-    generic_name: Optional[str] = None
-    registration_number: Optional[str] = None
+
+    # MiV-N-only — read from the 1:1 e_application_mivn row
+    brand_name: Optional[str] = Field(
+        None, validation_alias=AliasChoices("brand_name", AliasPath("mivn", "brand_name"))
+    )
+    generic_name: Optional[str] = Field(
+        None, validation_alias=AliasChoices("generic_name", AliasPath("mivn", "generic_name"))
+    )
+    registration_number: Optional[str] = Field(
+        None,
+        validation_alias=AliasChoices(
+            "registration_number", AliasPath("mivn", "registration_number")
+        ),
+    )
 
     parties: List[AppPartyOut] = []
     history: List[AppHistoryOut] = []

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.models.e_process import EProcess
 from app.models.e_application_ref import EApplicationRef
 from app.models.e_application import EApplication
+from app.models.e_application_mivn import EApplicationMivn
 from app.models.e_app_parties import EAppParty
 from app.models.e_app_history import EAppHistory
 from app.models.e_app_documents import EAppDocument
@@ -17,6 +18,7 @@ from app.schemas.cpr_applications import ApplicationCreate
 
 PARTY_TYPES = ["manufacturer", "trader", "repacker", "importer", "distributor"]
 
+# Shared columns — saved on the mother table (e_application)
 APPLICATION_FIELDS = {
     "reference_number",
     "activity",
@@ -26,8 +28,12 @@ APPLICATION_FIELDS = {
     "address",
     "tin",
     "lto_no",
-    "validity",
     "application_type",
+}
+
+# MiV-N-only columns — saved on the 1:1 child table (e_application_mivn)
+MIVN_FIELDS = {
+    "validity",
     "brand_name",
     "generic_name",
     "dosage_strength",
@@ -105,11 +111,15 @@ def create_application(
         db.add(db_ref)
         db.flush()
 
-        # 2. CPR-specific application row (application_uuid == ref_uuid)
+        # 2. Mother application row (application_uuid == ref_uuid)
         app_data = {k: data[k] for k in APPLICATION_FIELDS}
         db_application = EApplication(application_uuid=ref_uuid, **app_data)
         db.add(db_application)
         db.flush()
+
+        # 2b. MiV-N-only columns (1:1 child row)
+        mivn_data = {k: data[k] for k in MIVN_FIELDS}
+        db.add(EApplicationMivn(application_uuid=ref_uuid, **mivn_data))
 
         # 3. Parties
         for ptype in PARTY_TYPES:
