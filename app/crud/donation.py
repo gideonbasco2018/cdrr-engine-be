@@ -38,6 +38,24 @@ FIELD_LABELS = {
     "remarks": "Remarks",
 }
 
+# A row with no Letter DTN has nothing to compare against existing records
+# with, so "already uploaded" can't be checked by DTN alone — a genuinely
+# new row and a re-upload of the same row look identical. As a fallback,
+# treat a DTN-less row as a duplicate if EVERY one of these fields matches
+# an existing DTN-less row exactly. (letter_dtn itself is excluded — it's
+# always blank on both sides of this comparison, so it adds nothing.)
+BLANK_DTN_SIGNATURE_FIELDS = [
+    "date_received", "date_received_by_evaluator", "donor", "donee",
+    "registration_dtn", "product_name", "packaging", "manufacturer",
+    "batch_lot_no", "expiration_date", "total_quantity", "validity",
+    "date_issued", "evaluator", "status", "donation_reg_no",
+    "date_forwarded_to_checker", "date_released", "remarks",
+]
+
+
+def _blank_dtn_signature(data: dict) -> tuple:
+    return tuple(data.get(f) for f in BLANK_DTN_SIGNATURE_FIELDS)
+
 
 class StaleVersionError(Exception):
     """Raised by update_donation() when the caller's expected_version no
@@ -211,28 +229,61 @@ def get_change_log(db: Session, donation_id: int) -> List[DonationChangeLog]:
 
 
 def bulk_create_donations(
-    db: Session, rows: List[dict], username: str
+    db: Session, rows: List[tuple[int, dict]], username: str
 ) -> tuple[int, int, int, list[str]]:
-    """Insert many donations at once (Excel import). Letter DTN is optional
+    """Insert many donations at once (Excel import). `rows` is a list of
+    (excel_row_number, row_dict) pairs — not a plain list of dicts —
+    because the caller's row reader can skip rows (e.g. a fully-blank
+    merged row), so position in the list no longer lines up with "row N
+    is the N-th entry"; the real row number travels with each row instead
+    so error messages still point at the right place in the spreadsheet.
+
+    Letter DTN is optional
     (a lot of real historical rows never had one) — skips only fully-blank
-    rows, rows whose Letter DTN isn't a 14-digit number, and rows whose
-    Letter DTN already exists (already-imported or duplicated within the
-    same file); a row with no Letter DTN at all is always inserted, since
-    there's nothing to dedupe against. Returns (created_count,
-    skipped_duplicate_count, skipped_invalid_dtn_count, error_messages) —
-    one failed row doesn't abort the rest, each is attempted
-    independently."""
+    rows and rows whose Letter DTN isn't a 14-digit number.
+
+    Duplicate check for a row WITH a Letter DTN is against the DATABASE
+    only — a Letter DTN repeating within the same file is NOT treated as a
+    duplicate and does not get skipped. This is deliberate: a real
+    donation can span several physical Excel rows that legitimately share
+    one Letter DTN (a merged DTN cell with a different batch/lot,
+    expiration, and quantity per row — see app/api/routes/donation.py's
+    merge-fill handling). Skipping "repeats within the file" used to
+    silently discard every batch after the first one sharing a DTN — a
+    real data-loss bug. Checking only against rows already saved to the
+    database still blocks a true re-upload of the same file from creating
+    duplicates, since every row's DTN is already there the second time
+    around.
+
+    A row with NO Letter DTN has nothing to check that against, so it
+    falls back to BLANK_DTN_SIGNATURE_FIELDS — every other field must
+    match an existing DTN-less row exactly for it to count as a duplicate.
+    That full-row match is checked against both the database AND rows
+    already processed earlier in this same file, since (unlike the DTN
+    case) there's no legitimate reason for two genuinely different blank-
+    DTN rows to match on literally every field — a real multi-batch
+    donation always differs in at least its batch/lot or quantity.
+
+    Returns (created_count, skipped_duplicate_count,
+    skipped_invalid_dtn_count, error_messages) — one failed row doesn't
+    abort the rest, each is attempted independently."""
     existing_dtns = {
         dtn
         for (dtn,) in db.query(Donation.letter_dtn).filter(Donation.letter_dtn.isnot(None)).all()
     }
-    seen_in_file = set()
+    existing_blank_dtn_signatures = {
+        tuple(sig)
+        for sig in db.query(
+            *[getattr(Donation, f) for f in BLANK_DTN_SIGNATURE_FIELDS]
+        ).filter(Donation.letter_dtn.is_(None)).all()
+    }
+    seen_blank_dtn_signatures: set[tuple] = set()
 
     created = 0
     skipped_duplicates = 0
     skipped_invalid_dtn = 0
     errors: list[str] = []
-    for idx, row in enumerate(rows, start=2):  # row 1 is the header
+    for idx, row in rows:
         if not any((v or "").strip() for v in row.values()):
             continue
 
@@ -240,13 +291,25 @@ def bulk_create_donations(
         if dtn and not LETTER_DTN_RE.match(dtn):
             skipped_invalid_dtn += 1
             continue
-        if dtn and (dtn in existing_dtns or dtn in seen_in_file):
+        if dtn and dtn in existing_dtns:
             skipped_duplicates += 1
             continue
 
         row = dict(row)
         row["letter_dtn"] = dtn or None
+        # Defaulted BEFORE the signature check, not after — the signature
+        # must reflect what actually lands in the DB (status included),
+        # or a row with no Status never matches its own already-inserted
+        # twin (None vs "For Evaluation") and re-inserts every time.
         row["status"] = row.get("status") or "For Evaluation"
+
+        if not dtn:
+            signature = _blank_dtn_signature(row)
+            if signature in existing_blank_dtn_signatures or signature in seen_blank_dtn_signatures:
+                skipped_duplicates += 1
+                continue
+            seen_blank_dtn_signatures.add(signature)
+
         try:
             donation = Donation(
                 **row, created_by=username, updated_by=username, upload_by=username
@@ -254,8 +317,6 @@ def bulk_create_donations(
             db.add(donation)
             db.commit()
             created += 1
-            if dtn:
-                seen_in_file.add(dtn)
         except Exception as exc:  # noqa: BLE001
             db.rollback()
             errors.append(f"Row {idx}: {exc}")

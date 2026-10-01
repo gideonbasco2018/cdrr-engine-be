@@ -40,19 +40,69 @@ def _my_active_record_ids(db: Session, username: Optional[str], user_id: Optiona
     )
 
 
+def _compliance_loop_record_ids(db: Session, record_ids):
+    """Among record_ids, which ones are sitting at "Evaluator" only because
+    they looped back via the Evaluator's "For Compliance" self-loop action
+    (see the ("Evaluator", "For Compliance") entry in GMP_ACTION_ROUTES,
+    app/crud/gmp_record.py) — as opposed to having just freshly arrived at
+    Evaluator. GMP_CURRENT_STEP never changes for the self-loop, so the only
+    way to tell the two apart is to check whether the record's most recent
+    COMPLETED log was that action."""
+    if not record_ids:
+        return []
+    latest = (
+        db.query(
+            GMPApplicationLogs.gmp_record_id,
+            func.max(GMPApplicationLogs.del_index).label("max_idx"),
+        )
+        .filter(
+            GMPApplicationLogs.gmp_record_id.in_(record_ids),
+            GMPApplicationLogs.application_status == "COMPLETED",
+        )
+        .group_by(GMPApplicationLogs.gmp_record_id)
+        .subquery()
+    )
+    rows = (
+        db.query(GMPApplicationLogs.gmp_record_id)
+        .join(
+            latest,
+            (GMPApplicationLogs.gmp_record_id == latest.c.gmp_record_id)
+            & (GMPApplicationLogs.del_index == latest.c.max_idx),
+        )
+        .filter(
+            GMPApplicationLogs.application_step == "Evaluator",
+            GMPApplicationLogs.application_decision == "For Compliance",
+        )
+        .all()
+    )
+    return [rid for (rid,) in rows]
+
+
 def get_step_breakdown(
     db: Session, username: Optional[str], user_id: Optional[int] = None
 ) -> Dict[str, int]:
     """{current_step: count} — one entry per step something is currently
-    sitting at, e.g. {"QA Admin": 1, "Checker": 5, "OD Releasing": 3}."""
+    sitting at, e.g. {"QA Admin": 1, "Checker": 5, "OD Releasing": 3}.
+    "Evaluator" is split into "Evaluator" and "For Compliance" so the
+    self-loop (see _compliance_loop_record_ids) doesn't get lumped in with
+    applications freshly arrived at Evaluator."""
     ids_subq = _my_active_record_ids(db, username, user_id).subquery()
     rows = (
-        db.query(GMPRecord.GMP_CURRENT_STEP, func.count(GMPRecord.GMP_ID))
+        db.query(GMPRecord.GMP_ID, GMPRecord.GMP_CURRENT_STEP)
         .filter(GMPRecord.GMP_ID.in_(db.query(ids_subq.c.gmp_record_id)))
-        .group_by(GMPRecord.GMP_CURRENT_STEP)
         .all()
     )
-    return {step: count for step, count in rows if step}
+
+    evaluator_ids = [rid for rid, step in rows if step == "Evaluator"]
+    compliance_ids = set(_compliance_loop_record_ids(db, evaluator_ids))
+
+    breakdown: Dict[str, int] = {}
+    for rid, step in rows:
+        if not step:
+            continue
+        label = "For Compliance" if (step == "Evaluator" and rid in compliance_ids) else step
+        breakdown[label] = breakdown.get(label, 0) + 1
+    return breakdown
 
 
 def get_rows(
@@ -104,6 +154,9 @@ def get_rows(
         for log in my_logs:
             my_step_by_record.setdefault(log.gmp_record_id, log)
 
+    evaluator_ids = [r.GMP_ID for r in records if r.GMP_CURRENT_STEP == "Evaluator"]
+    compliance_ids = set(_compliance_loop_record_ids(db, evaluator_ids))
+
     rows = []
     for r in records:
         my_log = my_step_by_record.get(r.GMP_ID)
@@ -114,6 +167,7 @@ def get_rows(
             "your_step": my_log.application_step if my_log else None,
             "completed_date": my_log.accomplished_date if my_log else None,
             "current_step": r.GMP_CURRENT_STEP,
+            "is_compliance_loop": r.GMP_ID in compliance_ids,
         })
 
     return {"rows": rows, "total": total, "total_pages": total_pages, "page": page}
