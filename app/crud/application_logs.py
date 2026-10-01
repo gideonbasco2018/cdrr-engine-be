@@ -3,7 +3,7 @@
 CRUD Operations for Application Logs
 """
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, String
 from typing import Optional, List
 from datetime import datetime, timezone, timedelta
@@ -889,3 +889,62 @@ def get_distinct_steps(db: Session) -> List[str]:
         .all()
     )
     return [r[0] for r in rows]
+
+
+def get_hover_summary(db: Session, main_db_id: int) -> dict:
+    """
+    Per-step history for the row hover popover.
+
+    For each log (ordered by del_index) returns the step, the user
+    (resolved live from the users table via user_id), the accomplished date,
+    and the number of days taken, which is the difference between this
+    step's accomplished_date and the previous step's accomplished_date.
+    """
+    logs = (
+        db.query(ApplicationLogs)
+        .options(joinedload(ApplicationLogs.user))
+        .filter(ApplicationLogs.main_db_id == main_db_id)
+        .order_by(ApplicationLogs.del_index.asc(), ApplicationLogs.id.asc())
+        .all()
+    )
+    if not logs:
+        return {"found": False, "steps": [], "total_days": 0}
+
+    now = _now_pht()
+    steps = []
+    total_days = 0
+    previous_end = None  # accomplished_date of the previous step
+
+    for log in logs:
+        # Reference point: previous step's accomplished date,
+        # otherwise this step's own start date (or created_at as a last resort)
+        reference = previous_end or log.start_date or log.created_at
+
+        is_current = log.accomplished_date is None
+        end = log.accomplished_date or now
+
+        days_taken = None
+        if reference and end:
+            days_taken = max(0, (end.date() - reference.date()).days)
+            total_days += days_taken
+
+        user = log.user
+        steps.append(
+            {
+                "step": log.application_step,
+                "status": log.application_status,
+                "user": user.username if user else log.user_name,
+                "user_full_name": (
+                    f"{user.first_name} {user.surname}".strip() if user else None
+                ),
+                "start_date": log.start_date,
+                "accomplished_date": log.accomplished_date,
+                "days_taken": days_taken,
+                "is_current": is_current,
+            }
+        )
+
+        if log.accomplished_date:
+            previous_end = log.accomplished_date
+
+    return {"found": True, "steps": steps, "total_days": total_days}

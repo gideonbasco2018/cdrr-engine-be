@@ -138,7 +138,7 @@ async def create_application(
                 original_filename=file.filename,
                 mime_type=file.content_type,
                 file_size_bytes=len(file_bytes),
-                uploaded_by_user_id=None,
+                uploaded_by_user_uuid=None,
                 uploaded_by_user_name=None,
             )
         )

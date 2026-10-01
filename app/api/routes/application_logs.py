@@ -14,6 +14,7 @@ from app.schemas.application_logs import (
     OpenTasksResponse,
     AddTaskRequest,
     AddTaskResponse,
+    HoverSummaryResponse,
 )
 from app.models.user import User
 from app.models.main_db import MainDB
@@ -415,6 +416,16 @@ def get_last_index(
         raise HTTPException(
             status_code=500, detail=f"Failed to fetch last index: {str(e)}"
         )
+
+
+@router.get("/main-db/{main_db_id}/hover-summary", response_model=HoverSummaryResponse)
+def get_hover_summary(
+    main_db_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Lightweight summary para sa row-hover popover ng Decking table."""
+    return crud_logs.get_hover_summary(db, main_db_id)
 
 
 # ══════════════════════════════════════════════════════════════════════

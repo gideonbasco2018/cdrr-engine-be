@@ -203,3 +203,20 @@ class AddTaskResponse(BaseModel):
     created: int
     failed: int
     results: list[AddTaskResult]
+
+
+class HoverStepItem(BaseModel):
+    step: Optional[str] = None
+    status: Optional[str] = None
+    user: Optional[str] = None
+    user_full_name: Optional[str] = None
+    start_date: Optional[datetime] = None
+    accomplished_date: Optional[datetime] = None
+    days_taken: Optional[int] = None
+    is_current: bool = False
+
+
+class HoverSummaryResponse(BaseModel):
+    found: bool = False
+    steps: list[HoverStepItem] = []
+    total_days: int = 0

@@ -19,7 +19,7 @@ class CPRAppDocumentBase(BaseModel):
 
 
 class CPRAppDocumentCreate(CPRAppDocumentBase):
-    uploaded_by_user_id: Optional[int] = None
+    uploaded_by_user_uuid: Optional[str] = None
     uploaded_by_user_name: Optional[str] = None
 
 
