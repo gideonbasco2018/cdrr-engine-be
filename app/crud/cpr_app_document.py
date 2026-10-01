@@ -85,7 +85,7 @@ def overwrite_document(
     drive_folder_id: Optional[str],
     mime_type: Optional[str],
     file_size_bytes: Optional[int],
-    uploaded_by_user_id: Optional[int],
+    uploaded_by_user_uuid: Optional[str],
     uploaded_by_user_name: Optional[str],
 ) -> EAppDocument:
     doc.drive_file_id = drive_file_id
@@ -93,7 +93,7 @@ def overwrite_document(
     doc.drive_folder_id = drive_folder_id
     doc.mime_type = mime_type
     doc.file_size_bytes = file_size_bytes
-    doc.uploaded_by_user_id = uploaded_by_user_id
+    doc.uploaded_by_user_uuid = uploaded_by_user_uuid
     doc.uploaded_by_user_name = uploaded_by_user_name
     db.commit()
     db.refresh(doc)

@@ -9,6 +9,7 @@ from sqlalchemy import (
     Date,
     ForeignKey,
     DateTime,
+    Index,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -17,6 +18,9 @@ from app.db.base_class import Base
 
 class ApplicationLogs(Base):
     __tablename__ = "application_logs"
+    __table_args__ = (
+        Index("ix_app_logs_user_accomplished", "user_id", "accomplished_date"),
+    )
 
     # Primary Key
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
