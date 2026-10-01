@@ -100,13 +100,13 @@ def get_users_task_summary(db: Session, group_id: Optional[int] = None) -> list:
 
 def _date_assigned_expr():
     """
-    Date Decked/Assigned = accomplished_date ng pinakamalapit na naunang log
-    (mas mababang del_index) ng parehong DTN na MAY accomplished_date.
+    Date Decked/Assigned = accomplished_date of the closest earlier log
+    (lower del_index) of the same application that HAS an accomplished_date.
 
-    Halimbawa para sa del_index 5:
-      del_index 4 may date -> yun ang gamit
-      del_index 4 NULL     -> del_index 3
-      del_index 3 NULL     -> del_index 2 ... at pataas pababa hanggang may makita
+    Example for del_index 5:
+      del_index 4 has a date -> use it
+      del_index 4 is NULL    -> try del_index 3
+      del_index 3 is NULL    -> try del_index 2, and so on until one is found
     """
     Prev = aliased(ApplicationLogs)
 
@@ -1259,6 +1259,7 @@ def get_evaluator_app_types(
                 "decked_at"
             ),
             ApplicationLogs.accomplished_date.label("accomplished_at"),
+            ApplicationLogs.del_thread.label("del_thread"),
         )
         .join(MainDB, MainDB.DB_ID == ApplicationLogs.main_db_id)
         .filter(*filters)
@@ -1271,7 +1272,14 @@ def get_evaluator_app_types(
         base.c.entry_type,
         func.count(distinct(base.c.main_db_id)).label("total"),
         func.count(
-            distinct(case((base.c.accomplished_at.is_(None), base.c.main_db_id)))
+            distinct(
+                case(
+                    (
+                        func.upper(func.trim(base.c.del_thread)) == "OPEN",
+                        base.c.main_db_id,
+                    )
+                )
+            )
         ).label("open_count"),
         func.avg(
             func.timestampdiff(
