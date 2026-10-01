@@ -1,7 +1,20 @@
 # app/crud/monitoring.py
 
 from sqlalchemy.orm import Session, aliased
-from sqlalchemy import func, case, and_, or_, asc, desc, distinct, select
+from sqlalchemy import (
+    func,
+    case,
+    and_,
+    or_,
+    asc,
+    desc,
+    distinct,
+    select,
+    literal_column,
+)
+from app.models.unit import Unit
+from app.models.lead_assignment import LeadAssignment
+
 from typing import Optional
 from datetime import datetime, date
 from app.models.main_db import MainDB
@@ -1178,3 +1191,181 @@ def get_application_status_overview(
         "total_in_progress": total,
         "data": [{"step": r[0], "count": int(r[1])} for r in rows],
     }
+
+
+# NOTE: set to the real application_step value(s) of the evaluation step,
+# Set to None to skip the step filter.
+EVALUATOR_STEPS = ("QUALITY EVALUATION",)
+
+_NONE_LABEL = "(none)"
+
+
+def _clean_text(col):
+    """Trim the value and map NULL / empty strings to a visible placeholder."""
+    return func.coalesce(func.nullif(func.trim(col), ""), _NONE_LABEL)
+
+
+def _processing_type_expr():
+    """
+    Collapse every "Regular ..." variant (Regular (2014) ... Regular 2026,
+    Regular( 2022), etc.) into a single "Regular" bucket. Other processing
+    types (FRP and CRP, COPP-CFS-GLE, GLE, ...) are kept as they are.
+    """
+    return case(
+        (
+            func.upper(func.trim(MainDB.DB_PROCESSING_TYPE)).like("REGULAR%"),
+            "Regular",
+        ),
+        else_=_clean_text(MainDB.DB_PROCESSING_TYPE),
+    )
+
+
+def _entry_type_expr():
+    """
+    Treat a missing / empty entry type as ORIGINAL (the column default), and
+    upper-case the rest so ORIGINAL / Original / original share one bucket.
+    """
+    return func.upper(
+        func.coalesce(func.nullif(func.trim(MainDB.DB_ENTRY_TYPE), ""), "ORIGINAL")
+    )
+
+
+def get_evaluator_app_types(
+    db: Session,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+) -> dict:
+    """
+    One column per distinct combination of
+    DB_PROD_CLASS_PRESCRIP / DB_PROCESSING_TYPE / DB_ENTRY_TYPE found in the data.
+    Per evaluator and combination: number of applications decked, number still
+    open, and the average days between being decked (_date_assigned_expr) and
+    the evaluator finishing the step. Evaluators are grouped by unit.
+    """
+    filters = [ApplicationLogs.user_id.isnot(None)]
+    if EVALUATOR_STEPS:
+        filters.append(
+            func.upper(ApplicationLogs.application_step).in_(EVALUATOR_STEPS)
+        )
+
+    base = _exclude_action_types(
+        db.query(
+            ApplicationLogs.user_id.label("user_id"),
+            ApplicationLogs.main_db_id.label("main_db_id"),
+            _clean_text(MainDB.DB_PROD_CLASS_PRESCRIP).label("prescription"),
+            _processing_type_expr().label("processing_type"),
+            _entry_type_expr().label("entry_type"),
+            func.coalesce(_date_assigned_expr(), ApplicationLogs.start_date).label(
+                "decked_at"
+            ),
+            ApplicationLogs.accomplished_date.label("accomplished_at"),
+        )
+        .join(MainDB, MainDB.DB_ID == ApplicationLogs.main_db_id)
+        .filter(*filters)
+    ).subquery()
+
+    q = db.query(
+        base.c.user_id,
+        base.c.prescription,
+        base.c.processing_type,
+        base.c.entry_type,
+        func.count(distinct(base.c.main_db_id)).label("total"),
+        func.count(
+            distinct(case((base.c.accomplished_at.is_(None), base.c.main_db_id)))
+        ).label("open_count"),
+        func.avg(
+            func.timestampdiff(
+                literal_column("SECOND"), base.c.decked_at, base.c.accomplished_at
+            )
+        ).label("avg_secs"),
+    )
+    if date_from:
+        q = q.filter(
+            base.c.decked_at >= datetime.combine(date_from, datetime.min.time())
+        )
+    if date_to:
+        q = q.filter(base.c.decked_at <= datetime.combine(date_to, datetime.max.time()))
+    rows = q.group_by(
+        base.c.user_id, base.c.prescription, base.c.processing_type, base.c.entry_type
+    ).all()
+
+    # Columns = every combination that appears in the data
+    columns_map: dict[str, dict] = {}
+    stats: dict[int, dict] = {}
+    for r in rows:
+        key = f"{r.prescription}|{r.processing_type}|{r.entry_type}"
+        columns_map.setdefault(
+            key,
+            {
+                "key": key,
+                "prescription": r.prescription,
+                "processing_type": r.processing_type,
+                "entry_type": r.entry_type,
+            },
+        )
+        stats.setdefault(r.user_id, {})[key] = {
+            "count": int(r.total),
+            "open": int(r.open_count),
+            "avg_days": (
+                round(float(r.avg_secs) / 86400, 1) if r.avg_secs is not None else None
+            ),
+        }
+    columns = sorted(
+        columns_map.values(),
+        key=lambda c: (c["prescription"], c["processing_type"], c["entry_type"]),
+    )
+
+    def build_member(user_id: int, name: str) -> dict:
+        s = stats.get(user_id, {})
+        return {
+            "user_id": user_id,
+            "name": name,
+            "stats": s,  # sparse: only combinations this evaluator has
+            "total": sum(v["count"] for v in s.values()),
+        }
+
+    memberships = (
+        db.query(Unit.id, Unit.name, User.id, User.first_name, User.surname)
+        .join(LeadAssignment, LeadAssignment.unit_id == Unit.id)
+        .join(User, User.id == LeadAssignment.member_user_id)
+        .filter(LeadAssignment.is_active.is_(True), Unit.is_active.is_(True))
+        .order_by(Unit.name, User.surname)
+        .all()
+    )
+
+    units: dict[int, dict] = {}
+    seen = set()
+    for unit_id, unit_name, uid, first, last in memberships:
+        if (unit_id, uid) in seen:
+            continue
+        seen.add((unit_id, uid))
+        unit = units.setdefault(
+            unit_id, {"unit_id": unit_id, "unit_name": unit_name, "members": []}
+        )
+        unit["members"].append(build_member(uid, f"{first} {last}".strip()))
+
+    result = list(units.values())
+
+    # Evaluators that have stats but no active unit assignment
+    assigned_ids = {uid for (_, uid) in seen}
+    orphan_ids = [uid for uid in stats if uid not in assigned_ids]
+    if orphan_ids:
+        orphans = db.query(User).filter(User.id.in_(orphan_ids)).all()
+        result.append(
+            {
+                "unit_id": None,
+                "unit_name": "No Unit",
+                "members": sorted(
+                    (
+                        build_member(u.id, f"{u.first_name} {u.surname}".strip())
+                        for u in orphans
+                    ),
+                    key=lambda m: m["name"],
+                ),
+            }
+        )
+
+    for unit in result:
+        unit["total"] = sum(m["total"] for m in unit["members"])
+
+    return {"columns": columns, "units": result}
