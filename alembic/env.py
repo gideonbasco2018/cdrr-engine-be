@@ -37,6 +37,7 @@ from app.models.e_application import EApplication
 from app.models.e_application_mivn import EApplicationMivn
 from app.models.e_application_fgmp import EApplicationFgmp
 from app.models.donation import Donation, DonationChangeLog
+from app.models.checklist import Checklist, ChecklistItem
 
 config = context.config
 

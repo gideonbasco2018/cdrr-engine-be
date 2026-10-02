@@ -49,6 +49,7 @@ from app.api.routes import (
     donation,
     eservices_drug_group_summary,
     rrdportal,
+    checklist,
 )
 
 api_router = APIRouter()
@@ -97,3 +98,4 @@ api_router.include_router(e_app_order_of_payment.router)
 api_router.include_router(donation.router)
 api_router.include_router(eservices_drug_group_summary.router)
 api_router.include_router(rrdportal.router)
+api_router.include_router(checklist.router)

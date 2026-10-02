@@ -46,6 +46,7 @@ from app.models.e_app_generated_document import EAppGeneratedDocument
 from app.models.e_app_note import EAppNote
 from app.models.e_app_email_notification import EAppEmailNotification
 from app.models.e_app_email_notification_attempt import EAppEmailNotificationAttempt
+from app.models.checklist import Checklist, ChecklistItem
 
 __all__ = [
     "MainDB",
@@ -95,4 +96,6 @@ __all__ = [
     "EAppEmailNotification",
     "EAppEmailNotificationAttempt",
     "EAppGeneratedDocument",
+    "Checklist",
+    "ChecklistItem",
 ]
