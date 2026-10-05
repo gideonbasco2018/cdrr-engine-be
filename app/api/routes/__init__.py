@@ -39,15 +39,17 @@ from app.api.routes import (
     gmp_dashboard,
     gmp_record,
     oauth,
-    cpr_applications,
-    cpr_app_document,
+    mivn_applications,
+    fgmp_applications,
+    e_app_documents,
     priority_meds,
     doctrack_system,
     clinical_trials,
-    cpr_order_of_payment,
+    e_app_order_of_payment,
     donation,
     eservices_drug_group_summary,
     rrdportal,
+    checklist,
 )
 
 api_router = APIRouter()
@@ -86,12 +88,14 @@ api_router.include_router(gmp_analytics.router)
 api_router.include_router(gmp_dashboard.router)
 api_router.include_router(gmp_record.router)
 api_router.include_router(oauth.router)
-api_router.include_router(cpr_applications.router)
-api_router.include_router(cpr_app_document.router)
+api_router.include_router(mivn_applications.router)
+api_router.include_router(fgmp_applications.router)
+api_router.include_router(e_app_documents.router)
 api_router.include_router(priority_meds.router)
 api_router.include_router(doctrack_system.router)
 api_router.include_router(clinical_trials.router)
-api_router.include_router(cpr_order_of_payment.router)
+api_router.include_router(e_app_order_of_payment.router)
 api_router.include_router(donation.router)
 api_router.include_router(eservices_drug_group_summary.router)
 api_router.include_router(rrdportal.router)
+api_router.include_router(checklist.router)

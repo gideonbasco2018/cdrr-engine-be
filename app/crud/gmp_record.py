@@ -1310,6 +1310,21 @@ def bulk_delete_gmp_records(db: Session, record_ids: List[int]) -> int:
         return 0
 
 
+# ── Evaluator filter options ──────────────────────────────────────────────────
+def get_gmp_evaluator_options(db: Session) -> list:
+    """Distinct, non-blank GMP_EVALUATOR values — same column the Application
+    Monitoring table's "Evaluator" column and its `evaluator` filter (below)
+    both read, so picking a name here is guaranteed to match what's shown."""
+    rows = (
+        db.query(GMPRecord.GMP_EVALUATOR)
+        .filter(GMPRecord.GMP_EVALUATOR.isnot(None), GMPRecord.GMP_EVALUATOR != "")
+        .distinct()
+        .order_by(GMPRecord.GMP_EVALUATOR)
+        .all()
+    )
+    return [r[0] for r in rows]
+
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 def get_gmp_summary(db: Session) -> dict:
     not_trashed = or_(GMPRecord.GMP_TRASH.is_(None), GMPRecord.GMP_TRASH != "deleted")

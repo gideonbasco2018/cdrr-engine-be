@@ -7,6 +7,12 @@ from app.db.base_class import Base
 
 
 class EApplication(Base):
+    """Mother table of every e-application (MiV-N, FGMP, ...).
+
+    Holds only the columns every application type shares. Type-specific
+    columns live in the 1:1 child tables (EApplicationMivn, EApplicationFgmp).
+    """
+
     __tablename__ = "e_application"
 
     application_uuid = Column(
@@ -23,29 +29,17 @@ class EApplication(Base):
     address = Column(String(500), nullable=True)
     tin = Column(String(50), nullable=True)
     lto_no = Column(String(100), nullable=True)
-    validity = Column(String(100), nullable=True)
-    application_type = Column(String(100), nullable=True)
-
-    brand_name = Column(String(255), nullable=True)
-    generic_name = Column(String(255), nullable=True)
-    dosage_strength = Column(String(255), nullable=True)
-    dosage_form_route = Column(String(255), nullable=True)
-    classification = Column(String(255), nullable=True)
-    product_category = Column(String(255), nullable=True)
-    essential_drug_list = Column(String(255), nullable=True)
-    pharmacologic_category = Column(String(255), nullable=True)
-
-    shelf_life = Column(String(255), nullable=True)
-    storage_condition = Column(String(255), nullable=True)
-    packaging = Column(String(255), nullable=True)
-    suggested_retail_price = Column(String(100), nullable=True)
-    registration_number = Column(String(100), nullable=True)
-    mother_application_type = Column(String(100), nullable=True)
-    old_rsn_other_dtn = Column(String(255), nullable=True)
+    application_type = Column(String(100), nullable=True)  # transaction type, e.g. "MiV-N", "INITIAL"
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     parties = relationship(
         "EAppParty", back_populates="application", cascade="all, delete-orphan"
+    )
+    mivn = relationship(
+        "EApplicationMivn", back_populates="application", uselist=False
+    )
+    fgmp = relationship(
+        "EApplicationFgmp", back_populates="application", uselist=False
     )
     app_ref = relationship("EApplicationRef")

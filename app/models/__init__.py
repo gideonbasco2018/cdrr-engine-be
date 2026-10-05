@@ -28,6 +28,8 @@ from app.models.oauth_otp import OAuthOTP
 from app.models.e_app_history import EAppHistory
 from app.models.e_app_parties import EAppParty
 from app.models.e_application import EApplication
+from app.models.e_application_mivn import EApplicationMivn
+from app.models.e_application_fgmp import EApplicationFgmp
 from app.models.e_app_documents import EAppDocument
 from app.models.e_app_order_of_payment import EAppOrderOfPayment
 from app.models.e_app_payment_verification import EAppPaymentVerification
@@ -44,6 +46,7 @@ from app.models.e_app_generated_document import EAppGeneratedDocument
 from app.models.e_app_note import EAppNote
 from app.models.e_app_email_notification import EAppEmailNotification
 from app.models.e_app_email_notification_attempt import EAppEmailNotificationAttempt
+from app.models.checklist import Checklist, ChecklistItem
 
 __all__ = [
     "MainDB",
@@ -76,6 +79,8 @@ __all__ = [
     "EAppHistory",
     "EAppParty",
     "EApplication",
+    "EApplicationMivn",
+    "EApplicationFgmp",
     "EAppDocument",
     "EApplicationRef",
     "EProcess",
@@ -91,4 +96,6 @@ __all__ = [
     "EAppEmailNotification",
     "EAppEmailNotificationAttempt",
     "EAppGeneratedDocument",
+    "Checklist",
+    "ChecklistItem",
 ]

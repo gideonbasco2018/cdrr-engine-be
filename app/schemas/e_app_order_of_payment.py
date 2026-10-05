@@ -1,4 +1,4 @@
-# app/schemas/cpr_order_of_payment.py
+# app/schemas/e_app_order_of_payment.py
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional

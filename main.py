@@ -43,15 +43,17 @@ from app.api.routes import (
     gmp_analytics,
     gmp_dashboard,
     oauth,
-    cpr_applications,
-    cpr_app_document,
+    mivn_applications,
+    fgmp_applications,
+    e_app_documents,
     priority_meds,
     doctrack_system,
     clinical_trials,
-    cpr_order_of_payment,
+    e_app_order_of_payment,
     donation,
     eservices_drug_group_summary,
     rrdportal,
+    checklist,
 )
 
 # ── Scheduler setup ───────────────────────────────────────────────────
@@ -155,15 +157,17 @@ app.include_router(gmp_record.router)
 app.include_router(gmp_analytics.router)
 app.include_router(gmp_dashboard.router)
 app.include_router(oauth.router)
-app.include_router(cpr_applications.router)
-app.include_router(cpr_app_document.router)
+app.include_router(mivn_applications.router)
+app.include_router(fgmp_applications.router)
+app.include_router(e_app_documents.router)
 app.include_router(priority_meds.router)
 app.include_router(doctrack_system.router)
 app.include_router(clinical_trials.router)
-app.include_router(cpr_order_of_payment.router)
+app.include_router(e_app_order_of_payment.router)
 app.include_router(donation.router)
 app.include_router(eservices_drug_group_summary.router)
 app.include_router(rrdportal.router)
+app.include_router(checklist.router)
 
 
 @app.get("/")

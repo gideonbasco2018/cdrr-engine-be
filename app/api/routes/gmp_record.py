@@ -559,6 +559,12 @@ def get_summary(db: Session = Depends(get_db)):
     return crud.get_gmp_summary(db)
 
 
+# ── Evaluator filter options (static — must be before /{record_id}) ──────────
+@router.get("/evaluators")
+def get_evaluator_options(db: Session = Depends(get_db)):
+    return {"evaluators": crud.get_gmp_evaluator_options(db)}
+
+
 # ── Log step definitions (static) ─────────────────────────────────────────────
 @router.get("/log-steps")
 def get_log_steps():

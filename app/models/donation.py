@@ -42,13 +42,21 @@ class Donation(Base):
     date_received_by_evaluator = Column(Text, nullable=True)
     donor = Column(String(255), nullable=True)
     donee = Column(String(255), nullable=True)
-    registration_dtn = Column(String(50), nullable=True, index=True)
+    # Unlike letter_dtn, this one isn't format-checked to a fixed length —
+    # a cell can legitimately hold several comma-separated DTNs stacked
+    # together (e.g. "20200811101847, 20200811114838, ..."). Widened to a
+    # bigger VARCHAR (not TEXT) specifically because it's indexed — MySQL
+    # can't plainly index a full TEXT column, but a long VARCHAR is fine.
+    registration_dtn = Column(String(500), nullable=True, index=True)
     product_name = Column(Text, nullable=True)
     packaging = Column(Text, nullable=True)
     manufacturer = Column(Text, nullable=True)
     batch_lot_no = Column(Text, nullable=True)
     expiration_date = Column(Text, nullable=True)
-    total_quantity = Column(String(255), nullable=True)
+    # Same multi-batch stacking as batch_lot_no/expiration_date — real rows
+    # combine a summary line plus a per-lot breakdown here and blow well
+    # past a short VARCHAR (seen over 400 chars in real data).
+    total_quantity = Column(Text, nullable=True)
     validity = Column(Text, nullable=True)
     date_issued = Column(Text, nullable=True)
     evaluator = Column(String(50), nullable=True)

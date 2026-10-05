@@ -25,6 +25,7 @@ class PostEvalStatusRow(BaseModel):
     your_step: Optional[str] = None
     completed_date: Optional[datetime] = None
     current_step: Optional[str] = None
+    is_compliance_loop: bool = False
 
 
 class PostEvalStatusListResponse(BaseModel):

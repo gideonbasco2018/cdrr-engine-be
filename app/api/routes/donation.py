@@ -292,6 +292,65 @@ def get_donation_change_log(
 EXPECTED_HEADER_HINTS = ("Letter DTN", "Donor", "Product Name")
 
 
+def _build_merge_fill_map(ws):
+    """A merged cell only stores its value in the top-left cell of the
+    range — openpyxl returns None for every other cell inside it. Real CRR
+    workbooks lean on this heavily: a Donor/Donee pair (or any other field)
+    merged down across several physical rows, each row then carrying its
+    own Registration DTN/product/etc. Without this fix, every row but the
+    merge's first would import with that field blank instead of inheriting
+    the shared value. Returns a (row, col) -> value lookup covering every
+    cell any merged range spans."""
+    fill_map = {}
+    for merged_range in ws.merged_cells.ranges:
+        anchor_value = ws.cell(row=merged_range.min_row, column=merged_range.min_col).value
+        if anchor_value is None:
+            continue
+        for row in range(merged_range.min_row, merged_range.max_row + 1):
+            for col in range(merged_range.min_col, merged_range.max_col + 1):
+                fill_map[(row, col)] = anchor_value
+    return fill_map
+
+
+def _raw_cell_is_blank(value):
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    return False
+
+
+def _iter_rows_with_merge_fill(ws, min_row, max_col):
+    """Like ws.iter_rows(min_row=min_row, max_col=max_col, values_only=True),
+    except a blank cell that's actually part of a merged range comes back
+    with the merge's real value instead of None — and yields (row_idx,
+    values) pairs instead of bare values, since the row-skipping below
+    means a caller can no longer assume row N is the N-th item yielded
+    (plain enumerate() would silently mislabel every row after a skip).
+
+    The skip: a row where EVERY cell was blank before filling is dropped
+    entirely, not filled in. Real CRR workbooks sometimes merge an entire
+    row (every column, not just Donor/Donee) across several physical rows
+    purely for Excel formatting/spacing — nothing was ever typed on those
+    extra rows. Naively forward-filling them would resurrect each one
+    into looking like a brand-new, fully-populated donation record,
+    creating an exact duplicate of the row above for every blank row in
+    the merge. A row that has even one cell of its own real data (its
+    own Registration DTN, its own Batch/Lot No., etc.) is kept and filled
+    normally — only a row with zero cells of its own is dropped, the
+    same way a truly empty, unmerged row already is."""
+    fill_map = _build_merge_fill_map(ws)
+    for row_idx in range(min_row, ws.max_row + 1):
+        raw_values = [ws.cell(row=row_idx, column=col_idx).value for col_idx in range(1, max_col + 1)]
+        if all(_raw_cell_is_blank(v) for v in raw_values):
+            continue
+        row_values = [
+            v if not _raw_cell_is_blank(v) else fill_map.get((row_idx, col_idx))
+            for col_idx, v in enumerate(raw_values, start=1)
+        ]
+        yield row_idx, tuple(row_values)
+
+
 def _pick_import_sheet(wb):
     """Prefer the sheet named like our own template; otherwise use the
     first sheet by position — never `wb.active`, which reflects whatever
@@ -338,7 +397,7 @@ async def upload_donation_excel(
         )
 
     rows = []
-    for row in ws.iter_rows(min_row=2, max_col=len(field_keys), values_only=True):
+    for row_idx, row in _iter_rows_with_merge_fill(ws, min_row=2, max_col=len(field_keys)):
         row_dict = {}
         for key, value in zip(field_keys, row):
             if value is None:
@@ -349,7 +408,10 @@ async def upload_donation_excel(
                 row_dict[key] = _clean_dtn_cell(value)
             else:
                 row_dict[key] = str(value).strip()
-        rows.append(row_dict)
+        # Keep the real Excel row number paired with its data — some rows
+        # get skipped inside _iter_rows_with_merge_fill, so this list's
+        # position no longer lines up with "row N is the N-th entry."
+        rows.append((row_idx, row_dict))
 
     created, skipped_duplicates, skipped_invalid_dtn, errors = crud.bulk_create_donations(
         db, rows, current_user.username
@@ -403,10 +465,16 @@ async def preview_donation_excel(
         dtn
         for (dtn,) in db.query(crud.Donation.letter_dtn).filter(crud.Donation.letter_dtn.isnot(None)).all()
     }
-    seen_in_file = set()
+    existing_blank_dtn_signatures = {
+        tuple(sig)
+        for sig in db.query(
+            *[getattr(crud.Donation, f) for f in crud.BLANK_DTN_SIGNATURE_FIELDS]
+        ).filter(crud.Donation.letter_dtn.is_(None)).all()
+    }
+    seen_blank_dtn_signatures = set()
     will_insert, will_skip = [], []
 
-    for idx, row in enumerate(ws.iter_rows(min_row=2, max_col=len(field_keys), values_only=True), start=2):
+    for idx, row in _iter_rows_with_merge_fill(ws, min_row=2, max_col=len(field_keys)):
         row_dict = {}
         for key, value in zip(field_keys, row):
             if value is None:
@@ -432,15 +500,19 @@ async def preview_donation_excel(
         if dtn and not crud.LETTER_DTN_RE.match(dtn):
             will_skip.append({**preview_row, "reason": f"Letter DTN \"{dtn}\" isn't a 14-digit number — won't import."})
             continue
-        if dtn and dtn in seen_in_file:
-            will_skip.append({**preview_row, "reason": "Duplicate Letter DTN — appears more than once in this file."})
-            continue
         if dtn and dtn in existing_dtns:
             will_skip.append({**preview_row, "reason": "Letter DTN already exists in the system — will be skipped, not overwritten."})
             continue
+        if not dtn:
+            # Mirror bulk_create_donations: the signature must reflect the
+            # Status that will actually be stored (defaulted), or a blank
+            # Status never matches its own already-inserted twin.
+            signature = crud._blank_dtn_signature({**row_dict, "status": row_dict.get("status") or "For Evaluation"})
+            if signature in existing_blank_dtn_signatures or signature in seen_blank_dtn_signatures:
+                will_skip.append({**preview_row, "reason": "No Letter DTN, and every other field matches a record that's already there — looks like a repeat."})
+                continue
+            seen_blank_dtn_signatures.add(signature)
 
-        if dtn:
-            seen_in_file.add(dtn)
         will_insert.append(preview_row)
 
     return {
