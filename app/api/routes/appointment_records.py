@@ -9,7 +9,7 @@ from app.schemas.appointment_record import (
     AppointmentRecordPage,
 )
 
-router = APIRouter(prefix="/appointment-records", tags=["Appointment Records"])
+router = APIRouter(prefix="/api/appointment-records", tags=["Appointment Records"])
 
 
 @router.get("/", response_model=AppointmentRecordPage)
