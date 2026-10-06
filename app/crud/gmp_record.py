@@ -732,8 +732,34 @@ def get_gmp_records(
                 # in the same DTN family.
                 if related_dtn and dtn not in related_dtn_by_dtn:
                     related_dtn_by_dtn[dtn] = related_dtn
+    # "Evaluator" column — username on the latest Evaluator-step log, so the
+    # name stays after the application moves on and changes only on reassign.
+    # GMP_EVALUATOR is not used here: only assign_evaluator() writes it.
+    evaluator_by_record: Dict[int, str] = {}
+    record_ids = [r.GMP_ID for r in records]
+    if record_ids:
+        eval_logs = (
+            db.query(
+                GMPApplicationLogs.gmp_record_id.label("gmp_record_id"),
+                GMPApplicationLogs.user_id.label("user_id"),
+                GMPApplicationLogs.user_name.label("user_name"),
+                func.row_number().over(
+                    partition_by=GMPApplicationLogs.gmp_record_id,
+                    order_by=GMPApplicationLogs.del_index.desc(),
+                ).label("rn"),
+            )
+            .filter(
+                GMPApplicationLogs.gmp_record_id.in_(record_ids),
+                GMPApplicationLogs.application_step == "Evaluator",
+            )
+            .subquery()
+        )
+        for row in db.query(eval_logs).filter(eval_logs.c.rn == 1).all():
+            evaluator_by_record[row.gmp_record_id] = row.user_name
+
     for r in records:
         r.all_issuances = issuances_by_dtn.get(r.GMP_DTN, [])
+        r.latest_evaluator = evaluator_by_record.get(r.GMP_ID)
         if not r.GMP_RELATED_DTN and r.GMP_DTN in related_dtn_by_dtn:
             r.GMP_RELATED_DTN = related_dtn_by_dtn[r.GMP_DTN]
 

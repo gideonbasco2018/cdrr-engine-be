@@ -507,6 +507,9 @@ class GMPRecordResponse(GMPRecordBase):
     # each with its own issuance details — only populated for view=main
     # (see get_gmp_records in app/crud/gmp_record.py); empty list otherwise.
     all_issuances: List[GMPIssuanceSummary] = []
+    # Username on the latest Evaluator-step log — set
+    # per page in get_gmp_records; None when the record never reached Evaluator.
+    latest_evaluator: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 
