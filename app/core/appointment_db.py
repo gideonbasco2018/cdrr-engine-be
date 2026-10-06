@@ -14,7 +14,10 @@ appointment_engine = create_engine(
     pool_pre_ping=True,
     pool_size=5,
     max_overflow=5,
-    connect_args={"connect_timeout": 10},
+    connect_args={
+        "connect_timeout": 10,
+        "options": "-c timezone=Asia/Manila",
+    },
 )
 
 AppointmentSessionLocal = sessionmaker(
