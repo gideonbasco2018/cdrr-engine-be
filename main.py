@@ -54,6 +54,7 @@ from app.api.routes import (
     eservices_drug_group_summary,
     rrdportal,
     checklist,
+    appointment_records,
 )
 
 # ── Scheduler setup ───────────────────────────────────────────────────
@@ -168,6 +169,7 @@ app.include_router(donation.router)
 app.include_router(eservices_drug_group_summary.router)
 app.include_router(rrdportal.router)
 app.include_router(checklist.router)
+app.include_router(appointment_records.router)
 
 
 @app.get("/")
