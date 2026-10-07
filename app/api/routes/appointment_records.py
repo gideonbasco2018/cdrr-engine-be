@@ -22,7 +22,7 @@ from app.services.appointment_claim import claim_record, is_claimed
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/appointment-records",
+    prefix="/api/appointment-records",
     tags=["Appointment Records"],
     dependencies=[Depends(get_current_active_user)],
 )
