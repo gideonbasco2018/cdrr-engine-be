@@ -7,7 +7,8 @@ date/time is set by the server."""
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from typing import List
+from datetime import date
+from typing import List, Optional
 
 from app.core.deps import get_current_active_user
 from app.db.session import get_db
@@ -17,6 +18,7 @@ from app.schemas.checklist import (
     ChecklistItemCreate,
     ChecklistItemResponse,
     ChecklistResponse,
+    ChecklistSearchResult,
     ChecklistSummary,
     ChecklistUpdate,
 )
@@ -37,9 +39,23 @@ def _display_name(user: User) -> str:
 @router.get("", response_model=List[ChecklistSummary])
 def list_checklists(
     limit: int = Query(50, ge=1, le=500),
+    date_from: Optional[date] = Query(None, description="Created on/after this Manila date (YYYY-MM-DD)"),
+    date_to: Optional[date] = Query(None, description="Created on/before this Manila date (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
 ):
-    return crud.list_checklists(db, limit)
+    return crud.list_checklists(db, limit, date_from, date_to)
+
+
+@router.get("/search", response_model=List[ChecklistSearchResult])
+def search_checklists(
+    q: str = Query(..., description="Text to find in DTNs and subjects (2+ characters)"),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    """Find which checklist(s) a DTN or subject text is on. Searches every
+    non-deleted checklist, not just the newest 50 shown in the list.
+    (Declared before /{checklist_id} so "search" isn't read as an id.)"""
+    return crud.search_items(db, q, limit)
 
 
 @router.get("/server-time")
