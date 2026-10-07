@@ -1,11 +1,13 @@
 # app/api/routes/appointment_records.py
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.appointment_db import get_appointment_db
-from app.core.deps import get_current_user  # ADAPT: your auth dependency
+from app.core.deps import get_current_active_user
 from app.db.session import get_db
 from app.models.appointment_record import AppointmentRecord
 from app.models.e_application import EApplication
@@ -17,14 +19,16 @@ from app.schemas.appointment_record import (
 )
 from app.services.appointment_claim import claim_record, is_claimed
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(
     prefix="/appointment-records",
     tags=["Appointment Records"],
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_current_active_user)],
 )
 
 
-@router.get("/", response_model=AppointmentRecordPage)
+@router.get("", response_model=AppointmentRecordPage)
 def list_appointment_records(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -75,7 +79,7 @@ def claim_appointment_records(
     payload: ClaimRequest,
     db: Session = Depends(get_appointment_db),
     internal_db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_active_user),
 ):
     results: list[ClaimResult] = []
 
@@ -116,8 +120,17 @@ def claim_appointment_records(
                 ClaimResult(reference_no=reference_no, result="failed", detail=str(err))
             )
         except Exception:
+            # Log the real error server-side, but don't leak it to the client and
+            # don't abort the batch: earlier references may already be committed.
             internal_db.rollback()
-            raise
+            logger.exception("Unexpected error claiming %s", reference_no)
+            results.append(
+                ClaimResult(
+                    reference_no=reference_no,
+                    result="failed",
+                    detail="Unexpected error while claiming this record",
+                )
+            )
 
     return results
 
