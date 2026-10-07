@@ -1,8 +1,8 @@
 """add appointment source fields to e_application
 
-Revision ID: 8713a6a97b12
-Revises: a7c2e9d41b03
-Create Date: 2026-10-07 05:28:04.771133
+Revision ID: ab46bb09ad2f
+Revises: e5a7c3f9b218
+Create Date: 2026-10-07 06:00:43.550353
 
 """
 from typing import Sequence, Union
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '8713a6a97b12'
-down_revision: Union[str, Sequence[str], None] = 'a7c2e9d41b03'
+revision: str = 'ab46bb09ad2f'
+down_revision: Union[str, Sequence[str], None] = 'e5a7c3f9b218'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
