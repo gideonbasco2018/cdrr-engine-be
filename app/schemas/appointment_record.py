@@ -1,8 +1,8 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AppointmentRecordBase(BaseModel):
@@ -50,3 +50,13 @@ class AppointmentRecordPage(BaseModel):
     page: int
     page_size: int
     items: list[AppointmentRecordListItem]
+
+
+class ClaimRequest(BaseModel):
+    reference_numbers: list[str] = Field(min_length=1, max_length=100)
+
+
+class ClaimResult(BaseModel):
+    reference_no: str
+    result: Literal["claimed", "already_claimed", "not_found", "failed"]
+    detail: Optional[str] = None
