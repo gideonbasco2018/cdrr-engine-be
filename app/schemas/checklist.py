@@ -72,6 +72,17 @@ class ChecklistResponse(BaseModel):
         from_attributes = True
 
 
+class ChecklistSearchResult(BaseModel):
+    """One DTN matching a search, with the checklist it's on."""
+    checklist_id: int
+    checklist_label: Optional[str] = None
+    checklist_created_at: datetime
+    item_id: int
+    dtn: str
+    subject: Optional[str] = None
+    subject_status: str
+
+
 class ChecklistSummary(BaseModel):
     id: int
     created_by: Optional[str] = None

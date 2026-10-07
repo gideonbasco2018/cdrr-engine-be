@@ -1,8 +1,9 @@
 # app/crud/checklist.py
 
 import logging
+from datetime import date, datetime, time, timedelta
 from typing import List, Optional, Tuple
-from sqlalchemy import and_, func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -26,15 +27,34 @@ def create_checklist(db: Session, username: str) -> Checklist:
     return checklist
 
 
-def list_checklists(db: Session, limit: int = 50) -> List[dict]:
-    rows = (
+def list_checklists(
+    db: Session,
+    limit: int = 50,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+) -> List[dict]:
+    """Non-deleted checklists, newest first. date_from / date_to (inclusive,
+    Manila dates — created_at is stored in Manila time) narrow it to
+    checklists created in that range; give just one for a single day."""
+    query = (
         db.query(Checklist, func.count(ChecklistItem.id))
         .outerjoin(
             ChecklistItem,
             and_(ChecklistItem.checklist_id == Checklist.id, ChecklistItem.is_removed == 0),
         )
         .filter(Checklist.is_deleted == 0)
-        .group_by(Checklist.id)
+    )
+    if date_from or date_to:
+        start = date_from or date_to
+        end = date_to or date_from
+        if start > end:
+            start, end = end, start
+        query = query.filter(
+            Checklist.created_at >= datetime.combine(start, time.min),
+            Checklist.created_at < datetime.combine(end + timedelta(days=1), time.min),
+        )
+    rows = (
+        query.group_by(Checklist.id)
         .order_by(Checklist.id.desc())
         .limit(limit)
         .all()
@@ -103,6 +123,41 @@ def list_bin(db: Session, checklist_id: int) -> List[ChecklistItem]:
         .order_by(ChecklistItem.removed_at.desc(), ChecklistItem.id.desc())
         .all()
     )
+
+
+def search_items(db: Session, q: str, limit: int = 50) -> List[dict]:
+    """DTNs (on the checklist, not removed) in any non-deleted checklist whose
+    DTN or subject contains q. Case-insensitive (the column collation is _ci).
+    Newest checklist first."""
+    q = (q or "").strip()
+    if len(q) < 2:
+        return []
+    # Treat % and _ as plain text, not LIKE wildcards.
+    pattern = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    rows = (
+        db.query(ChecklistItem, Checklist)
+        .join(Checklist, Checklist.id == ChecklistItem.checklist_id)
+        .filter(
+            Checklist.is_deleted == 0,
+            ChecklistItem.is_removed == 0,
+            or_(ChecklistItem.dtn.like(pattern), ChecklistItem.subject.like(pattern)),
+        )
+        .order_by(Checklist.id.desc(), ChecklistItem.id)
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "checklist_id": c.id,
+            "checklist_label": c.label,
+            "checklist_created_at": c.created_at,
+            "item_id": i.id,
+            "dtn": i.dtn,
+            "subject": i.subject,
+            "subject_status": i.subject_status,
+        }
+        for i, c in rows
+    ]
 
 
 # ── DTN subject from FIS ───────────────────────────────────────────────────────
