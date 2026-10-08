@@ -15,6 +15,7 @@ from app.models.e_application import EApplication
 from app.schemas.appointment_record import (
     AppointmentRecordDetail,
     AppointmentRecordPage,
+    ClaimedApplicationDetail,
     ClaimRequest,
     ClaimResult,
     MyTaskItem,
@@ -176,6 +177,38 @@ def list_my_tasks(
         }
         for history, app in rows
     ]
+
+
+@router.get("/claimed/{reference_no}", response_model=ClaimedApplicationDetail)
+def get_claimed_application(
+    reference_no: str,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    application = (
+        internal_db.query(EApplication)
+        .filter(EApplication.reference_number == reference_no)
+        .first()
+    )
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    # only users who have worked on this application can view it
+    has_access = (
+        internal_db.query(EAppHistory.history_uuid)
+        .filter(
+            EAppHistory.application_uuid == application.application_uuid,
+            EAppHistory.user_uuid == current_user.user_uuid,
+        )
+        .first()
+        is not None
+    )
+    if not has_access:
+        raise HTTPException(
+            status_code=403, detail="You do not have access to this application"
+        )
+
+    return application
 
 
 @router.get("/{reference_no}", response_model=AppointmentRecordDetail)

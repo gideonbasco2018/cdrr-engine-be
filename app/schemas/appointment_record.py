@@ -75,3 +75,47 @@ class MyTaskItem(BaseModel):
     deadline_date: Optional[date] = None
     start_date: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+class PartyOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    party_type: str
+    name: Optional[str] = None
+    address: Optional[str] = None
+    tin: Optional[str] = None
+    lto_no: Optional[str] = None
+    country: Optional[str] = None
+
+
+class OrderOfPaymentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    op_uuid: str
+    op_type: str
+    op_number: Optional[str] = None
+    application_fee: Optional[Decimal] = None
+    lrf_amount: Optional[Decimal] = None
+    surcharge: Optional[Decimal] = None
+    total_amount: Optional[Decimal] = None
+    status: str
+
+
+class ClaimedApplicationDetail(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    application_uuid: str
+    reference_number: Optional[str] = None
+    activity: Optional[str] = None
+    applicant_company: Optional[str] = None
+    email_address: Optional[str] = None
+    contact_no: Optional[str] = None
+    address: Optional[str] = None
+    tin: Optional[str] = None
+    lto_no: Optional[str] = None
+    application_type: Optional[str] = None
+    drive_folder_id: Optional[str] = None
+    drive_link: Optional[str] = None
+    form_data: Optional[dict[str, Any]] = None
+    parties: list[PartyOut] = []
+    orders_of_payment: list[OrderOfPaymentOut] = []
