@@ -1,4 +1,5 @@
 # app/api/routes/appointment_records.py
+from typing import Literal
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -19,8 +20,11 @@ from app.schemas.appointment_record import (
     ClaimRequest,
     ClaimResult,
     MyTaskItem,
+    PostPaymentRequest,
+    PostPaymentResult,
 )
 from app.services.appointment_claim import CLAIM_STEP, claim_record, is_claimed
+from app.services.appointment_payment import post_payments
 
 logger = logging.getLogger(__name__)
 
@@ -141,10 +145,11 @@ def claim_appointment_records(
 
 @router.get("/my-tasks", response_model=list[MyTaskItem])
 def list_my_tasks(
+    scope: Literal["open", "processed"] = "open",
     internal_db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    rows = (
+    query = (
         internal_db.query(EAppHistory, EApplication)
         .join(
             EApplication,
@@ -153,12 +158,17 @@ def list_my_tasks(
         .filter(
             EAppHistory.user_uuid == current_user.user_uuid,
             EAppHistory.application_step == CLAIM_STEP,
+        )
+    )
+    if scope == "processed":
+        query = query.filter(EAppHistory.accomplished_date.isnot(None)).order_by(
+            EAppHistory.accomplished_date.desc()
+        )
+    else:
+        query = query.filter(
             EAppHistory.del_thread == "Open",
             EAppHistory.del_last_index == 1,
-        )
-        .order_by(EAppHistory.start_date.desc())
-        .all()
-    )
+        ).order_by(EAppHistory.start_date.desc())
 
     return [
         {
@@ -175,7 +185,7 @@ def list_my_tasks(
             "start_date": history.start_date,
             "updated_at": history.updated_at,
         }
-        for history, app in rows
+        for history, app in query.all()
     ]
 
 
@@ -209,6 +219,46 @@ def get_claimed_application(
         )
 
     return application
+
+
+@router.post("/claimed/{reference_no}/payments", response_model=PostPaymentResult)
+def post_claimed_payments(
+    reference_no: str,
+    payload: PostPaymentRequest,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    application = (
+        internal_db.query(EApplication)
+        .filter(EApplication.reference_number == reference_no)
+        .first()
+    )
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    try:
+        result = post_payments(
+            internal_db,
+            application,
+            current_user.user_uuid,
+            payload.payments,
+            payload.remarks,
+        )
+        internal_db.commit()
+    except PermissionError as err:
+        internal_db.rollback()
+        raise HTTPException(status_code=403, detail=str(err))
+    except ValueError as err:
+        internal_db.rollback()
+        raise HTTPException(status_code=409, detail=str(err))
+    except Exception:
+        internal_db.rollback()
+        logger.exception("Unexpected error posting payment for %s", reference_no)
+        raise HTTPException(
+            status_code=500, detail="Unexpected error while posting the payment"
+        )
+
+    return result
 
 
 @router.get("/{reference_no}", response_model=AppointmentRecordDetail)

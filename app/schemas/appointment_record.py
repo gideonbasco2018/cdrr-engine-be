@@ -88,17 +88,34 @@ class PartyOut(BaseModel):
     country: Optional[str] = None
 
 
+class VerificationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    verification_uuid: str
+    reference_number: Optional[str] = None
+    type_of_payment: Optional[str] = None
+    official_receipt_number: Optional[str] = None
+    date_of_payment: Optional[date] = None
+    amount_paid: Optional[Decimal] = None
+    verified_at: Optional[datetime] = None
+
+
 class OrderOfPaymentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     op_uuid: str
     op_type: str
     op_number: Optional[str] = None
+    parent_op_uuid: Optional[str] = None
     application_fee: Optional[Decimal] = None
     lrf_amount: Optional[Decimal] = None
     surcharge: Optional[Decimal] = None
     total_amount: Optional[Decimal] = None
+    deficiency_reason: Optional[str] = None
     status: str
+    issued_at: Optional[datetime] = None
+    paid_at: Optional[datetime] = None
+    verifications: list[VerificationOut] = []
 
 
 class ClaimedApplicationDetail(BaseModel):
@@ -119,3 +136,24 @@ class ClaimedApplicationDetail(BaseModel):
     form_data: Optional[dict[str, Any]] = None
     parties: list[PartyOut] = []
     orders_of_payment: list[OrderOfPaymentOut] = []
+
+
+class PaymentIn(BaseModel):
+    type_of_payment: str = Field(min_length=1, max_length=50)
+    official_receipt_number: str = Field(min_length=1, max_length=100)
+    date_of_payment: date
+    amount_paid: Decimal = Field(gt=0)
+
+
+class PostPaymentRequest(BaseModel):
+    payments: list[PaymentIn] = Field(min_length=1, max_length=20)
+    remarks: Optional[str] = Field(default=None, max_length=500)
+
+
+class PostPaymentResult(BaseModel):
+    reference_number: str
+    fully_paid: bool
+    total_paid: Decimal
+    balance: Decimal
+    overpaid: Decimal
+    additional_op_number: Optional[str] = None
