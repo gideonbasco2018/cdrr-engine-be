@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal, Optional
 
@@ -60,3 +60,18 @@ class ClaimResult(BaseModel):
     reference_no: str
     result: Literal["claimed", "already_claimed", "not_found", "failed"]
     detail: Optional[str] = None
+
+
+class MyTaskItem(BaseModel):
+    application_uuid: str
+    reference_number: Optional[str] = None
+    activity: Optional[str] = None
+    applicant_company: Optional[str] = None
+    application_step: Optional[str] = None
+    application_status: Optional[str] = None
+    application_remarks: Optional[str] = None
+    priority: Optional[str] = None
+    step_duedate: Optional[str] = None
+    deadline_date: Optional[date] = None
+    start_date: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
