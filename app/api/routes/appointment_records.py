@@ -10,14 +10,16 @@ from app.core.appointment_db import get_appointment_db
 from app.core.deps import get_current_active_user
 from app.db.session import get_db
 from app.models.appointment_record import AppointmentRecord
+from app.models.e_app_history import EAppHistory
 from app.models.e_application import EApplication
 from app.schemas.appointment_record import (
     AppointmentRecordDetail,
     AppointmentRecordPage,
     ClaimRequest,
     ClaimResult,
+    MyTaskItem,
 )
-from app.services.appointment_claim import claim_record, is_claimed
+from app.services.appointment_claim import CLAIM_STEP, claim_record, is_claimed
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +136,46 @@ def claim_appointment_records(
             )
 
     return results
+
+
+@router.get("/my-tasks", response_model=list[MyTaskItem])
+def list_my_tasks(
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    rows = (
+        internal_db.query(EAppHistory, EApplication)
+        .join(
+            EApplication,
+            EApplication.application_uuid == EAppHistory.application_uuid,
+        )
+        .filter(
+            EAppHistory.user_uuid == current_user.user_uuid,
+            EAppHistory.application_step == CLAIM_STEP,
+            EAppHistory.del_thread == "Open",
+            EAppHistory.del_last_index == 1,
+        )
+        .order_by(EAppHistory.start_date.desc())
+        .all()
+    )
+
+    return [
+        {
+            "application_uuid": app.application_uuid,
+            "reference_number": app.reference_number,
+            "activity": app.activity,
+            "applicant_company": app.applicant_company,
+            "application_step": history.application_step,
+            "application_status": history.application_status,
+            "application_remarks": history.application_remarks,
+            "priority": history.priority,
+            "step_duedate": history.step_duedate,
+            "deadline_date": history.deadline_date,
+            "start_date": history.start_date,
+            "updated_at": history.updated_at,
+        }
+        for history, app in rows
+    ]
 
 
 @router.get("/{reference_no}", response_model=AppointmentRecordDetail)
