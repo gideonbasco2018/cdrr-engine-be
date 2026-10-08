@@ -29,6 +29,7 @@ router = APIRouter(
 
 
 @router.get("", response_model=AppointmentRecordPage)
+@router.get("/", response_model=AppointmentRecordPage, include_in_schema=False)
 def list_appointment_records(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
