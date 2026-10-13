@@ -4,9 +4,11 @@
 # scoped to GMPRecord / GMPApplicationLogs instead of MainDB / ApplicationLogs.
 
 from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from typing import Optional, Literal
-from datetime import date
+from typing import List, Optional, Literal
+from datetime import date, datetime
+import io
 
 from app.db.session import get_db
 from app.core.deps import get_current_active_user
@@ -288,12 +290,15 @@ def get_metric_detail(
 # Applications the current user has finished their own part on (a COMPLETED
 # step they were the assignee of) that aren't released yet — i.e. still
 # actively at some step (GMP_CURRENT_STEP is not null). Powers the
-# "Post-Evaluation Status" card: a per-step count breakdown for the header,
-# plus a paginated row list for its "See all".
+# "Post-Evaluation Status" card: a labelled count breakdown for the header,
+# plus a paginated row list for its "See all". Each breakdown entry is tagged
+# "returned" (sitting back on the step this user last completed — theirs to
+# act on) or "forward" (moved on to someone else), and its label doubles as
+# the `bucket` the list endpoint filters on.
 @router.get(
     "/post-eval-status/summary",
     response_model=PostEvalStatusSummaryResponse,
-    summary="Per-current-step counts for the Post-Evaluation Status card's header chips",
+    summary="Grouped label counts for the Post-Evaluation Status card's header chips",
 )
 def get_post_eval_status_summary(
     impersonate: Optional[int] = Query(None, description="Admin only — user_id of target user"),
@@ -303,8 +308,8 @@ def get_post_eval_status_summary(
     username, user_id = _effective_user(current_user, impersonate, db)
     breakdown = crud_post_eval.get_step_breakdown(db, username, user_id)
     return PostEvalStatusSummaryResponse(
-        breakdown=[{"step": step, "count": count} for step, count in breakdown.items()],
-        total=sum(breakdown.values()),
+        breakdown=breakdown,
+        total=sum(b["count"] for b in breakdown),
     )
 
 
@@ -316,15 +321,108 @@ def get_post_eval_status_summary(
 def get_post_eval_status(
     page: int = Query(default=1, ge=1, description="1-based page number"),
     page_size: int = Query(default=10, ge=1, le=50, description="Rows per page (max 50)"),
+    bucket: Optional[str] = Query(
+        None,
+        description=(
+            "Filter to one header chip: 'all' (default), 'returned' for every "
+            "return at once, or the exact label from /post-eval-status/summary "
+            "(e.g. 'Returned by Checker', 'Checker')"
+        ),
+    ),
     impersonate: Optional[int] = Query(None, description="Admin only — user_id of target user"),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
     username, user_id = _effective_user(current_user, impersonate, db)
-    data = crud_post_eval.get_rows(db, username, user_id, page=page, page_size=page_size)
+    data = crud_post_eval.get_rows(
+        db, username, user_id, page=page, page_size=page_size, bucket=bucket
+    )
     return PostEvalStatusListResponse(
         data=data["rows"],
         total=data["total"],
         total_pages=data["total_pages"],
         page=data["page"],
+    )
+
+
+@router.get(
+    "/post-eval-status/export",
+    summary="Export the Post-Evaluation Status list to .xlsx",
+    response_class=StreamingResponse,
+)
+def export_post_eval_status(
+    buckets: Optional[List[str]] = Query(
+        None,
+        description=(
+            "Repeat per chip to export, e.g. ?buckets=Checker&buckets=Returned by "
+            "Checker. 'all' (or omitting this) exports everything. The values are "
+            "the labels from /post-eval-status/summary."
+        ),
+    ),
+    impersonate: Optional[int] = Query(None, description="Admin only — user_id of target user"),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    """Mirrors the on-screen table's columns, for the union of the chosen
+    chips. Styling follows /api/gmp/export-filtered so the two exports look
+    like they came from the same system."""
+    from openpyxl import Workbook
+    from openpyxl.cell import WriteOnlyCell
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    username, user_id = _effective_user(current_user, impersonate, db)
+    rows = crud_post_eval.get_export_rows(db, username, user_id, buckets=buckets)
+    if not rows:
+        raise HTTPException(status_code=404, detail="Nothing to export for that selection")
+
+    HEADERS = ["DTN", "Establishment", "Your Step", "Completed", "Where It Is Now", "Group"]
+    WIDTHS = [20, 42, 20, 14, 28, 16]
+    GROUP_LABELS = {
+        crud_post_eval.GROUP_RETURNED: "Returned to me",
+        crud_post_eval.GROUP_FORWARD: "Moved forward",
+    }
+
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet("Post-Evaluation Status")
+
+    for idx, width in enumerate(WIDTHS, start=1):
+        ws.column_dimensions[get_column_letter(idx)].width = width
+
+    header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=10)
+    header_align = Alignment(horizontal="center", vertical="center")
+
+    header_cells = []
+    for title in HEADERS:
+        cell = WriteOnlyCell(ws, value=title)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_align
+        header_cells.append(cell)
+    ws.append(header_cells)
+
+    for r in rows:
+        completed = r["completed_date"]
+        ws.append([
+            r["dtn"],
+            r["lto_company"],
+            r["your_step"],
+            completed.strftime("%Y-%m-%d") if completed else None,
+            r["label"],
+            GROUP_LABELS.get(r["group"], r["group"]),
+        ])
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    filename = f"post_evaluation_status_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Total-Records": str(len(rows)),
+        },
     )
