@@ -11,6 +11,10 @@
 #                act on, and labelled with WHO sent it back.
 #   "forward"  — it moved on and is with someone else. Labelled with the step
 #                it is sitting at, one step per label, never lumped together.
+#
+# Reroutes are out of scope for this card by design — an application an admin
+# has just rerouted is left out entirely, counts included, until it is moving
+# through the normal routes again. See the skip in _resolve.
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
@@ -35,6 +39,11 @@ _STEP_ORDER: Dict[str, int] = {
 }
 
 RETURNED_BY_PREFIX = "Returned by "
+
+# GMPApplicationLogs.action_type written by reroute_step (app/crud/gmp_logs.py)
+# when an admin moves an application by hand. Compared case-folded because the
+# column is free text, the same way monitoring.py guards its own exclusion.
+ACTION_REROUTE = "REROUTE"
 
 # Wording for return actions that need more than the generic
 # "Returned by <step>". Keys are (step, decision) pairs straight out of
@@ -81,9 +90,9 @@ def _my_active_record_ids(db: Session, username: Optional[str], user_id: Optiona
     )
 
 
-def _latest_completed_meta(db: Session, record_ids) -> Dict[int, Tuple[str, str]]:
-    """{record_id: (step, decision)} — each record's most recent COMPLETED
-    log, whoever completed it.
+def _latest_completed_meta(db: Session, record_ids) -> Dict[int, Tuple[str, str, str]]:
+    """{record_id: (step, decision, action_type)} — each record's most recent
+    COMPLETED log, whoever completed it.
 
     This is the only thing that can tell a return apart from a fresh arrival.
     GMP_CURRENT_STEP says WHERE an application is, never how it got there:
@@ -91,6 +100,10 @@ def _latest_completed_meta(db: Session, record_ids) -> Dict[int, Tuple[str, str]
     three of the Checker/QA Admin returns set it to the same "Evaluator"
     value that Decking's forward hand-off does. The last decision taken on
     the record is what separates them.
+
+    action_type comes along for the reroute check in _resolve — a reroute
+    closes its log with no application_decision at all, so decision alone
+    cannot tell one from an ordinary hand-off.
     """
     if not record_ids:
         return {}
@@ -111,6 +124,7 @@ def _latest_completed_meta(db: Session, record_ids) -> Dict[int, Tuple[str, str]
             GMPApplicationLogs.gmp_record_id,
             GMPApplicationLogs.application_step,
             GMPApplicationLogs.application_decision,
+            GMPApplicationLogs.action_type,
         )
         .join(
             latest,
@@ -119,7 +133,7 @@ def _latest_completed_meta(db: Session, record_ids) -> Dict[int, Tuple[str, str]
         )
         .all()
     )
-    return {rid: (step, decision) for rid, step, decision in rows}
+    return {rid: (step, decision, action) for rid, step, decision, action in rows}
 
 
 def _return_label(
@@ -181,6 +195,21 @@ def _resolve(db: Session, username: Optional[str], user_id: Optional[int]) -> Li
 
     resolved: List[dict] = []
     for rid, current_step in records:
+        step, decision, action = latest_meta.get(rid, (None, None, None))
+
+        # A reroute is an admin moving an application by hand, outside the
+        # routes in GMP_ACTION_ROUTES. Where it lands is their decision, not a
+        # consequence of the work you finished, so this card stays out of it —
+        # left in, a reroute reads as ordinary progress under "Moved forward"
+        # (it can even land on Decking, behind the workflow), or as "Returned
+        # by <step>", blaming a step whose owner decided nothing.
+        #
+        # Skipped only while the reroute is the LAST thing that happened: once
+        # the step it was sent to completes normally that log becomes the most
+        # recent COMPLETED one, and the record comes back on its own.
+        if (action or "").strip().upper() == ACTION_REROUTE:
+            continue
+
         my_log = my_log_by_record.get(rid)
         your_step = my_log.application_step if my_log else None
 
@@ -189,11 +218,7 @@ def _resolve(db: Session, username: Optional[str], user_id: Optional[int]) -> Li
         # hard-coded to "Evaluator": a QA Admin whose work came back from LRD
         # Chief Admin is in exactly the same position and reads the same way.
         is_return = bool(current_step) and current_step == your_step
-        if is_return:
-            step, decision = latest_meta.get(rid, (None, None))
-            label = _return_label(step, decision, current_step)
-        else:
-            label = current_step
+        label = _return_label(step, decision, current_step) if is_return else current_step
 
         resolved.append({
             "gmp_id": rid,
