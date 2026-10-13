@@ -1,5 +1,5 @@
 # app/api/routes/gmp_record.py
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, File, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
@@ -565,6 +565,146 @@ def get_evaluator_options(db: Session = Depends(get_db)):
     return {"evaluators": crud.get_gmp_evaluator_options(db)}
 
 
+# ── Worksheet in Google Docs (static — must be before /{record_id}) ──────────
+WORKSHEET_CATEGORY = "WORKSHEET"
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+GOOGLE_ACCOUNT_DOMAIN = "@fda.gov.ph"
+
+
+def _is_worksheet_docx(doc) -> bool:
+    is_docx = doc.mime_type == DOCX_MIME or (doc.original_filename or "").lower().endswith(".docx")
+    return (
+        is_docx
+        and (doc.db_entry_type or "").upper() == "FGMP"
+        and (doc.doc_category or "").strip().upper() == WORKSHEET_CATEGORY
+    )
+
+
+def _worksheet_docs_for_dtn(db: Session, dtn: Optional[str]):
+    from app.models.application_document import ApplicationDocument
+
+    dtn = (dtn or "").strip()
+    if not dtn:
+        return []
+    docs = (
+        db.query(ApplicationDocument)
+        .filter(ApplicationDocument.db_dtn == dtn, ApplicationDocument.is_deleted == 0)
+        .all()
+    )
+    return [d for d in docs if _is_worksheet_docx(d)]
+
+
+def _record_ids_for_dtn(db: Session, dtn: Optional[str]) -> List[int]:
+    dtn = (dtn or "").strip()
+    if not dtn.isdigit():
+        return []
+    return [rid for (rid,) in db.query(GMPRecord.GMP_ID).filter(GMPRecord.GMP_DTN == int(dtn)).all()]
+
+
+def _remove_worksheet_access(file_ids: List[str]) -> None:
+    """Runs after the response: a Drive failure must never block a workflow move."""
+    from app.services.google_drive import remove_user_edit_comment_access
+
+    for file_id in file_ids:
+        try:
+            remove_user_edit_comment_access(file_id)
+        except Exception as exc:
+            print(f"[GDrive] removing worksheet access failed for {file_id}: {exc}")
+
+
+def _queue_worksheet_access_removal(background_tasks: BackgroundTasks, db: Session, record_id: int) -> None:
+    """After an application moves, clear edit/comment access on its worksheets
+    so only whoever holds it next can get access again (via the Open button)."""
+    record = db.query(GMPRecord).filter(GMPRecord.GMP_ID == record_id).first()
+    if not record or record.GMP_DTN is None:
+        return
+    file_ids = [d.drive_file_id for d in _worksheet_docs_for_dtn(db, str(record.GMP_DTN)) if d.drive_file_id]
+    if file_ids:
+        background_tasks.add_task(_remove_worksheet_access, file_ids)
+
+
+@router.get("/worksheets/comment-counts")
+def get_worksheet_comment_counts(dtn: str = Query(...), db: Session = Depends(get_db)):
+    """Open comments per FGMP WORKSHEET .docx for a DTN, plus the total.
+    A file that can't be read comes back as null rather than failing the list."""
+    from app.services.google_drive import count_docx_open_comments
+
+    files = {}
+    total_comments = total_replies = 0
+    for doc in _worksheet_docs_for_dtn(db, dtn):
+        try:
+            counts = count_docx_open_comments(doc.drive_file_id)
+        except Exception as exc:
+            print(f"[GDrive] counting comments failed for doc {doc.id}: {exc}")
+            files[doc.id] = None
+            continue
+        files[doc.id] = counts
+        total_comments += counts["comments"]
+        total_replies += counts["replies"]
+    return {"files": files, "total_comments": total_comments, "total_replies": total_replies}
+
+
+@router.post("/worksheets/{document_id}/open")
+def open_worksheet_in_google_docs(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Give the current user Google Docs access to an FGMP WORKSHEET .docx and
+    return its editor link. Only whoever currently holds the application (an
+    open task on it) gets access: edit if they uploaded the worksheet, comment
+    otherwise. Access is cleared each time the application moves (see
+    _queue_worksheet_access_removal). It goes to the user's app email, which
+    must be their FDA Google account."""
+    from app.models.application_document import ApplicationDocument
+    from app.models.gmp_record import GMPApplicationLogs
+    from app.services.google_drive import grant_user_access
+
+    doc = (
+        db.query(ApplicationDocument)
+        .filter(ApplicationDocument.id == document_id, ApplicationDocument.is_deleted == 0)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if not _is_worksheet_docx(doc):
+        raise HTTPException(status_code=400, detail="Only FGMP WORKSHEET .docx files can be opened in Google Docs.")
+
+    record_ids = _record_ids_for_dtn(db, doc.db_dtn)
+    holds_app = bool(record_ids) and db.query(GMPApplicationLogs.id).filter(
+        GMPApplicationLogs.gmp_record_id.in_(record_ids),
+        GMPApplicationLogs.user_id == current_user.id,
+        GMPApplicationLogs.del_thread == "Open",
+    ).first() is not None
+    if not holds_app:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only open this worksheet while the application is at your step.",
+        )
+    role = "writer" if doc.uploaded_by_user_id == current_user.id else "commenter"
+
+    email = (current_user.email or "").strip()
+    if not email.lower().endswith(GOOGLE_ACCOUNT_DOMAIN):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Your app email ({email or 'none'}) isn't an {GOOGLE_ACCOUNT_DOMAIN} Google account. "
+                   "Ask an admin to update your email in the app.",
+        )
+
+    try:
+        granted = grant_user_access(doc.drive_file_id, email, role)
+    except Exception as exc:
+        print(f"[GDrive] grant_user_access failed for doc {document_id}, {email}: {exc}")
+        raise HTTPException(status_code=502, detail="Couldn't give you access in Google Drive. Please try again.")
+
+    return {
+        "role": "editor" if role == "writer" else "commenter",
+        "drive_role": granted,
+        "email": email,
+        "edit_url": f"https://docs.google.com/document/d/{doc.drive_file_id}/edit?rtpof=true&sd=true",
+    }
+
+
 # ── Log step definitions (static) ─────────────────────────────────────────────
 @router.get("/log-steps")
 def get_log_steps():
@@ -929,6 +1069,7 @@ def assign_evaluator(
 def advance_step(
     record_id: int,
     req: GMPAdvanceStepRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -989,6 +1130,12 @@ def advance_step(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No open log found for step '{req.current_step}' on record {record_id}",
         )
+    # "For Compliance" loops back to the same step and person — nothing moved.
+    stays_with_same_person = (
+        next_step_label == req.current_step and next_assignee_id == getattr(current_user, "id", None)
+    )
+    if not stays_with_same_person:
+        _queue_worksheet_access_removal(background_tasks, db, record_id)
     return new_log
 
 
@@ -1017,6 +1164,7 @@ def update_log(
 def reassign_step(
     record_id: int,
     req: GMPReassignRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -1047,6 +1195,7 @@ def reassign_step(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No open IN PROGRESS log found for step '{req.application_step}' on record {record_id}",
         )
+    _queue_worksheet_access_removal(background_tasks, db, record_id)
     return new_log
 
 
@@ -1055,6 +1204,7 @@ def reassign_step(
 def reroute_step(
     record_id: int,
     req: GMPRerouteRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -1081,6 +1231,7 @@ def reroute_step(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No open log found for step '{req.reroute_from_step}' on record {record_id}",
         )
+    _queue_worksheet_access_removal(background_tasks, db, record_id)
     return new_log
 
 

@@ -4,11 +4,13 @@ import io
 import json
 import os
 import threading
+import zipfile
+import xml.etree.ElementTree as ET
 from typing import Optional
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
+from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
@@ -188,6 +190,106 @@ def delete_file_from_drive(file_id: str) -> bool:
     except Exception as exc:
         print(f"[GDrive] delete_file error for {file_id}: {exc}")
         return False
+
+
+# Drive roles from least to most access; "fileOrganizer"/"organizer" are the
+# Shared Drive roles above writer.
+_ROLE_RANK = {"reader": 0, "commenter": 1, "writer": 2, "fileOrganizer": 3, "organizer": 4, "owner": 5}
+
+
+def grant_user_access(file_id: str, email: str, role: str) -> str:
+    """Give `email` at least `role` ("commenter" or "writer") on a file.
+    Never lowers access someone already has. Returns the role they end up with.
+    Raises on Drive errors so the caller can report them."""
+    service = _build_service()
+    perms = service.permissions().list(
+        fileId=file_id,
+        fields="permissions(id,type,role,emailAddress)",
+        supportsAllDrives=True,
+    ).execute().get("permissions", [])
+    email_l = email.lower()
+    existing = next(
+        (p for p in perms if p.get("type") == "user" and (p.get("emailAddress") or "").lower() == email_l),
+        None,
+    )
+    if existing:
+        if _ROLE_RANK.get(existing["role"], 0) >= _ROLE_RANK[role]:
+            return existing["role"]
+        service.permissions().update(
+            fileId=file_id, permissionId=existing["id"],
+            body={"role": role}, supportsAllDrives=True,
+        ).execute()
+        return role
+    service.permissions().create(
+        fileId=file_id,
+        body={"type": "user", "role": role, "emailAddress": email},
+        sendNotificationEmail=False,
+        supportsAllDrives=True,
+    ).execute()
+    return role
+
+
+def remove_user_edit_comment_access(file_id: str) -> int:
+    """Remove every edit/comment access given to a person directly on this
+    file. Leaves "anyone with the link can view" and the Shared Drive's own
+    members (inherited access) untouched. Returns how many were removed."""
+    service = _build_service()
+    perms = service.permissions().list(
+        fileId=file_id,
+        fields="permissions(id,type,role,permissionDetails(inherited))",
+        supportsAllDrives=True,
+    ).execute().get("permissions", [])
+    removed = 0
+    for p in perms:
+        inherited = any(d.get("inherited") for d in p.get("permissionDetails", []))
+        if p.get("type") == "user" and p.get("role") in ("writer", "commenter") and not inherited:
+            service.permissions().delete(
+                fileId=file_id, permissionId=p["id"], supportsAllDrives=True,
+            ).execute()
+            removed += 1
+    return removed
+
+
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_W14 = "{http://schemas.microsoft.com/office/word/2010/wordml}"
+_W15 = "{http://schemas.microsoft.com/office/word/2012/wordml}"
+
+
+def count_docx_open_comments(file_id: str) -> dict:
+    """Count open comments inside a .docx stored in Drive.
+
+    Google Docs saves comments on a .docx INTO the file (word/comments.xml),
+    not in Drive's comment list, and drops a comment from the file once it is
+    resolved. Word keeps resolved ones but marks them done — skipped here.
+    Replies are linked to their comment via word/commentsExtended.xml.
+    Returns {"comments": <open top-level>, "replies": <replies on them>}."""
+    service = _build_service()
+    buf = io.BytesIO()
+    downloader = MediaIoBaseDownload(buf, service.files().get_media(fileId=file_id, supportsAllDrives=True))
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+    z = zipfile.ZipFile(buf)
+    names = set(z.namelist())
+    if "word/comments.xml" not in names:
+        return {"comments": 0, "replies": 0}
+
+    extended = {}
+    if "word/commentsExtended.xml" in names:
+        for e in ET.fromstring(z.read("word/commentsExtended.xml")).iter(_W15 + "commentEx"):
+            extended[e.get(_W15 + "paraId")] = e
+
+    comments = replies = 0
+    for c in ET.fromstring(z.read("word/comments.xml")).iter(_W + "comment"):
+        paras = c.findall(".//" + _W + "p")
+        ext = extended.get(paras[-1].get(_W14 + "paraId")) if paras else None
+        if ext is not None and ext.get(_W15 + "done") == "1":
+            continue
+        if ext is not None and ext.get(_W15 + "paraIdParent"):
+            replies += 1
+        else:
+            comments += 1
+    return {"comments": comments, "replies": replies}
 
 
 def _find_or_create_child_folder(
