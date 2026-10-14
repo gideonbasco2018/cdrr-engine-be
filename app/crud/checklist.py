@@ -125,39 +125,65 @@ def list_bin(db: Session, checklist_id: int) -> List[ChecklistItem]:
     )
 
 
-def search_items(db: Session, q: str, limit: int = 50) -> List[dict]:
+def _search_row(i: ChecklistItem, c: Checklist) -> dict:
+    return {
+        "checklist_id": c.id,
+        "checklist_label": c.label,
+        "checklist_created_at": c.created_at,
+        "item_id": i.id,
+        "dtn": i.dtn,
+        "subject": i.subject,
+        "subject_status": i.subject_status,
+    }
+
+
+def _active_items_query(db: Session):
+    """DTNs still on a checklist (not removed), in checklists not deleted."""
+    return (
+        db.query(ChecklistItem, Checklist)
+        .join(Checklist, Checklist.id == ChecklistItem.checklist_id)
+        .filter(Checklist.is_deleted == 0, ChecklistItem.is_removed == 0)
+    )
+
+
+def search_items(db: Session, q: str, limit: int = 50, field: str = "any") -> List[dict]:
     """DTNs (on the checklist, not removed) in any non-deleted checklist whose
-    DTN or subject contains q. Case-insensitive (the column collation is _ci).
-    Newest checklist first."""
+    DTN and/or subject contains q — field is "dtn", "subject" or "any".
+    Case-insensitive (the column collation is _ci). Newest checklist first."""
     q = (q or "").strip()
     if len(q) < 2:
         return []
     # Treat % and _ as plain text, not LIKE wildcards.
     pattern = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    match = {
+        "dtn": ChecklistItem.dtn.like(pattern),
+        "subject": ChecklistItem.subject.like(pattern),
+    }.get(field, or_(ChecklistItem.dtn.like(pattern), ChecklistItem.subject.like(pattern)))
     rows = (
-        db.query(ChecklistItem, Checklist)
-        .join(Checklist, Checklist.id == ChecklistItem.checklist_id)
-        .filter(
-            Checklist.is_deleted == 0,
-            ChecklistItem.is_removed == 0,
-            or_(ChecklistItem.dtn.like(pattern), ChecklistItem.subject.like(pattern)),
-        )
+        _active_items_query(db)
+        .filter(match)
         .order_by(Checklist.id.desc(), ChecklistItem.id)
         .limit(limit)
         .all()
     )
-    return [
-        {
-            "checklist_id": c.id,
-            "checklist_label": c.label,
-            "checklist_created_at": c.created_at,
-            "item_id": i.id,
-            "dtn": i.dtn,
-            "subject": i.subject,
-            "subject_status": i.subject_status,
-        }
-        for i, c in rows
-    ]
+    return [_search_row(i, c) for i, c in rows]
+
+
+def search_exact_dtns(db: Session, dtns: List[str]) -> List[dict]:
+    """Exact lookup of several DTNs at once — every checklist each one is on.
+    Results follow the order the DTNs were given, newest checklist first."""
+    wanted = list(dict.fromkeys(d.strip() for d in dtns if d and d.strip()))
+    if not wanted:
+        return []
+    rows = (
+        _active_items_query(db)
+        .filter(ChecklistItem.dtn.in_(wanted))
+        .order_by(Checklist.id.desc(), ChecklistItem.id)
+        .all()
+    )
+    order = {d: n for n, d in enumerate(wanted)}
+    rows.sort(key=lambda r: order.get(r[0].dtn, len(order)))  # stable: keeps newest-first per DTN
+    return [_search_row(i, c) for i, c in rows]
 
 
 # ── DTN subject from FIS ───────────────────────────────────────────────────────
