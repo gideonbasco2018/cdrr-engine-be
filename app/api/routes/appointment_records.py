@@ -29,6 +29,14 @@ from app.services.appointment_payment import post_payments
 
 logger = logging.getLogger(__name__)
 
+CASHIER_GROUP_ID = 41
+
+
+def get_user_group_ids(user) -> list[int]:
+    # ADAPT: use the real relationship/attribute name on your User model
+    return [g.id for g in (getattr(user, "groups", None) or [])]
+
+
 router = APIRouter(
     prefix="/api/appointment-records",
     tags=["Appointment Records"],
@@ -46,7 +54,14 @@ def list_appointment_records(
     unclaimed_only: bool = False,
     db: Session = Depends(get_appointment_db),
     internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
 ):
+    # The unclaimed pool is for cashiers only
+    if unclaimed_only and CASHIER_GROUP_ID not in get_user_group_ids(current_user):
+        raise HTTPException(
+            status_code=403, detail="Only cashiers can view the unclaimed pool"
+        )
+
     query = db.query(AppointmentRecord)
 
     if status:
@@ -90,6 +105,9 @@ def claim_appointment_records(
     internal_db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
+    if CASHIER_GROUP_ID not in get_user_group_ids(current_user):
+        raise HTTPException(status_code=403, detail="Only cashiers can claim tasks")
+
     results: list[ClaimResult] = []
 
     for reference_no in dict.fromkeys(payload.reference_numbers):  # de-duplicate
@@ -142,6 +160,15 @@ def claim_appointment_records(
             )
 
     return results
+
+
+@router.get("/my-access")
+def get_my_access(current_user=Depends(get_current_active_user)):
+    group_ids = get_user_group_ids(current_user)
+    return {
+        "group_ids": group_ids,
+        "is_cashier": CASHIER_GROUP_ID in group_ids,
+    }
 
 
 @router.get("/my-tasks", response_model=list[MyTaskItem])
