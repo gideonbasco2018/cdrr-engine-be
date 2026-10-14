@@ -10,11 +10,6 @@ from app.models.e_application import EApplication
 from app.models.e_application_ref import EApplicationRef
 from app.models.e_process import EProcess
 
-# ADAPT: values must match e_process.process_code in your database
-PROCESS_CODE_BY_ACTIVITY = {
-    "CDRR Certificate of Product Registration": "CPR",
-}
-
 CLAIM_STEP = "Payment Verification/Posting"
 CLAIM_STATUS = "IN PROGRESS"
 
@@ -51,12 +46,15 @@ def claim_record(db: Session, record: AppointmentRecord, user_uuid: str) -> str:
     """
     form = record.form_data or {}
 
-    process_code = PROCESS_CODE_BY_ACTIVITY.get(record.activity)
+    activity = (record.activity or "").strip()
     process = (
         db.query(EProcess)
-        .filter(EProcess.process_code == process_code, EProcess.is_active.is_(True))
+        .filter(
+            func.lower(func.trim(EProcess.process_title)) == activity.lower(),
+            EProcess.is_active.is_(True),
+        )
         .first()
-        if process_code
+        if activity
         else None
     )
     if not process:
