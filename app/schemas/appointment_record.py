@@ -64,6 +64,7 @@ class ClaimResult(BaseModel):
 
 class MyTaskItem(BaseModel):
     application_uuid: str
+    process_code: Optional[str] = None
     reference_number: Optional[str] = None
     activity: Optional[str] = None
     applicant_company: Optional[str] = None

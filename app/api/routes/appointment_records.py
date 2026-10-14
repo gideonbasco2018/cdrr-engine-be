@@ -13,6 +13,7 @@ from app.db.session import get_db
 from app.models.appointment_record import AppointmentRecord
 from app.models.e_app_history import EAppHistory
 from app.models.e_application import EApplication
+from app.models.e_process import EProcess
 from app.schemas.appointment_record import (
     AppointmentRecordDetail,
     AppointmentRecordPage,
@@ -150,11 +151,12 @@ def list_my_tasks(
     current_user=Depends(get_current_active_user),
 ):
     query = (
-        internal_db.query(EAppHistory, EApplication)
+        internal_db.query(EAppHistory, EApplication, EProcess.process_code)
         .join(
             EApplication,
             EApplication.application_uuid == EAppHistory.application_uuid,
         )
+        .join(EProcess, EProcess.process_uuid == EAppHistory.process_uuid)
         .filter(
             EAppHistory.user_uuid == current_user.user_uuid,
             EAppHistory.application_step == CLAIM_STEP,
@@ -173,6 +175,7 @@ def list_my_tasks(
     return [
         {
             "application_uuid": app.application_uuid,
+            "process_code": process_code,
             "reference_number": app.reference_number,
             "activity": app.activity,
             "applicant_company": app.applicant_company,
@@ -185,7 +188,7 @@ def list_my_tasks(
             "start_date": history.start_date,
             "updated_at": history.updated_at,
         }
-        for history, app in query.all()
+        for history, app, process_code in query.all()
     ]
 
 
