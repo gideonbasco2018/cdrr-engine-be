@@ -1193,9 +1193,15 @@ def get_application_status_overview(
     }
 
 
-# NOTE: set to the real application_step value(s) of the evaluation step,
-# Set to None to skip the step filter.
-EVALUATOR_STEPS = ("QUALITY EVALUATION",)
+# Workflow order of the steps (values are UPPERCASE).
+# Adjust this list to match the real application_step values in your data.
+# Steps that are not listed here are placed at the end, alphabetically.
+STEP_ORDER = [
+    "DECKING",
+    "S&E",
+    "QUALITY EVALUATION",
+    "CHECKING",
+]
 
 _NONE_LABEL = "(none)"
 
@@ -1230,28 +1236,41 @@ def _entry_type_expr():
     )
 
 
+def _step_sort_key(step: str):
+    try:
+        return (0, STEP_ORDER.index(step), step)
+    except ValueError:
+        return (1, 0, step)
+
+
 def get_evaluator_app_types(
     db: Session,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
 ) -> dict:
     """
-    One column per distinct combination of
-    DB_PROD_CLASS_PRESCRIP / DB_PROCESSING_TYPE / DB_ENTRY_TYPE found in the data.
-    Per evaluator and combination: number of applications decked, number still
-    open, and the average days between being decked (_date_assigned_expr) and
-    the evaluator finishing the step. Evaluators are grouped by unit.
+    Per user, per application_step and per product combination
+    (DB_PROD_CLASS_PRESCRIP / DB_PROCESSING_TYPE / DB_ENTRY_TYPE):
+      - count    : distinct applications decked to the user in that step
+      - open     : of those, how many threads are still Open
+      - avg_days : average days from decked to accomplished (completed rows only,
+                   negative / invalid durations are ignored)
+    Users are grouped by unit.
+
+    Response shape:
+      columns : every product combination found in the data
+      steps   : every application_step found in the data (workflow order)
+      units[].members[].stats[combo_key][step] = {count, open, avg_days}
+      units[].members[].totals[step]           = decked count across combos
+      units[].totals[step]                     = decked count across members
     """
-    filters = [ApplicationLogs.user_id.isnot(None)]
-    if EVALUATOR_STEPS:
-        filters.append(
-            func.upper(ApplicationLogs.application_step).in_(EVALUATOR_STEPS)
-        )
+    step_expr = func.upper(_clean_text(ApplicationLogs.application_step))
 
     base = _exclude_action_types(
         db.query(
             ApplicationLogs.user_id.label("user_id"),
             ApplicationLogs.main_db_id.label("main_db_id"),
+            step_expr.label("step"),
             _clean_text(MainDB.DB_PROD_CLASS_PRESCRIP).label("prescription"),
             _processing_type_expr().label("processing_type"),
             _entry_type_expr().label("entry_type"),
@@ -1262,11 +1281,12 @@ def get_evaluator_app_types(
             ApplicationLogs.del_thread.label("del_thread"),
         )
         .join(MainDB, MainDB.DB_ID == ApplicationLogs.main_db_id)
-        .filter(*filters)
+        .filter(ApplicationLogs.user_id.isnot(None))
     ).subquery()
 
     q = db.query(
         base.c.user_id,
+        base.c.step,
         base.c.prescription,
         base.c.processing_type,
         base.c.entry_type,
@@ -1282,8 +1302,15 @@ def get_evaluator_app_types(
             )
         ).label("open_count"),
         func.avg(
-            func.timestampdiff(
-                literal_column("SECOND"), base.c.decked_at, base.c.accomplished_at
+            case(
+                (
+                    base.c.accomplished_at >= base.c.decked_at,
+                    func.timestampdiff(
+                        literal_column("SECOND"),
+                        base.c.decked_at,
+                        base.c.accomplished_at,
+                    ),
+                )
             )
         ).label("avg_secs"),
     )
@@ -1294,12 +1321,18 @@ def get_evaluator_app_types(
     if date_to:
         q = q.filter(base.c.decked_at <= datetime.combine(date_to, datetime.max.time()))
     rows = q.group_by(
-        base.c.user_id, base.c.prescription, base.c.processing_type, base.c.entry_type
+        base.c.user_id,
+        base.c.step,
+        base.c.prescription,
+        base.c.processing_type,
+        base.c.entry_type,
     ).all()
 
-    # Columns = every combination that appears in the data
+    # Columns = every product combination, steps = every step in the data
     columns_map: dict[str, dict] = {}
+    steps: set[str] = set()
     stats: dict[int, dict] = {}
+    totals: dict[int, dict] = {}
     for r in rows:
         key = f"{r.prescription}|{r.processing_type}|{r.entry_type}"
         columns_map.setdefault(
@@ -1311,25 +1344,29 @@ def get_evaluator_app_types(
                 "entry_type": r.entry_type,
             },
         )
-        stats.setdefault(r.user_id, {})[key] = {
+        steps.add(r.step)
+        stats.setdefault(r.user_id, {}).setdefault(key, {})[r.step] = {
             "count": int(r.total),
             "open": int(r.open_count),
             "avg_days": (
                 round(float(r.avg_secs) / 86400, 1) if r.avg_secs is not None else None
             ),
         }
+        user_totals = totals.setdefault(r.user_id, {})
+        user_totals[r.step] = user_totals.get(r.step, 0) + int(r.total)
+
     columns = sorted(
         columns_map.values(),
         key=lambda c: (c["prescription"], c["processing_type"], c["entry_type"]),
     )
+    ordered_steps = sorted(steps, key=_step_sort_key)
 
     def build_member(user_id: int, name: str) -> dict:
-        s = stats.get(user_id, {})
         return {
             "user_id": user_id,
             "name": name,
-            "stats": s,  # sparse: only combinations this evaluator has
-            "total": sum(v["count"] for v in s.values()),
+            "stats": stats.get(user_id, {}),  # sparse: only combos this user has
+            "totals": totals.get(user_id, {}),
         }
 
     memberships = (
@@ -1354,7 +1391,7 @@ def get_evaluator_app_types(
 
     result = list(units.values())
 
-    # Evaluators that have stats but no active unit assignment
+    # Users that have activity but no active unit assignment
     assigned_ids = {uid for (_, uid) in seen}
     orphan_ids = [uid for uid in stats if uid not in assigned_ids]
     if orphan_ids:
@@ -1374,6 +1411,10 @@ def get_evaluator_app_types(
         )
 
     for unit in result:
-        unit["total"] = sum(m["total"] for m in unit["members"])
+        unit_totals: dict[str, int] = {}
+        for m in unit["members"]:
+            for step_name, n in m["totals"].items():
+                unit_totals[step_name] = unit_totals.get(step_name, 0) + n
+        unit["totals"] = unit_totals
 
-    return {"columns": columns, "units": result}
+    return {"columns": columns, "steps": ordered_steps, "units": result}

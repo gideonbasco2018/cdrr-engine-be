@@ -51,6 +51,7 @@ from app.api.routes import (
     rrdportal,
     checklist,
     appointment_records,
+    sne_assignments,
 )
 
 api_router = APIRouter()
@@ -101,3 +102,4 @@ api_router.include_router(eservices_drug_group_summary.router)
 api_router.include_router(rrdportal.router)
 api_router.include_router(checklist.router)
 api_router.include_router(appointment_records.router)
+api_router.include_router(sne_assignments.router)
