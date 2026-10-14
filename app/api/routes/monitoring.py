@@ -542,22 +542,23 @@ def application_status_overview_endpoint(
 
 @router.get(
     "/evaluator-app-types",
-    summary="Decked application counts and average stay per evaluator, grouped by unit",
+    summary="Decked application counts and average stay per user and step, grouped by unit",
 )
 def evaluator_app_types_endpoint(
     date_from: Optional[date] = Query(
-        None, description="Lower bound on the evaluation step start date (YYYY-MM-DD)"
+        None, description="Lower bound on the decked date (YYYY-MM-DD)"
     ),
     date_to: Optional[date] = Query(
-        None, description="Upper bound on the evaluation step start date (YYYY-MM-DD)"
+        None, description="Upper bound on the decked date (YYYY-MM-DD)"
     ),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
     """
-    For each evaluator, returns the number of applications decked to them per
-    application type (Rx Initial, OTC, FRP, Correction, Other) and the average
-    number of days spent in the evaluation step. Evaluators are grouped by unit.
+    For each user, returns per application step (Quality Evaluation, S&E,
+    Checking, ...) the number of applications decked, how many are still
+    open, and the average number of days from decked to completed.
+    Users are grouped by unit.
     """
     return crud_monitoring.get_evaluator_app_types(
         db, date_from=date_from, date_to=date_to
