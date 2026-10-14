@@ -1,8 +1,10 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+PH_TZ = timezone(timedelta(hours=8))  # the Philippines has no DST
 
 
 class AppointmentRecordBase(BaseModel):
@@ -144,6 +146,13 @@ class PaymentIn(BaseModel):
     official_receipt_number: str = Field(min_length=1, max_length=100)
     date_of_payment: date
     amount_paid: Decimal = Field(gt=0)
+
+    @field_validator("date_of_payment")
+    @classmethod
+    def date_not_in_future(cls, value: date) -> date:
+        if value > datetime.now(PH_TZ).date():
+            raise ValueError("Date of payment cannot be in the future")
+        return value
 
 
 class PostPaymentRequest(BaseModel):

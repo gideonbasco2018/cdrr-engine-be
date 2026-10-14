@@ -14,6 +14,11 @@ from app.services.appointment_claim import CLAIM_STEP, DEL_LAST_INDEX, DEL_THREA
 # ADAPT: values written to e_app_history when the payment step is finished
 CLOSED_THREAD = "Closed"
 CLOSED_LAST_INDEX = 0  # a finished task no longer holds the "last index" marker
+
+# Where the application goes once the payment is fully posted
+NEXT_STEP = "Decking"
+NEXT_STATUS = "IN PROGRESS"  # ADAPT: use the status value your Decking step expects
+
 COMPLETED_STATUS = "COMPLETED"
 
 CENTS = Decimal("0.01")
@@ -140,6 +145,23 @@ def post_payments(
         history.del_thread = CLOSED_THREAD
         history.del_last_index = CLOSED_LAST_INDEX
         history.application_remarks = None
+
+        # Route the application to the next step (nobody holds it yet)
+        db.add(
+            EAppHistory(
+                application_uuid=history.application_uuid,
+                process_uuid=history.process_uuid,
+                reference_number=history.reference_number,
+                user_uuid=None,  # ADAPT: unassigned until a decker claims it
+                application_step=NEXT_STEP,
+                application_status=NEXT_STATUS,
+                start_date=func.now(),
+                del_index=(history.del_index or 0) + 1,
+                del_previous=history.del_index,
+                del_last_index=DEL_LAST_INDEX,
+                del_thread=DEL_THREAD_OPEN,
+            )
+        )
 
     return {
         "reference_number": application.reference_number,
