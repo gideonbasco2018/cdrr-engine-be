@@ -24,7 +24,7 @@ from app.schemas.appointment_record import (
     PostPaymentRequest,
     PostPaymentResult,
 )
-from app.services.appointment_claim import CLAIM_STEP, claim_record, is_claimed
+from app.services.appointment_claim import claim_record, is_claimed
 from app.services.appointment_payment import post_payments
 
 logger = logging.getLogger(__name__)
@@ -157,15 +157,13 @@ def list_my_tasks(
             EApplication.application_uuid == EAppHistory.application_uuid,
         )
         .join(EProcess, EProcess.process_uuid == EAppHistory.process_uuid)
-        .filter(
-            EAppHistory.user_uuid == current_user.user_uuid,
-            EAppHistory.application_step == CLAIM_STEP,
-        )
+        .filter(EAppHistory.user_uuid == current_user.user_uuid)
     )
     if scope == "processed":
-        query = query.filter(EAppHistory.accomplished_date.isnot(None)).order_by(
-            EAppHistory.accomplished_date.desc()
-        )
+        query = query.filter(
+            EAppHistory.del_thread == "Closed",
+            EAppHistory.del_last_index == 0,
+        ).order_by(EAppHistory.accomplished_date.desc())
     else:
         query = query.filter(
             EAppHistory.del_thread == "Open",

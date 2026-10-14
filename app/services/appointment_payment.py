@@ -13,6 +13,7 @@ from app.services.appointment_claim import CLAIM_STEP, DEL_LAST_INDEX, DEL_THREA
 
 # ADAPT: values written to e_app_history when the payment step is finished
 CLOSED_THREAD = "Closed"
+CLOSED_LAST_INDEX = 0  # a finished task no longer holds the "last index" marker
 COMPLETED_STATUS = "COMPLETED"
 
 CENTS = Decimal("0.01")
@@ -137,6 +138,7 @@ def post_payments(
         history.accomplished_date = func.now()
         history.application_status = COMPLETED_STATUS
         history.del_thread = CLOSED_THREAD
+        history.del_last_index = CLOSED_LAST_INDEX
         history.application_remarks = None
 
     return {
