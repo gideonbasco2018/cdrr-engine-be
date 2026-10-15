@@ -168,3 +168,20 @@ class PostPaymentResult(BaseModel):
     balance: Decimal
     overpaid: Decimal
     additional_op_number: Optional[str] = None
+
+class DeckingDecisionRequest(BaseModel):
+    decision: str = Field(min_length=1, max_length=100)
+    remarks: Optional[str] = Field(default=None, max_length=500)
+    evaluator_uuid: Optional[str] = None
+
+
+class EvaluatorOut(BaseModel):
+    user_uuid: str
+    name: str
+
+
+class DeckingDecisionResult(BaseModel):
+    reference_number: str
+    decision: str
+    next_step: Optional[str] = None
+    evaluator_uuid: Optional[str] = None
