@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 CASHIER_GROUP_ID = 41
 # ADAPT: group id of the deckers. None = open to every logged-in user (testing only).
-DECKER_GROUP_ID: int | None = None
+DECKER_GROUP_ID = 2
 
 
 def get_user_group_ids(user) -> list[int]:
