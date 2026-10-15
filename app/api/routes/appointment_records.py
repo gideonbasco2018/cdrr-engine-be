@@ -20,6 +20,9 @@ from app.schemas.appointment_record import (
     ClaimedApplicationDetail,
     ClaimRequest,
     ClaimResult,
+    DeckingDecisionRequest,
+    DeckingDecisionResult,
+    EvaluatorOut,
     MyTaskItem,
     PostPaymentRequest,
     PostPaymentResult,
@@ -30,14 +33,16 @@ from app.services.appointment_claim import (
     claim_record,
     is_claimed,
 )
+from app.models.user import User  # ADAPT: real module path of your User model
 from app.services.decking_claim import DECKING_STEP, claim_decking_task
+from app.services.decking_decision import submit_decision
 from app.services.appointment_payment import post_payments
 
 logger = logging.getLogger(__name__)
 
 CASHIER_GROUP_ID = 41
-# ADAPT: group id of the deckers. None = open to every logged-in user (testing only).
 DECKER_GROUP_ID = 2
+EVALUATOR_GROUP_ID = 3
 
 
 def get_user_group_ids(user) -> list[int]:
@@ -311,6 +316,89 @@ def claim_decking_tasks(
         )
 
     return results
+
+
+def _evaluators_query(internal_db: Session):
+    # ADAPT: attribute names (is_active, groups, first_name, surname)
+    return internal_db.query(User).filter(
+        User.is_active.is_(True),
+        User.groups.any(id=EVALUATOR_GROUP_ID),
+    )
+
+
+@router.get("/decking/evaluators", response_model=list[EvaluatorOut])
+def list_evaluators(
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    require_decker(current_user)
+    users = _evaluators_query(internal_db).order_by(User.first_name, User.surname).all()
+    return [
+        {
+            "user_uuid": u.user_uuid,
+            "name": f"{u.first_name or ''} {u.surname or ''}".strip(),
+        }
+        for u in users
+    ]
+
+
+@router.post(
+    "/claimed/{reference_no}/decking-decision",
+    response_model=DeckingDecisionResult,
+)
+def post_decking_decision(
+    reference_no: str,
+    payload: DeckingDecisionRequest,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    require_decker(current_user)
+
+    application = (
+        internal_db.query(EApplication)
+        .filter(EApplication.reference_number == reference_no)
+        .first()
+    )
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    # the assigned evaluator must really be an active evaluator
+    if payload.evaluator_uuid:
+        is_valid = (
+            _evaluators_query(internal_db)
+            .filter(User.user_uuid == payload.evaluator_uuid)
+            .first()
+            is not None
+        )
+        if not is_valid:
+            raise HTTPException(status_code=422, detail="Invalid evaluator selected")
+
+    try:
+        result = submit_decision(
+            internal_db,
+            application,
+            current_user.user_uuid,
+            payload.decision,
+            payload.remarks,
+            payload.evaluator_uuid,
+        )
+        internal_db.commit()
+    except PermissionError as err:
+        internal_db.rollback()
+        raise HTTPException(status_code=403, detail=str(err))
+    except ValueError as err:
+        internal_db.rollback()
+        raise HTTPException(status_code=422, detail=str(err))
+    except Exception:
+        internal_db.rollback()
+        logger.exception(
+            "Unexpected error saving decking decision for %s", reference_no
+        )
+        raise HTTPException(
+            status_code=500, detail="Unexpected error while saving the decision"
+        )
+
+    return result
 
 
 @router.get("/claimed/{reference_no}", response_model=ClaimedApplicationDetail)
