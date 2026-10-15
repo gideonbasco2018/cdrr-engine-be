@@ -519,6 +519,8 @@ class GMPRecordListResponse(BaseModel):
     page_size: int
     total_pages: int
     data: List[GMPRecordResponse]
+    # Only set for a multi-DTN search (`dtns`): which of them matched, across all pages.
+    found_dtns: Optional[List[str]] = None
 
 
 class GMPResolveOrCreateByDtnResponse(BaseModel):

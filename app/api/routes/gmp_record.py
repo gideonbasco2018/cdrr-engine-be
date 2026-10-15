@@ -449,14 +449,23 @@ def get_gmp_queue(
         "timeline_risk": timeline_risk,
     }
 
-    records, total = get_gmp_records(
-        db=db, skip=skip, limit=page_size, search=search,
-        filters=filters, sort_by=sort_by, sort_order=sort_order,
-    )
+    found_dtns = None
+    if parsed_dtns:
+        records, total, found_dtns = get_gmp_records(
+            db=db, skip=skip, limit=page_size, search=search,
+            filters=filters, sort_by=sort_by, sort_order=sort_order,
+            include_found_dtns=True,
+        )
+    else:
+        records, total = get_gmp_records(
+            db=db, skip=skip, limit=page_size, search=search,
+            filters=filters, sort_by=sort_by, sort_order=sort_order,
+        )
     total_pages = math.ceil(total / page_size) if total > 0 else 0
     return {
         "total": total, "page": page, "page_size": page_size,
         "total_pages": total_pages, "data": records,
+        "found_dtns": found_dtns,
     }
 
 

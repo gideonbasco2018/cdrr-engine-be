@@ -387,7 +387,11 @@ def get_gmp_records(
     filters: Optional[Dict] = None,
     sort_by: str = "GMP_DATE_EXCEL_UPLOAD",
     sort_order: str = "desc",
-) -> Tuple[List[GMPRecord], int]:
+    include_found_dtns: bool = False,
+):
+    """Returns (records, total). With include_found_dtns=True it returns
+    (records, total, found_dtns): every DTN matching all filters across all
+    pages, so a multi-DTN search can tell which requested DTNs weren't found."""
     query = db.query(GMPRecord).filter(
         or_(GMPRecord.GMP_TRASH.is_(None), GMPRecord.GMP_TRASH != "deleted")
     )
@@ -636,6 +640,10 @@ def get_gmp_records(
         query = query.filter(GMPRecord.GMP_ID.in_(matching_ids))
 
     total = query.count()
+    found_dtns = (
+        sorted({str(d) for (d,) in query.with_entities(GMPRecord.GMP_DTN).distinct().all() if d is not None})
+        if include_found_dtns else None
+    )
 
     delegation_sort_fields = [
         "GMP_DATE_DECKER_1_END", "GMP_DATE_EVALUATOR_END",
@@ -763,6 +771,8 @@ def get_gmp_records(
         if not r.GMP_RELATED_DTN and r.GMP_DTN in related_dtn_by_dtn:
             r.GMP_RELATED_DTN = related_dtn_by_dtn[r.GMP_DTN]
 
+    if include_found_dtns:
+        return records, total, found_dtns
     return records, total
 
 

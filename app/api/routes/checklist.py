@@ -48,14 +48,28 @@ def list_checklists(
 
 @router.get("/search", response_model=List[ChecklistSearchResult])
 def search_checklists(
-    q: str = Query(..., description="Text to find in DTNs and subjects (2+ characters)"),
+    q: str = Query(..., description="Text to find in DTNs and/or subjects (2+ characters)"),
+    field: str = Query("any", pattern="^(any|dtn|subject)$", description="Where to look"),
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
     """Find which checklist(s) a DTN or subject text is on. Searches every
     non-deleted checklist, not just the newest 50 shown in the list.
     (Declared before /{checklist_id} so "search" isn't read as an id.)"""
-    return crud.search_items(db, q, limit)
+    return crud.search_items(db, q, limit, field)
+
+
+@router.get("/search/dtns", response_model=List[ChecklistSearchResult])
+def search_checklists_by_dtns(
+    dtns: str = Query(..., description="Several DTNs, comma separated (max 200)"),
+    db: Session = Depends(get_db),
+):
+    """Exact lookup of several DTNs at once. The page works out which ones
+    weren't found from what comes back."""
+    wanted = [d for d in dtns.split(",") if d.strip()]
+    if len(wanted) > 200:
+        raise HTTPException(status_code=400, detail="Search up to 200 DTNs at a time.")
+    return crud.search_exact_dtns(db, wanted)
 
 
 @router.get("/server-time")
