@@ -203,6 +203,7 @@ def list_my_tasks(
             "process_code": process_code,
             "reference_number": app.reference_number,
             "activity": app.activity,
+            "application_type": app.application_type,
             "applicant_company": app.applicant_company,
             "application_step": history.application_step,
             "application_status": history.application_status,
