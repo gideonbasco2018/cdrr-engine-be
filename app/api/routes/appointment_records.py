@@ -24,17 +24,55 @@ from app.schemas.appointment_record import (
     PostPaymentRequest,
     PostPaymentResult,
 )
-from app.services.appointment_claim import claim_record, is_claimed
+from app.services.appointment_claim import (
+    DEL_LAST_INDEX,
+    DEL_THREAD_OPEN,
+    claim_record,
+    is_claimed,
+)
+from app.services.decking_claim import DECKING_STEP, claim_decking_task
 from app.services.appointment_payment import post_payments
 
 logger = logging.getLogger(__name__)
 
 CASHIER_GROUP_ID = 41
+# ADAPT: group id of the deckers. None = open to every logged-in user (testing only).
+DECKER_GROUP_ID: int | None = None
 
 
 def get_user_group_ids(user) -> list[int]:
     # ADAPT: use the real relationship/attribute name on your User model
     return [g.id for g in (getattr(user, "groups", None) or [])]
+
+
+def is_decker(user) -> bool:
+    return DECKER_GROUP_ID is None or DECKER_GROUP_ID in get_user_group_ids(user)
+
+
+def require_decker(user) -> None:
+    if not is_decker(user):
+        raise HTTPException(
+            status_code=403, detail="Only deckers can access the Decking pool"
+        )
+
+
+def to_task_item(history, app, process_code) -> dict:
+    return {
+        "application_uuid": app.application_uuid,
+        "process_code": process_code,
+        "reference_number": app.reference_number,
+        "activity": app.activity,
+        "application_type": app.application_type,
+        "applicant_company": app.applicant_company,
+        "application_step": history.application_step,
+        "application_status": history.application_status,
+        "application_remarks": history.application_remarks,
+        "priority": history.priority,
+        "step_duedate": history.step_duedate,
+        "deadline_date": history.deadline_date,
+        "start_date": history.start_date,
+        "updated_at": history.updated_at,
+    }
 
 
 router = APIRouter(
@@ -168,6 +206,7 @@ def get_my_access(current_user=Depends(get_current_active_user)):
     return {
         "group_ids": group_ids,
         "is_cashier": CASHIER_GROUP_ID in group_ids,
+        "is_decker": is_decker(current_user),
     }
 
 
@@ -198,24 +237,80 @@ def list_my_tasks(
         ).order_by(EAppHistory.start_date.desc())
 
     return [
-        {
-            "application_uuid": app.application_uuid,
-            "process_code": process_code,
-            "reference_number": app.reference_number,
-            "activity": app.activity,
-            "application_type": app.application_type,
-            "applicant_company": app.applicant_company,
-            "application_step": history.application_step,
-            "application_status": history.application_status,
-            "application_remarks": history.application_remarks,
-            "priority": history.priority,
-            "step_duedate": history.step_duedate,
-            "deadline_date": history.deadline_date,
-            "start_date": history.start_date,
-            "updated_at": history.updated_at,
-        }
+        to_task_item(history, app, process_code)
         for history, app, process_code in query.all()
     ]
+
+
+@router.get("/decking/unclaimed", response_model=list[MyTaskItem])
+def list_decking_unclaimed(
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    require_decker(current_user)
+    rows = (
+        internal_db.query(EAppHistory, EApplication, EProcess.process_code)
+        .join(
+            EApplication,
+            EApplication.application_uuid == EAppHistory.application_uuid,
+        )
+        .join(EProcess, EProcess.process_uuid == EAppHistory.process_uuid)
+        .filter(
+            EAppHistory.application_step == DECKING_STEP,
+            EAppHistory.user_uuid.is_(None),
+            EAppHistory.del_thread == DEL_THREAD_OPEN,
+            EAppHistory.del_last_index == DEL_LAST_INDEX,
+        )
+        .order_by(EAppHistory.start_date.asc())
+        .all()
+    )
+    return [to_task_item(history, app, code) for history, app, code in rows]
+
+
+@router.post("/decking/claim", response_model=list[ClaimResult])
+def claim_decking_tasks(
+    payload: ClaimRequest,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    require_decker(current_user)
+    results: list[ClaimResult] = []
+
+    for reference_no in dict.fromkeys(payload.reference_numbers):  # de-duplicate
+        application = (
+            internal_db.query(EApplication)
+            .filter(EApplication.reference_number == reference_no)
+            .first()
+        )
+        if not application:
+            results.append(ClaimResult(reference_no=reference_no, result="not_found"))
+            continue
+
+        try:
+            claimed = claim_decking_task(
+                internal_db, application.application_uuid, current_user.user_uuid
+            )
+            internal_db.commit()
+        except Exception:
+            internal_db.rollback()
+            logger.exception("Unexpected error claiming decking task %s", reference_no)
+            results.append(
+                ClaimResult(
+                    reference_no=reference_no,
+                    result="failed",
+                    detail="Unexpected error while claiming this task",
+                )
+            )
+            continue
+
+        results.append(
+            ClaimResult(
+                reference_no=reference_no,
+                result="claimed" if claimed else "already_claimed",
+            )
+        )
+
+    return results
 
 
 @router.get("/claimed/{reference_no}", response_model=ClaimedApplicationDetail)
