@@ -12,9 +12,9 @@ from app.services.appointment_payment import (
 )
 from app.services.decking_claim import DECKING_STEP
 
-DECISION_ACCEPT = "Accepted for Evaluation"
-DECISION_RETURN = "Returned to Applicant"
-DECISIONS = {DECISION_ACCEPT, DECISION_RETURN}
+# Must match DECISIONS in CprDetailsModal.jsx
+DECISION_FOR_EVALUATION = "For Quality Evaluation"
+DECISIONS = {DECISION_FOR_EVALUATION}
 
 # ADAPT: the step that follows an accepted Decking task
 EVALUATION_STEP = "Quality Evaluation"
@@ -38,10 +38,8 @@ def submit_decision(
         raise ValueError("Unknown decision")
 
     remarks = (remarks or "").strip() or None
-    if decision == DECISION_ACCEPT and not evaluator_uuid:
+    if not evaluator_uuid:
         raise ValueError("Select an evaluator to assign")
-    if decision == DECISION_RETURN and not remarks:
-        raise ValueError("Remarks are required when returning the application")
 
     history = (
         db.query(EAppHistory)
@@ -66,7 +64,7 @@ def submit_decision(
     history.del_last_index = CLOSED_LAST_INDEX
 
     next_step = None
-    if decision == DECISION_ACCEPT:
+    if decision == DECISION_FOR_EVALUATION:
         db.add(
             EAppHistory(
                 application_uuid=history.application_uuid,
