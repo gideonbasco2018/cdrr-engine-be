@@ -69,6 +69,7 @@ class MyTaskItem(BaseModel):
     process_code: Optional[str] = None
     reference_number: Optional[str] = None
     activity: Optional[str] = None
+    application_type: Optional[str] = None
     applicant_company: Optional[str] = None
     application_step: Optional[str] = None
     application_status: Optional[str] = None
