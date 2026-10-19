@@ -333,6 +333,105 @@ def get_analytics_year_summary(db: Session, basis: str = "released") -> list:
     return result
 
 
+# ── 5b. Year-by-Year Summary — record drill-down ──────────────
+def get_analytics_year_records(
+    db: Session,
+    year: int,
+    kind: str = "released",
+    basis: str = "released",
+    page: int = 1,
+    page_size: int = 50,
+    search: str = None,
+) -> dict:
+    """
+    List the records behind a Year-by-Year Summary cell.
+
+    kind="received": applications received in `year`.
+    kind="released":
+        basis="released" -> released in `year`
+        basis="received" -> received in `year` AND already released
+    Same filters as get_analytics_year_summary so counts line up.
+    """
+    kind = "received" if kind == "received" else "released"
+    basis = "received" if basis == "received" else "released"
+
+    rel_date = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
+    rel_year = func.year(rel_date)
+    rec_date = func.str_to_date(func.left(MainDB.DB_DATE_RECEIVED_CENT, 10), "%Y-%m-%d")
+    rec_year = func.year(rec_date)
+
+    rel_valid = [
+        MainDB.DB_DATE_RELEASED.isnot(None),
+        MainDB.DB_DATE_RELEASED != "",
+        MainDB.DB_DATE_RELEASED != "N/A",
+        rel_date.isnot(None),
+        rel_year >= 2000,
+        rel_year <= 2100,
+    ]
+    rec_valid = [
+        MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
+        MainDB.DB_DATE_RECEIVED_CENT != "",
+        MainDB.DB_DATE_RECEIVED_CENT != "N/A",
+        rec_date.isnot(None),
+        rec_year >= 2000,
+        rec_year <= 2100,
+    ]
+
+    q = db.query(
+        MainDB.DB_ID,
+        MainDB.DB_DTN,
+        MainDB.DB_DATE_RECEIVED_CENT,
+        MainDB.DB_DATE_RELEASED,
+        MainDB.DB_TYPE_DOC_RELEASED,
+        MainDB.DB_APP_STATUS,
+        MainDB.DB_PROD_BR_NAME,
+        MainDB.DB_PROD_GEN_NAME,
+    )
+
+    if kind == "received":
+        q = q.filter(*rec_valid, rec_year == year)
+        order_date = rec_date
+    elif basis == "received":
+        q = q.filter(*rel_valid, *rec_valid, rec_year == year)
+        order_date = rec_date
+    else:
+        q = q.filter(*rel_valid, rel_year == year)
+        order_date = rel_date
+
+    if search:
+        q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
+
+    total = q.count()
+    rows = (
+        q.order_by(order_date.asc(), MainDB.DB_ID.asc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    def _d(v):
+        return str(v)[:10] if v else None
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "data": [
+            {
+                "db_id": r.DB_ID,
+                "dtn": str(r.DB_DTN) if r.DB_DTN else None,
+                "date_received_cent": _d(r.DB_DATE_RECEIVED_CENT),
+                "date_released": _d(r.DB_DATE_RELEASED),
+                "type_doc_released": r.DB_TYPE_DOC_RELEASED or None,
+                "app_status": r.DB_APP_STATUS or None,
+                "brand_name": r.DB_PROD_BR_NAME or None,
+                "generic_name": r.DB_PROD_GEN_NAME or None,
+            }
+            for r in rows
+        ],
+    }
+
+
 # ── 6. Top Drugs ──────────────────────────────────────────────
 def get_analytics_top_drugs(
     db: Session,

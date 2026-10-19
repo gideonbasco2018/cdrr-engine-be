@@ -80,6 +80,27 @@ def get_year_summary(
     return {"data": data}
 
 
+@router.get("/year-summary/records")
+def get_year_summary_records(
+    year: int = Query(..., ge=2000, le=2100),
+    kind: str = Query("released", description="received|released"),
+    basis: str = Query("released", description="released|received"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    search: str = Query(None, description="Filter by DTN"),
+    db: Session = Depends(get_db),
+):
+    return crud_analytics.get_analytics_year_records(
+        db,
+        year=year,
+        kind=kind,
+        basis=basis,
+        page=page,
+        page_size=page_size,
+        search=search,
+    )
+
+
 @router.get("/top-drugs", response_model=AnalyticsTopDrugsResponse)
 def get_top_drugs(
     year: str = Query("All"),
