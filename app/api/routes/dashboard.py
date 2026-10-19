@@ -28,22 +28,23 @@ router = APIRouter(
 # ─────────────────────────────────────────────────────────
 # Impersonation helper
 # ─────────────────────────────────────────────────────────
-def _effective_username(
+def _effective_user(
     current_user,
-    impersonate: Optional[int],  # user_id na ngayon
-    db: Session = None,
-) -> str:
+    impersonate: Optional[int],  # target user_id
+    db: Session,
+) -> User:
     """
     Resolution order:
-    1. ?impersonate=<user_id>  →  only honoured when current_user is Admin/SuperAdmin
-    2. current_user.username   →  default (own stats)
+    1. ?impersonate=<user_id>  -> only honoured when current_user is Admin/SuperAdmin
+    2. current_user            -> default (own stats)
+    Returns the User object so callers can use both .id and .username.
     """
-    if impersonate and db and current_user.role in ("Admin", "SuperAdmin"):
+    if impersonate and current_user.role in ("Admin", "SuperAdmin"):
         user = db.query(User).filter(User.id == impersonate).first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
-        return user.username
-    return current_user.username
+        return user
+    return current_user
 
 
 # ─────────────────────────────────────────────────────────
@@ -74,14 +75,14 @@ def get_received(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    username = _effective_username(current_user, params["impersonate"], db)
+    target = _effective_user(current_user, params["impersonate"], db)
     value = crud_dashboard.get_total_received(
-        db, username, params["date_from"], params["date_to"]
+        db, target.id, params["date_from"], params["date_to"]
     )
     return StatResponse(
         label="Total Received",
         value=value,
-        username=username,
+        username=target.username,
         date_from=params["date_from"],
         date_to=params["date_to"],
     )
@@ -100,14 +101,14 @@ def get_completed(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    username = _effective_username(current_user, params["impersonate"], db)
+    target = _effective_user(current_user, params["impersonate"], db)
     value = crud_dashboard.get_total_completed(
-        db, username, params["date_from"], params["date_to"]
+        db, target.id, params["date_from"], params["date_to"]
     )
     return StatResponse(
         label="Completed",
         value=value,
-        username=username,
+        username=target.username,
         date_from=params["date_from"],
         date_to=params["date_to"],
     )
@@ -126,14 +127,14 @@ def get_on_process(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    username = _effective_username(current_user, params["impersonate"], db)
+    target = _effective_user(current_user, params["impersonate"], db)
     value = crud_dashboard.get_total_on_process(
-        db, username, params["date_from"], params["date_to"]
+        db, target.id, params["date_from"], params["date_to"]
     )
     return StatResponse(
         label="On Process",
         value=value,
-        username=username,
+        username=target.username,
         date_from=params["date_from"],
         date_to=params["date_to"],
     )
@@ -152,12 +153,12 @@ def get_summary(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    username = _effective_username(current_user, params["impersonate"], db)
+    target = _effective_user(current_user, params["impersonate"], db)
     stats = crud_dashboard.get_stats_summary(
-        db, username, params["date_from"], params["date_to"]
+        db, target.id, params["date_from"], params["date_to"]
     )
     return CombinedStatsResponse(
-        username=username,
+        username=target.username,
         date_from=params["date_from"],
         date_to=params["date_to"],
         **stats,
@@ -215,12 +216,13 @@ def get_chart(
             detail="date_from must be earlier than or equal to date_to.",
         )
 
-    username = _effective_username(current_user, impersonate, db)
+    target = _effective_user(current_user, impersonate, db)
 
     try:
         return crud_chart.get_chart_data(
             db=db,
-            username=username,
+            user_id=target.id,
+            username=target.username,
             breakdown=breakdown,
             date_from=date_from,
             date_to=date_to,
@@ -259,11 +261,11 @@ def get_recent_applications(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    username = _effective_username(current_user, impersonate, db)
+    target = _effective_user(current_user, impersonate, db)
 
     data = crud_recent.get_recent_applications(
         db=db,
-        username=username,
+        user_id=target.id,
         limit=limit,
         page=page,
         page_size=page_size,
@@ -275,7 +277,7 @@ def get_recent_applications(
         total=data["total"],
         total_pages=data["total_pages"],
         page=data["page"],
-        username=username,
+        username=target.username,
     )
 
 
@@ -293,7 +295,7 @@ def get_global_recent_applications(
 ):
     data = crud_recent.get_recent_applications(
         db=db,
-        username=None,
+        user_id=None,
         limit=limit,
         page=page,
         page_size=page_size,
@@ -392,12 +394,13 @@ def get_metric_detail(
             detail="accomplished_date_from must be earlier than or equal to accomplished_date_to.",
         )
 
-    username = _effective_username(current_user, impersonate, db)
+    target = _effective_user(current_user, impersonate, db)
 
     try:
         return crud_detail.get_metric_detail(
             db=db,
-            username=username,
+            user_id=target.id,
+            username=target.username,
             metric=metric,
             date_from=date_from,
             date_to=date_to,

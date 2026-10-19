@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, cast, Date
+from sqlalchemy import func
 from typing import Optional
 
 from app.models.main_db import MainDB
@@ -12,25 +12,26 @@ def get_doc_type_released_rows(
     year_to: Optional[int] = None,
 ):
     """
-    Query DB_TYPE_DOC_RELEASED counts grouped by year and doc_type.
-    Returns raw grouped rows — aggregation into year_map is handled by the caller.
+    Query DB_TYPE_DOC_RELEASED counts grouped by release year and doc_type.
+    Uses the same date basis (DB_DATE_RELEASED) as the analytics year summary,
+    so the per-doc-type counts and the yearly total line up.
     """
-    date_col = cast(MainDB.DB_DATE_RECEIVED_CENT, Date)
+    date_col = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
     year_col = func.year(date_col)
 
-    query = (
-        db.query(
-            year_col.label("year"),
-            MainDB.DB_TYPE_DOC_RELEASED.label("doc_type"),
-            func.count().label("total"),
-        )
-        .filter(
-            MainDB.DB_TYPE_DOC_RELEASED.isnot(None),
-            MainDB.DB_TYPE_DOC_RELEASED != "",
-            MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
-            MainDB.DB_DATE_RECEIVED_CENT != "",
-            date_col.isnot(None),  # guards against unparseable dates
-        )
+    query = db.query(
+        year_col.label("year"),
+        MainDB.DB_TYPE_DOC_RELEASED.label("doc_type"),
+        func.count().label("total"),
+    ).filter(
+        MainDB.DB_TYPE_DOC_RELEASED.isnot(None),
+        MainDB.DB_TYPE_DOC_RELEASED != "",
+        MainDB.DB_DATE_RELEASED.isnot(None),
+        MainDB.DB_DATE_RELEASED != "",
+        MainDB.DB_DATE_RELEASED != "N/A",
+        date_col.isnot(None),  # guards against unparseable dates
+        year_col >= 2000,
+        year_col <= 2100,
     )
 
     if app_type:
@@ -41,8 +42,7 @@ def get_doc_type_released_rows(
         query = query.filter(year_col <= year_to)
 
     return (
-        query
-        .group_by(year_col, MainDB.DB_TYPE_DOC_RELEASED)
+        query.group_by(year_col, MainDB.DB_TYPE_DOC_RELEASED)
         .order_by(year_col.asc(), MainDB.DB_TYPE_DOC_RELEASED.asc())
         .all()
     )
