@@ -40,7 +40,9 @@ def get_summary(
     prescription: str = Query("All"),
     db: Session = Depends(get_db),
 ):
-    return crud_analytics.get_analytics_summary(db, year=year, month=month, prescription=prescription)
+    return crud_analytics.get_analytics_summary(
+        db, year=year, month=month, prescription=prescription
+    )
 
 
 @router.get("/trend", response_model=AnalyticsTrendResponse)
@@ -50,7 +52,9 @@ def get_trend(
     prescription: str = Query("All"),
     db: Session = Depends(get_db),
 ):
-    data = crud_analytics.get_analytics_trend(db, year=year, month=month, prescription=prescription)
+    data = crud_analytics.get_analytics_trend(
+        db, year=year, month=month, prescription=prescription
+    )
     return {"data": data}
 
 
@@ -68,8 +72,11 @@ def get_by_classification(
 
 
 @router.get("/year-summary", response_model=AnalyticsYearSummaryResponse)
-def get_year_summary(db: Session = Depends(get_db)):
-    data = crud_analytics.get_analytics_year_summary(db)
+def get_year_summary(
+    basis: str = Query("released", description="released|received"),
+    db: Session = Depends(get_db),
+):
+    data = crud_analytics.get_analytics_year_summary(db, basis=basis)
     return {"data": data}
 
 
@@ -81,7 +88,9 @@ def get_top_drugs(
     limit: int = Query(8, ge=1),  # no upper cap
     db: Session = Depends(get_db),
 ):
-    data = crud_analytics.get_analytics_top_drugs(db, year=year, month=month, prescription=prescription, limit=limit)
+    data = crud_analytics.get_analytics_top_drugs(
+        db, year=year, month=month, prescription=prescription, limit=limit
+    )
     return {"data": data}
 
 
@@ -95,8 +104,12 @@ def get_top_countries(
     db: Session = Depends(get_db),
 ):
     data = crud_analytics.get_analytics_top_countries(
-        db, entity_type=entity_type, year=year,
-        month=month, prescription=prescription, limit=limit,
+        db,
+        entity_type=entity_type,
+        year=year,
+        month=month,
+        prescription=prescription,
+        limit=limit,
     )
     return {"data": data}
 
@@ -124,7 +137,9 @@ def get_frp_tat_outliers(
 @router.get("/country-year-trend", response_model=CountryYearTrendResponse)
 def get_country_year_trend(
     country: str = Query(..., description="Country name"),
-    entity_type: str = Query("mfr", description="mfr|trader|importer|distributor|repacker"),
+    entity_type: str = Query(
+        "mfr", description="mfr|trader|importer|distributor|repacker"
+    ),
     prescription: str = Query("All"),
     db: Session = Depends(get_db),
 ):

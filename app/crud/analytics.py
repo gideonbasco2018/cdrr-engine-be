@@ -242,34 +242,57 @@ def get_analytics_by_classification(
 
 
 # ── 5. Year-by-Year Summary ───────────────────────────────────
-def get_analytics_year_summary(db: Session) -> list:
-    # Released side: grouped by release year
+def get_analytics_year_summary(db: Session, basis: str = "released") -> list:
+    """
+    basis="released" (default): Released is counted by the year it was released.
+    basis="received": Released is counted by the year it was RECEIVED, i.e.
+                      out of the applications received in year X, how many
+                      have been released (regardless of release year).
+    """
+    basis = "received" if basis == "received" else "released"
+
     rel_date = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
     rel_year = func.year(rel_date)
+    rec_date = func.str_to_date(func.left(MainDB.DB_DATE_RECEIVED_CENT, 10), "%Y-%m-%d")
+    rec_year = func.year(rec_date)
+
+    # Released side: which year do released records get grouped under?
+    group_year = rec_year if basis == "received" else rel_year
+
+    released_filters = [
+        MainDB.DB_DATE_RELEASED.isnot(None),
+        MainDB.DB_DATE_RELEASED != "",
+        MainDB.DB_DATE_RELEASED != "N/A",
+        rel_date.isnot(None),
+        rel_year >= 2000,
+        rel_year <= 2100,
+    ]
+    if basis == "received":
+        # must also have a valid received date to be grouped by it
+        released_filters += [
+            MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
+            MainDB.DB_DATE_RECEIVED_CENT != "",
+            MainDB.DB_DATE_RECEIVED_CENT != "N/A",
+            rec_date.isnot(None),
+            rec_year >= 2000,
+            rec_year <= 2100,
+        ]
+
     released_rows = (
         db.query(
-            rel_year.label("yr"),
+            group_year.label("yr"),
             func.count(MainDB.DB_ID).label("total"),
             _cpr_case().label("cpr"),
             _lod_case().label("lod"),
             _on_process_case().label("on_process"),
             _completed_case().label("completed"),
         )
-        .filter(
-            MainDB.DB_DATE_RELEASED.isnot(None),
-            MainDB.DB_DATE_RELEASED != "",
-            MainDB.DB_DATE_RELEASED != "N/A",
-            rel_date.isnot(None),
-            rel_year >= 2000,
-            rel_year <= 2100,
-        )
+        .filter(*released_filters)
         .group_by("yr")
         .all()
     )
 
     # Received side: grouped by the year received by the center
-    rec_date = func.str_to_date(func.left(MainDB.DB_DATE_RECEIVED_CENT, 10), "%Y-%m-%d")
-    rec_year = func.year(rec_date)
     received_rows = (
         db.query(
             rec_year.label("yr"),

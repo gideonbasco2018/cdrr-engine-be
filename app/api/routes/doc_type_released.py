@@ -25,12 +25,14 @@ router = APIRouter(
 # Yearly breakdown of released documents per doc type
 # ─────────────────────────────────────────────
 
+
 @router.get("/", response_model=DocTypeReleasedResponse)
 def get_doc_type_released(
     db: Session = Depends(get_db),
     app_type: Optional[str] = Query(None, description="Filter by DB_APP_TYPE"),
     year_from: Optional[int] = Query(None, description="Start year"),
     year_to: Optional[int] = Query(None, description="End year"),
+    basis: str = Query("released", description="released|received"),
 ):
     """
     Get yearly summary of released documents grouped by doc type.
@@ -43,11 +45,16 @@ def get_doc_type_released(
     - app_type: restrict to a specific DB_APP_TYPE
     - year_from / year_to: restrict to a year range (inclusive)
 
-    Rows with missing/blank doc type or unparseable DB_DATE_RECEIVED_CENT
-    are excluded from the aggregation.
+    basis=released groups by release year; basis=received groups by the
+    year received (only released records are counted).
+    Rows with missing/blank doc type or unparseable dates are excluded.
     """
     rows = get_doc_type_released_rows(
-        db=db, app_type=app_type, year_from=year_from, year_to=year_to
+        db=db,
+        app_type=app_type,
+        year_from=year_from,
+        year_to=year_to,
+        basis=basis,
     )
 
     doc_types = sorted({r.doc_type for r in rows if r.doc_type})
@@ -64,9 +71,13 @@ def get_doc_type_released(
     for yr, d in sorted(year_map.items()):
         cpr = d["by_doc_type"].get("CPR", 0)
         rate = round((cpr / d["total"]) * 100, 1) if d["total"] else 0.0
-        summaries.append(YearSummaryResponse(
-            year=d["year"], total=d["total"],
-            by_doc_type=d["by_doc_type"], rate=rate,
-        ))
+        summaries.append(
+            YearSummaryResponse(
+                year=d["year"],
+                total=d["total"],
+                by_doc_type=d["by_doc_type"],
+                rate=rate,
+            )
+        )
 
     return DocTypeReleasedResponse(doc_types=doc_types, data=summaries)
