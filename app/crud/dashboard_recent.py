@@ -8,6 +8,8 @@ from app.models.application_logs import ApplicationLogs
 from app.models.main_db import MainDB
 
 import math
+
+
 # ─── Status → badge mapping ───────────────────────────────────────────────────
 def _map_status(app_status: Optional[str], del_thread: Optional[str]) -> dict:
     status_raw = (app_status or "").strip().upper()
@@ -16,22 +18,22 @@ def _map_status(app_status: Optional[str], del_thread: Optional[str]) -> dict:
         return {
             "status_label": "Completed",
             "status_color": "#36a420",
-            "status_bg":    "#e9f7e6",
-            "icon":         "✅",
+            "status_bg": "#e9f7e6",
+            "icon": "✅",
         }
     elif status_raw == "IN PROGRESS" and del_thread == "Open":
         return {
             "status_label": "On Process",
             "status_color": "#f59e0b",
-            "status_bg":    "#fff8e7",
-            "icon":         "⏳",
+            "status_bg": "#fff8e7",
+            "icon": "⏳",
         }
     else:
         return {
             "status_label": "Backlog",
             "status_color": "#e02020",
-            "status_bg":    "#fde8e8",
-            "icon":         "🚩",
+            "status_bg": "#fde8e8",
+            "icon": "🚩",
         }
 
 
@@ -49,9 +51,10 @@ def _fmt_date(dt) -> str:
 # ─── Main CRUD function ───────────────────────────────────────────────────────
 import math
 
+
 def get_recent_applications(
     db: Session,
-    username: Optional[str] = None, 
+    user_id: Optional[int] = None,
     limit: int = 10,
     page: int = 1,
     page_size: int = 10,
@@ -62,27 +65,21 @@ def get_recent_applications(
         .join(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
         .options(joinedload(ApplicationLogs.main_db))
     )
-
-
-    if username is not None:
-        q = q.filter(ApplicationLogs.user_name == username)
+    if user_id is not None:
+        q = q.filter(ApplicationLogs.user_id == user_id)
 
     q = q.order_by(ApplicationLogs.created_at.desc())
 
     total = q.count()
     total_pages = max(1, math.ceil(total / page_size))
 
-    rows_orm = (
-        q.offset((page - 1) * page_size)
-        .limit(page_size)
-        .all()
-    )
+    rows_orm = q.offset((page - 1) * page_size).limit(page_size).all()
 
     rows = []
     for log in rows_orm:
         main = log.main_db
 
-        status = (log.application_status or "")
+        status = log.application_status or ""
         s = status.upper()
 
         if s == "COMPLETED":
@@ -103,24 +100,25 @@ def get_recent_applications(
             status_label = status or "Unknown"
             icon = "📄"
 
-        rows.append({
-            "log_id": log.id,
-            "dtn": str(main.DB_DTN) if main and main.DB_DTN else "—",
-            "brand_name": main.DB_PROD_BR_NAME if main else None,
-            "generic_name": main.DB_PROD_GEN_NAME if main else None,
-            "lto_company": main.DB_EST_LTO_COMP if main else None,
-            "app_step": log.application_step,
-            "application_status": log.application_status,
-            "status_color": status_color,
-            "status_bg": status_bg,
-            "status_label": status_label,
-            "icon": icon,
-            "date_display": (
-                log.created_at.strftime("%b %d")
-                if log.created_at else "—"
-            ),
-            "created_at": str(log.created_at) if log.created_at else None,
-        })
+        rows.append(
+            {
+                "log_id": log.id,
+                "dtn": str(main.DB_DTN) if main and main.DB_DTN else "—",
+                "brand_name": main.DB_PROD_BR_NAME if main else None,
+                "generic_name": main.DB_PROD_GEN_NAME if main else None,
+                "lto_company": main.DB_EST_LTO_COMP if main else None,
+                "app_step": log.application_step,
+                "application_status": log.application_status,
+                "status_color": status_color,
+                "status_bg": status_bg,
+                "status_label": status_label,
+                "icon": icon,
+                "date_display": (
+                    log.created_at.strftime("%b %d") if log.created_at else "—"
+                ),
+                "created_at": str(log.created_at) if log.created_at else None,
+            }
+        )
 
     return {
         "rows": rows,

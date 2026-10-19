@@ -1,7 +1,7 @@
 # app/crud/dashboard_detail.py
 
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func
+from sqlalchemy import func, cast, String
 from typing import Optional
 from datetime import date
 import math
@@ -9,6 +9,7 @@ import math
 from app.models.application_logs import ApplicationLogs
 from app.models.main_db import MainDB
 from app.schemas.dashboard_detail import MetricDetailResponse, ApplicationLogDetail
+from app.crud.dashboard_filters import apply_counting_filters
 
 # ─────────────────────────────────────────────────────────
 # Internal helpers
@@ -17,23 +18,23 @@ from app.schemas.dashboard_detail import MetricDetailResponse, ApplicationLogDet
 
 def _base_query(
     db: Session,
-    username: str,
+    user_id: int,
     date_from: Optional[date],
     date_to: Optional[date],
 ):
     """
     Base query: ApplicationLogs joined to MainDB so we can pull
     dtn / brand_name / generic_name from the parent record.
+    Uses the same counting filters as the KPI tiles and the chart,
+    so the drill-down rows always match the numbers shown.
     """
     q = (
         db.query(ApplicationLogs)
         .join(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
         .options(joinedload(ApplicationLogs.main_db))
-        .filter(
-            ApplicationLogs.user_name == username,
-            ApplicationLogs.del_thread.in_(["Close", "Open"]),
-        )
     )
+    q = apply_counting_filters(q, user_id)
+
     if date_from:
         q = q.filter(ApplicationLogs.start_date >= date_from)
     if date_to:
@@ -50,7 +51,7 @@ def _apply_metric_filter(q, metric: str):
             ApplicationLogs.application_status == "IN PROGRESS",
             ApplicationLogs.del_thread == "Open",
         )
-    # "received" → no additional filter
+    # "received" -> no additional filter
     return q
 
 
@@ -58,13 +59,13 @@ def _to_date(value):
     """Safely coerce a datetime or date value to a plain date (or None)."""
     if value is None:
         return None
-    if hasattr(value, "date"):  # datetime → date
+    if hasattr(value, "date"):  # datetime -> date
         return value.date()
     return value  # already a date
 
 
 def _row_to_detail(row: ApplicationLogs) -> ApplicationLogDetail:
-    """Map ORM row (with joined main_db) → Pydantic schema."""
+    """Map ORM row (with joined main_db) -> Pydantic schema."""
     main = row.main_db  # eager-loaded via joinedload
 
     return ApplicationLogDetail(
@@ -105,7 +106,8 @@ def _row_to_detail(row: ApplicationLogs) -> ApplicationLogDetail:
 # ─────────────────────────────────────────────────────────
 def get_metric_detail(
     db: Session,
-    username: str,
+    user_id: int,
+    username: str,  # display only (response payload)
     metric: str,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
@@ -113,8 +115,8 @@ def get_metric_detail(
     accomplished_date_to: Optional[date] = None,
     app_step: Optional[str] = None,
     dtn: Optional[str] = None,
-    sort_by: Optional[str] = None,  # ✅ New
-    sort_dir: str = "asc",  # ✅ New
+    sort_by: Optional[str] = None,
+    sort_dir: str = "asc",
     page: int = 1,
     page_size: int = 10,
 ) -> MetricDetailResponse:
@@ -129,7 +131,7 @@ def get_metric_detail(
     page = max(1, page)
     page_size = max(1, min(500, page_size))
 
-    q = _base_query(db, username, date_from, date_to)
+    q = _base_query(db, user_id, date_from, date_to)
     q = _apply_metric_filter(q, metric)
 
     # ── Accomplished date filter ─────────────────────────────────────────────
@@ -146,13 +148,10 @@ def get_metric_detail(
 
     # ── DTN filter ──────────────────────────────────────────────────────────
     if dtn:
-        from sqlalchemy import cast, String
-
         q = q.filter(cast(MainDB.DB_DTN, String).contains(dtn))
 
     # DB_DTN is stored as an int in format YYYYMMDDHHMMSS, so a plain
-    # numeric ORDER BY already gives correct chronological ordering —
-    # no digit-parsing needed.
+    # numeric ORDER BY already gives correct chronological ordering.
     if sort_by == "dtn":
         order_col = MainDB.DB_DTN
         q = q.order_by(order_col.asc() if sort_dir == "asc" else order_col.desc())

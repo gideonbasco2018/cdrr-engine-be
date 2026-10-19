@@ -3,6 +3,7 @@
 from pydantic import BaseModel
 from typing import Optional, List, Dict
 
+
 class AnalyticsSummaryResponse(BaseModel):
     total: int
     cpr: int
@@ -19,6 +20,7 @@ class AnalyticsTrendItem(BaseModel):
     on_process: int
     completed: int
 
+
 class AnalyticsTrendResponse(BaseModel):
     data: List[AnalyticsTrendItem]
 
@@ -28,18 +30,22 @@ class AnalyticsClassificationItem(BaseModel):
     count: int
     by_doc_type: Dict[str, int] = {}
 
+
 class AnalyticsClassificationResponse(BaseModel):
     data: List[AnalyticsClassificationItem]
     doc_types: List[str] = []
 
+
 class AnalyticsYearItem(BaseModel):
     year: str
+    received: int = 0
     total: int
     cpr: int
     lod: int
     on_process: int
     completed: int
     rate: float
+
 
 class AnalyticsYearSummaryResponse(BaseModel):
     data: List[AnalyticsYearItem]
@@ -54,6 +60,7 @@ class AnalyticsDrugItem(BaseModel):
     lod: int
     rate: float
 
+
 class AnalyticsTopDrugsResponse(BaseModel):
     data: List[AnalyticsDrugItem]
 
@@ -65,6 +72,7 @@ class AnalyticsCountryItem(BaseModel):
     lod: int
     on_process: int
 
+
 class AnalyticsTopCountriesResponse(BaseModel):
     data: List[AnalyticsCountryItem]
 
@@ -75,6 +83,7 @@ class CountryYearTrendItem(BaseModel):
     cpr: int
     lod: int = 0
     on_process: int = 0
+
 
 class CountryYearTrendResponse(BaseModel):
     country: str
@@ -100,22 +109,25 @@ class AnalyticsFRPTATItem(BaseModel):
     avg_tat_days: Optional[float] = None
     min_tat_days: Optional[int] = None
     max_tat_days: Optional[int] = None
-    
+
+
 class AnalyticsFRPTATResponse(BaseModel):
     data: List[AnalyticsFRPTATItem]
 
+
 class AnalyticsFRPTATOutlierItem(BaseModel):
-    db_id:               int
-    dtn:                 Optional[str] = None
-    quarter:             Optional[str] = None
-    date_received_cent:  Optional[str] = None
-    date_released:       Optional[str] = None
-    tat_days:            Optional[int] = None
-    est_company:         Optional[str] = None
-    issue:               str  
+    db_id: int
+    dtn: Optional[str] = None
+    quarter: Optional[str] = None
+    date_received_cent: Optional[str] = None
+    date_released: Optional[str] = None
+    tat_days: Optional[int] = None
+    est_company: Optional[str] = None
+    issue: str
+
 
 class AnalyticsFRPTATOutlierResponse(BaseModel):
-    total:    int
+    total: int
     negative: int
-    extreme:  int
-    data:     List[AnalyticsFRPTATOutlierItem]
+    extreme: int
+    data: List[AnalyticsFRPTATOutlierItem]

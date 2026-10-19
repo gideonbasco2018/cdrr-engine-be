@@ -6,6 +6,7 @@ from typing import Optional
 from datetime import date
 
 from app.models.application_logs import ApplicationLogs
+from app.crud.dashboard_filters import apply_counting_filters
 
 
 # ─────────────────────────────────────────────────────────
@@ -13,20 +14,18 @@ from app.models.application_logs import ApplicationLogs
 # ─────────────────────────────────────────────────────────
 def _base_query(
     db: Session,
-    username: str,
+    user_id: int,
     date_from: Optional[date],
     date_to: Optional[date],
 ):
     """
     Shared base query filtered by:
-    - user_name      → effective user
-    - del_thread     → 'Close' OR 'Open' (both active and finished records)
-    - start_date     → optional date range
+    - user_id        -> effective user
+    - del_thread     -> 'Close' OR 'Open'
+    - re-route / re-assign rows excluded
+    - start_date     -> optional date range
     """
-    q = db.query(ApplicationLogs).filter(
-        ApplicationLogs.user_name == username,
-        ApplicationLogs.del_thread.in_(["Close", "Open"]),
-    )
+    q = apply_counting_filters(db.query(ApplicationLogs), user_id)
 
     if date_from:
         q = q.filter(ApplicationLogs.start_date >= date_from)
@@ -41,12 +40,12 @@ def _base_query(
 # ─────────────────────────────────────────────────────────
 def get_total_received(
     db: Session,
-    username: str,
+    user_id: int,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
 ) -> int:
-    """All log entries belonging to the user (any status)."""
-    return _base_query(db, username, date_from, date_to).count()
+    """All counted log entries belonging to the user (any status)."""
+    return _base_query(db, user_id, date_from, date_to).count()
 
 
 # ─────────────────────────────────────────────────────────
@@ -54,13 +53,13 @@ def get_total_received(
 # ─────────────────────────────────────────────────────────
 def get_total_completed(
     db: Session,
-    username: str,
+    user_id: int,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
 ) -> int:
     """Entries where application_status = 'COMPLETED'."""
     return (
-        _base_query(db, username, date_from, date_to)
+        _base_query(db, user_id, date_from, date_to)
         .filter(ApplicationLogs.application_status == "COMPLETED")
         .count()
     )
@@ -71,7 +70,7 @@ def get_total_completed(
 # ─────────────────────────────────────────────────────────
 def get_total_on_process(
     db: Session,
-    username: str,
+    user_id: int,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
 ) -> int:
@@ -81,7 +80,7 @@ def get_total_on_process(
     - del_thread = 'Open' (currently active step)
     """
     return (
-        _base_query(db, username, date_from, date_to)
+        _base_query(db, user_id, date_from, date_to)
         .filter(
             ApplicationLogs.application_status == "IN PROGRESS",
             ApplicationLogs.del_thread == "Open",
@@ -95,17 +94,13 @@ def get_total_on_process(
 # ─────────────────────────────────────────────────────────
 def get_stats_summary(
     db: Session,
-    username: str,
+    user_id: int,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
 ) -> dict:
-    """Returns all 3 KPI counts in one DB round-trip block."""
-    received   = get_total_received(db, username, date_from, date_to)
-    completed  = get_total_completed(db, username, date_from, date_to)
-    on_process = get_total_on_process(db, username, date_from, date_to)
-
+    """Returns all 3 KPI counts."""
     return {
-        "received":   received,
-        "completed":  completed,
-        "on_process": on_process,
+        "received": get_total_received(db, user_id, date_from, date_to),
+        "completed": get_total_completed(db, user_id, date_from, date_to),
+        "on_process": get_total_on_process(db, user_id, date_from, date_to),
     }
