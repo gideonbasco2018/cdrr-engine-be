@@ -8,8 +8,14 @@ class AnalyticsSummaryResponse(BaseModel):
     total: int
     cpr: int
     lod: int
-    on_process: int
+    in_progress: int
+    in_progress: int = 0
     completed: int
+    cpr_expired: int = 0
+    cpr_not_expired: int = 0
+    cpr_no_expiry: int = 0
+    cpr_completed: int = 0
+    lod_completed: int = 0
     approval_rate: float
 
 
@@ -17,7 +23,7 @@ class AnalyticsTrendItem(BaseModel):
     label: str
     cpr: int
     lod: int
-    on_process: int
+    in_progress: int
     completed: int
 
 
