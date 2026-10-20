@@ -136,6 +136,37 @@ def get_year_summary_records(
     )
 
 
+@router.get("/data-quality")
+def get_data_quality(db: Session = Depends(get_db)):
+    return {"data": crud_analytics.get_analytics_data_quality(db)}
+
+
+@router.get("/data-quality/records")
+def get_data_quality_records(
+    year: str = Query("all", description="all | nodate | 2024 ..."),
+    issue: str = Query(
+        "incomplete",
+        description="incomplete|missing_received|missing_released|complete",
+    ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    search: str = Query(None, description="Filter by DTN"),
+    status: str = Query(None),
+    doc_type: str = Query(None),
+    db: Session = Depends(get_db),
+):
+    return crud_analytics.get_analytics_quality_records(
+        db,
+        year=year,
+        issue=issue,
+        page=page,
+        page_size=page_size,
+        search=search,
+        status=status,
+        doc_type=doc_type,
+    )
+
+
 @router.get("/top-drugs", response_model=AnalyticsTopDrugsResponse)
 def get_top_drugs(
     year: str = Query("All"),
