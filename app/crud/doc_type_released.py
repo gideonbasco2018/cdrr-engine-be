@@ -1,8 +1,10 @@
+from types import SimpleNamespace
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import and_, case, func
 from typing import Optional
 
 from app.models.main_db import MainDB
+from app.crud.analytics import _is_completed, _doc_key_expr
 
 
 def get_doc_type_released_rows(
@@ -13,13 +15,9 @@ def get_doc_type_released_rows(
     basis: str = "released",
 ):
     """
-    Query DB_TYPE_DOC_RELEASED counts grouped by year and doc_type.
-
-    basis="released" (default): grouped by release year (DB_DATE_RELEASED).
-    basis="received": grouped by the year the application was RECEIVED
-                      (DB_DATE_RECEIVED_CENT), counting only records that
-                      have been released. Matches analytics year-summary
-                      so the per-doc-type counts and the yearly total line up.
+    Completed releases grouped by year and normalized doc type.
+    Completed records whose dates can't be placed in a year are returned
+    under year "No Date" (only when no year range filter is applied).
     """
     basis = "received" if basis == "received" else "released"
 
@@ -29,19 +27,18 @@ def get_doc_type_released_rows(
     rec_year = func.year(rec_date)
 
     year_col = rec_year if basis == "received" else rel_year
+    doc_key = _doc_key_expr()
 
-    filters = [
-        MainDB.DB_TYPE_DOC_RELEASED.isnot(None),
-        MainDB.DB_TYPE_DOC_RELEASED != "",
+    date_filters = [
         MainDB.DB_DATE_RELEASED.isnot(None),
         MainDB.DB_DATE_RELEASED != "",
         MainDB.DB_DATE_RELEASED != "N/A",
-        rel_date.isnot(None),  # guards against unparseable dates
+        rel_date.isnot(None),
         rel_year >= 2000,
         rel_year <= 2100,
     ]
     if basis == "received":
-        filters += [
+        date_filters += [
             MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
             MainDB.DB_DATE_RECEIVED_CENT != "",
             MainDB.DB_DATE_RECEIVED_CENT != "N/A",
@@ -50,11 +47,13 @@ def get_doc_type_released_rows(
             rec_year <= 2100,
         ]
 
+    base_filters = [_is_completed(), doc_key != "__NONE__"]
+
     query = db.query(
         year_col.label("year"),
-        MainDB.DB_TYPE_DOC_RELEASED.label("doc_type"),
+        doc_key.label("doc_type"),
         func.count().label("total"),
-    ).filter(*filters)
+    ).filter(*base_filters, *date_filters)
 
     if app_type:
         query = query.filter(MainDB.DB_APP_TYPE == app_type)
@@ -63,8 +62,20 @@ def get_doc_type_released_rows(
     if year_to:
         query = query.filter(year_col <= year_to)
 
-    return (
-        query.group_by(year_col, MainDB.DB_TYPE_DOC_RELEASED)
-        .order_by(year_col.asc(), MainDB.DB_TYPE_DOC_RELEASED.asc())
-        .all()
+    rows = (
+        query.group_by(year_col, doc_key).order_by(year_col.asc(), doc_key.asc()).all()
     )
+
+    if not year_from and not year_to:
+        date_ok = case((and_(*date_filters), 1), else_=0)
+        nd_query = db.query(
+            doc_key.label("doc_type"), func.count().label("total")
+        ).filter(*base_filters, date_ok == 0)
+        if app_type:
+            nd_query = nd_query.filter(MainDB.DB_APP_TYPE == app_type)
+        for r in nd_query.group_by(doc_key).all():
+            rows.append(
+                SimpleNamespace(year="No Date", doc_type=r.doc_type, total=r.total)
+            )
+
+    return rows

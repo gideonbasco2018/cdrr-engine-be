@@ -41,12 +41,28 @@ def _base_query(db, year="All", month="All", prescription="All"):
     return q
 
 
+def _doc_norm():
+    """
+    Normalized doc type: trimmed, upper-cased, single spaces,
+    exactly one space before "(".  "Letter(Withdrawal)" and
+    "LETTER  (WITHDRAWAL)" both become "LETTER (WITHDRAWAL)".
+    Requires MySQL 8+ or MariaDB 10.0.5+ (REGEXP_REPLACE).
+    """
+    col = func.regexp_replace(
+        func.trim(MainDB.DB_TYPE_DOC_RELEASED), r"[[:space:]]*\(", " ("
+    )
+    col = func.regexp_replace(col, r"[[:space:]]+", " ")
+    return func.upper(col)
+
+
 def _cpr_case():
-    return func.sum(case((MainDB.DB_TYPE_DOC_RELEASED.ilike("%CPR%"), 1), else_=0))
+    """CPR released = normalized doc type is CPR AND status is COMPLETED."""
+    return func.sum(case((and_(_doc_norm() == "CPR", _is_completed()), 1), else_=0))
 
 
 def _lod_case():
-    return func.sum(case((MainDB.DB_TYPE_DOC_RELEASED.ilike("%LOD%"), 1), else_=0))
+    """LOD released = normalized doc type is LOD AND status is COMPLETED."""
+    return func.sum(case((and_(_doc_norm() == "LOD", _is_completed()), 1), else_=0))
 
 
 def _on_process_case():
@@ -104,7 +120,7 @@ def _cpr_expiry_cases():
     """(expired, not_expired) counts among COMPLETED CPR rows, by expiry date vs today."""
     col = getattr(MainDB, CPR_EXPIRY_FIELD)
     exp_date = func.str_to_date(func.left(col, 10), "%Y-%m-%d")
-    is_cpr = and_(MainDB.DB_TYPE_DOC_RELEASED.ilike("%CPR%"), _is_completed())
+    is_cpr = and_(_doc_norm() == "CPR", _is_completed())
     expired = func.sum(
         case(
             (and_(is_cpr, exp_date.isnot(None), exp_date < func.curdate()), 1),
@@ -168,8 +184,8 @@ def get_analytics_summary(
             _on_process_case().label("on_process"),
             _in_progress_case().label("in_progress"),
             _completed_case().label("completed"),
-            _doc_completed_case("%CPR%").label("cpr_completed"),
-            _doc_completed_case("%LOD%").label("lod_completed"),
+            _cpr_case().label("cpr_completed"),
+            _lod_case().label("lod_completed"),
             cpr_expired_expr.label("cpr_expired"),
             cpr_not_expired_expr.label("cpr_not_expired"),
         )
@@ -353,6 +369,7 @@ def get_analytics_year_summary(db: Session, basis: str = "released") -> list:
     group_year = rec_year if basis == "received" else rel_year
 
     released_filters = [
+        _is_completed(),
         MainDB.DB_DATE_RELEASED.isnot(None),
         MainDB.DB_DATE_RELEASED != "",
         MainDB.DB_DATE_RELEASED != "N/A",
@@ -403,6 +420,35 @@ def get_analytics_year_summary(db: Session, basis: str = "released") -> list:
         .all()
     )
 
+    # Completed records whose dates can't be placed in a year
+    date_valid = case((and_(*released_filters[1:]), 1), else_=0)
+    nd = (
+        db.query(
+            func.count(MainDB.DB_ID).label("total"),
+            _cpr_case().label("cpr"),
+            _lod_case().label("lod"),
+            _on_process_case().label("on_process"),
+            _completed_case().label("completed"),
+        )
+        .filter(_is_completed(), date_valid == 0)
+        .one()
+    )
+    rec_ok = case(
+        (
+            and_(
+                MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
+                MainDB.DB_DATE_RECEIVED_CENT != "",
+                MainDB.DB_DATE_RECEIVED_CENT != "N/A",
+                rec_date.isnot(None),
+                rec_year >= 2000,
+                rec_year <= 2100,
+            ),
+            1,
+        ),
+        else_=0,
+    )
+    nd_received = db.query(func.count(MainDB.DB_ID)).filter(rec_ok == 0).scalar() or 0
+
     released_map = {str(r.yr): r for r in released_rows}
     received_map = {str(r.yr): int(r.received or 0) for r in received_rows}
 
@@ -423,17 +469,31 @@ def get_analytics_year_summary(db: Session, basis: str = "released") -> list:
                 "rate": round(cpr / total * 100, 1) if total else 0.0,
             }
         )
+
+    if int(nd.total or 0) or int(nd_received):
+        result.append(
+            {
+                "year": "No Date",
+                "received": int(nd_received),
+                "total": int(nd.total or 0),
+                "cpr": int(nd.cpr or 0),
+                "lod": int(nd.lod or 0),
+                "on_process": int(nd.on_process or 0),
+                "completed": int(nd.completed or 0),
+                "rate": 0.0,
+            }
+        )
     return result
 
 
 def _doc_key_expr():
     """Normalized doc-type key. Cert/Certificate -> CERT, blank -> __NONE__."""
-    trimmed = func.trim(MainDB.DB_TYPE_DOC_RELEASED)
+    norm = _doc_norm()
     return case(
         (MainDB.DB_TYPE_DOC_RELEASED.is_(None), "__NONE__"),
-        (trimmed == "", "__NONE__"),
-        (func.lower(trimmed).in_(["cert", "certificate"]), "CERT"),
-        else_=trimmed,
+        (norm == "", "__NONE__"),
+        (norm.in_(["CERT", "CERTIFICATE"]), "CERT"),
+        else_=norm,
     )
 
 
@@ -450,7 +510,7 @@ def _status_key_expr():
 # ── 5b. Year-by-Year Summary — record drill-down ──────────────
 def get_analytics_year_records(
     db: Session,
-    year: int,
+    year,  # int, or "nodate"
     kind: str = "released",
     basis: str = "released",
     page: int = 1,
@@ -499,15 +559,31 @@ def get_analytics_year_records(
         rec_year <= 2100,
     ]
 
+    no_date = str(year) == "nodate"
+    if not no_date:
+        year = int(year)
+
+    rec_ok = case((and_(*rec_valid), 1), else_=0)
+    rel_ok = case(
+        (and_(*rel_valid, *(rec_valid if basis == "received" else [])), 1),
+        else_=0,
+    )
+
     # Which records belong to the clicked cell (same rules as year-summary)
-    if kind == "received":
+    if no_date and kind == "received":
+        scope = [rec_ok == 0]
+        order_date = MainDB.DB_ID
+    elif no_date:
+        scope = [_is_completed(), rel_ok == 0]
+        order_date = MainDB.DB_ID
+    elif kind == "received":
         scope = [*rec_valid, rec_year == year]
         order_date = rec_date
     elif basis == "received":
-        scope = [*rel_valid, *rec_valid, rec_year == year]
+        scope = [_is_completed(), *rel_valid, *rec_valid, rec_year == year]
         order_date = rec_date
     else:
-        scope = [*rel_valid, rel_year == year]
+        scope = [_is_completed(), *rel_valid, rel_year == year]
         order_date = rel_date
 
     doc_key = _doc_key_expr()
@@ -632,7 +708,7 @@ def get_analytics_summary_records(
     exp_date = func.str_to_date(func.left(exp_col, 10), "%Y-%m-%d")
     rel_date = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
 
-    scope = [MainDB.DB_TYPE_DOC_RELEASED.ilike(pattern)]
+    scope = [_doc_norm() == doc.upper()]
     if completed_only:
         scope.append(_is_completed())
     if doc == "cpr":
