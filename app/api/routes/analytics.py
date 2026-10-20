@@ -113,7 +113,7 @@ def get_year_summary(
 
 @router.get("/year-summary/records")
 def get_year_summary_records(
-    year: int = Query(..., ge=2000, le=2100),
+    year: str = Query(..., description="Year (2000-2100) or 'nodate'"),
     kind: str = Query("released", description="received|released"),
     basis: str = Query("released", description="released|received"),
     page: int = Query(1, ge=1),
