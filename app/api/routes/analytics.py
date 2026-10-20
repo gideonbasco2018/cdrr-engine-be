@@ -45,6 +45,37 @@ def get_summary(
     )
 
 
+@router.get("/summary/records")
+def get_summary_records(
+    year: str = Query("All"),
+    month: str = Query("All"),
+    prescription: str = Query("All"),
+    doc: str = Query("cpr", description="cpr|lod"),
+    expiry: str = Query("all", description="all|expired|not_expired|none"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    search: str = Query(None, description="Filter by DTN"),
+    status: str = Query(None, description="Normalized DB_APP_STATUS, or __NONE__"),
+    doc_type: str = Query(None, description="Normalized doc type, or __NONE__"),
+    completed_only: bool = Query(False, description="Only COMPLETED applications"),
+    db: Session = Depends(get_db),
+):
+    return crud_analytics.get_analytics_summary_records(
+        db,
+        year=year,
+        month=month,
+        prescription=prescription,
+        doc=doc,
+        expiry=expiry,
+        page=page,
+        page_size=page_size,
+        search=search,
+        status=status,
+        doc_type=doc_type,
+        completed_only=completed_only,
+    )
+
+
 @router.get("/trend", response_model=AnalyticsTrendResponse)
 def get_trend(
     year: str = Query("All"),
@@ -88,6 +119,8 @@ def get_year_summary_records(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     search: str = Query(None, description="Filter by DTN"),
+    status: str = Query(None, description="Normalized DB_APP_STATUS, or __NONE__"),
+    doc_type: str = Query(None, description="Normalized doc type, or __NONE__"),
     db: Session = Depends(get_db),
 ):
     return crud_analytics.get_analytics_year_records(
@@ -98,6 +131,8 @@ def get_year_summary_records(
         page=page,
         page_size=page_size,
         search=search,
+        status=status,
+        doc_type=doc_type,
     )
 
 

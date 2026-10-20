@@ -1,7 +1,7 @@
 # app/crud/analytics.py
 
 from sqlalchemy.orm import Session
-from sqlalchemy import case, func, Float, Integer, literal, or_
+from sqlalchemy import and_, case, func, Float, Integer, literal, or_
 from app.models.main_db import MainDB
 
 MONTH_ABBR = {
@@ -68,6 +68,58 @@ def _completed_case():
     return func.sum(case((MainDB.DB_APP_STATUS.ilike("COMPLETED"), 1), else_=0))
 
 
+CPR_EXPIRY_FIELD = "DB_SECPA_EXP_DATE"
+
+
+def _in_progress_case():
+    return func.sum(
+        case(
+            (
+                or_(
+                    MainDB.DB_APP_STATUS.ilike("IN PROGRESS"),
+                    MainDB.DB_APP_STATUS.ilike("IN-PROGRESS"),
+                ),
+                1,
+            ),
+            else_=0,
+        )
+    )
+
+
+def _is_completed():
+    return func.upper(func.trim(MainDB.DB_APP_STATUS)) == "COMPLETED"
+
+
+def _doc_completed_case(pattern):
+    """Count of rows whose doc type matches `pattern` AND status is COMPLETED."""
+    return func.sum(
+        case(
+            (and_(MainDB.DB_TYPE_DOC_RELEASED.ilike(pattern), _is_completed()), 1),
+            else_=0,
+        )
+    )
+
+
+def _cpr_expiry_cases():
+    """(expired, not_expired) counts among COMPLETED CPR rows, by expiry date vs today."""
+    col = getattr(MainDB, CPR_EXPIRY_FIELD)
+    exp_date = func.str_to_date(func.left(col, 10), "%Y-%m-%d")
+    is_cpr = and_(MainDB.DB_TYPE_DOC_RELEASED.ilike("%CPR%"), _is_completed())
+    expired = func.sum(
+        case(
+            (and_(is_cpr, exp_date.isnot(None), exp_date < func.curdate()), 1),
+            else_=0,
+        )
+    )
+    not_expired = func.sum(
+        case(
+            (and_(is_cpr, exp_date.isnot(None), exp_date >= func.curdate()), 1),
+            else_=0,
+        )
+    )
+    return expired, not_expired
+
+
 def _wd_diff(start_col, end_col):
     _LUT = literal("0123444401234443012345440123456601234566")
     n = func.datediff(end_col, start_col)
@@ -106,6 +158,7 @@ def get_analytics_summary(
     month: str = "All",
     prescription: str = "All",
 ) -> dict:
+    cpr_expired_expr, cpr_not_expired_expr = _cpr_expiry_cases()
     row = (
         _base_query(db, year, month, prescription)
         .with_entities(
@@ -113,22 +166,38 @@ def get_analytics_summary(
             _cpr_case().label("cpr"),
             _lod_case().label("lod"),
             _on_process_case().label("on_process"),
+            _in_progress_case().label("in_progress"),
             _completed_case().label("completed"),
+            _doc_completed_case("%CPR%").label("cpr_completed"),
+            _doc_completed_case("%LOD%").label("lod_completed"),
+            cpr_expired_expr.label("cpr_expired"),
+            cpr_not_expired_expr.label("cpr_not_expired"),
         )
         .one()
     )
     total = int(row.total or 0)
     cpr = int(row.cpr or 0)
+    cpr_completed = int(row.cpr_completed or 0)
+    cpr_expired = int(row.cpr_expired or 0)
+    cpr_not_expired = int(row.cpr_not_expired or 0)
     return {
         "total": total,
         "cpr": cpr,
         "lod": int(row.lod or 0),
         "on_process": int(row.on_process or 0),
+        "in_progress": int(row.in_progress or 0),
         "completed": int(row.completed or 0),
+        "cpr_expired": cpr_expired,
+        "cpr_not_expired": cpr_not_expired,
+        "cpr_completed": cpr_completed,
+        "lod_completed": int(row.lod_completed or 0),
+        # completed CPR rows with no (or unreadable) expiry date
+        "cpr_no_expiry": max(cpr_completed - cpr_expired - cpr_not_expired, 0),
         "approval_rate": round(cpr / total * 100, 1) if total else 0.0,
     }
 
 
+# ── 3. Trend Chart ────────────────────────────────────────────
 # ── 3. Trend Chart ────────────────────────────────────────────
 def get_analytics_trend(
     db: Session,
@@ -136,54 +205,78 @@ def get_analytics_trend(
     month: str = "All",
     prescription: str = "All",
 ) -> list:
-    date_col = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
-    if year == "All":
-        group_expr = func.year(date_col).label("grp")
-    else:
-        group_expr = func.month(date_col).label("grp")
+    by_year = year == "All"
 
-    rows = (
+    rel_date = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
+    rec_date = func.str_to_date(func.left(MainDB.DB_DATE_RECEIVED_CENT, 10), "%Y-%m-%d")
+
+    rel_grp = (func.year(rel_date) if by_year else func.month(rel_date)).label("grp")
+    rec_grp = (func.year(rec_date) if by_year else func.month(rec_date)).label("grp")
+
+    # CPR / LOD / Completed: bucketed by release date
+    released_rows = (
         _base_query(db, year, month, prescription)
         .filter(
             MainDB.DB_DATE_RELEASED.isnot(None),
             MainDB.DB_DATE_RELEASED != "",
             MainDB.DB_DATE_RELEASED != "N/A",
-            date_col.isnot(None),
-            func.year(date_col) >= 2000,
-            func.year(date_col) <= 2100,
+            rel_date.isnot(None),
+            func.year(rel_date) >= 2000,
+            func.year(rel_date) <= 2100,
         )
         .with_entities(
-            group_expr,
+            rel_grp,
             _cpr_case().label("cpr"),
             _lod_case().label("lod"),
-            _on_process_case().label("on_process"),
             _completed_case().label("completed"),
         )
         .group_by("grp")
         .all()
     )
 
-    result = []
-    for r in rows:
+    # In Progress: not released yet, so bucketed by received date
+    ip_q = db.query(
+        rec_grp,
+        _in_progress_case().label("in_progress"),
+    ).filter(
+        MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
+        MainDB.DB_DATE_RECEIVED_CENT != "",
+        MainDB.DB_DATE_RECEIVED_CENT != "N/A",
+        rec_date.isnot(None),
+        func.year(rec_date) >= 2000,
+        func.year(rec_date) <= 2100,
+    )
+    if prescription != "All":
+        ip_q = ip_q.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
+    if not by_year:
+        ip_q = ip_q.filter(func.year(rec_date) == int(year))
+        if month != "All":
+            ip_q = ip_q.filter(func.month(rec_date) == int(month))
+    ip_rows = ip_q.group_by("grp").all()
+
+    # Merge both result sets by bucket
+    buckets = {}
+    for r in released_rows:
         if r.grp is None:
             continue
-        if year == "All":
-            label, sort_key = str(r.grp), r.grp
-        else:
-            label = MONTH_ABBR.get(int(r.grp), str(r.grp))
-            sort_key = int(r.grp)
-        result.append(
-            {
-                "label": label,
-                "cpr": int(r.cpr or 0),
-                "lod": int(r.lod or 0),
-                "on_process": int(r.on_process or 0),
-                "completed": int(r.completed or 0),
-                "_s": sort_key,
-            }
+        buckets[int(r.grp)] = {
+            "cpr": int(r.cpr or 0),
+            "lod": int(r.lod or 0),
+            "completed": int(r.completed or 0),
+            "in_progress": 0,
+        }
+    for r in ip_rows:
+        if r.grp is None:
+            continue
+        b = buckets.setdefault(
+            int(r.grp), {"cpr": 0, "lod": 0, "completed": 0, "in_progress": 0}
         )
+        b["in_progress"] = int(r.in_progress or 0)
 
-    result.sort(key=lambda x: x.pop("_s"))
+    result = []
+    for key in sorted(buckets):
+        label = str(key) if by_year else MONTH_ABBR.get(key, str(key))
+        result.append({"label": label, **buckets[key]})
     return result
 
 
@@ -333,6 +426,27 @@ def get_analytics_year_summary(db: Session, basis: str = "released") -> list:
     return result
 
 
+def _doc_key_expr():
+    """Normalized doc-type key. Cert/Certificate -> CERT, blank -> __NONE__."""
+    trimmed = func.trim(MainDB.DB_TYPE_DOC_RELEASED)
+    return case(
+        (MainDB.DB_TYPE_DOC_RELEASED.is_(None), "__NONE__"),
+        (trimmed == "", "__NONE__"),
+        (func.lower(trimmed).in_(["cert", "certificate"]), "CERT"),
+        else_=trimmed,
+    )
+
+
+def _status_key_expr():
+    """Normalized app-status key. Upper-cased, blank -> __NONE__."""
+    upper = func.upper(func.trim(MainDB.DB_APP_STATUS))
+    return case(
+        (MainDB.DB_APP_STATUS.is_(None), "__NONE__"),
+        (upper == "", "__NONE__"),
+        else_=upper,
+    )
+
+
 # ── 5b. Year-by-Year Summary — record drill-down ──────────────
 def get_analytics_year_records(
     db: Session,
@@ -342,6 +456,8 @@ def get_analytics_year_records(
     page: int = 1,
     page_size: int = 50,
     search: str = None,
+    status: str = None,
+    doc_type: str = None,
 ) -> dict:
     """
     List the records behind a Year-by-Year Summary cell.
@@ -350,7 +466,13 @@ def get_analytics_year_records(
     kind="released":
         basis="released" -> released in `year`
         basis="received" -> received in `year` AND already released
-    Same filters as get_analytics_year_summary so counts line up.
+
+    Optional filters: search (DTN), status (normalized DB_APP_STATUS key),
+    doc_type (normalized DB_TYPE_DOC_RELEASED key).
+
+    Also returns status_counts / doc_type_counts over the WHOLE filtered
+    set (not just the current page). Each facet ignores its own filter so
+    the other options stay selectable.
     """
     kind = "received" if kind == "received" else "released"
     basis = "received" if basis == "received" else "released"
@@ -377,36 +499,81 @@ def get_analytics_year_records(
         rec_year <= 2100,
     ]
 
-    q = db.query(
-        MainDB.DB_ID,
-        MainDB.DB_DTN,
-        MainDB.DB_DATE_RECEIVED_CENT,
-        MainDB.DB_DATE_RELEASED,
-        MainDB.DB_TYPE_DOC_RELEASED,
-        MainDB.DB_APP_STATUS,
-        MainDB.DB_PROD_BR_NAME,
-        MainDB.DB_PROD_GEN_NAME,
-    )
-
+    # Which records belong to the clicked cell (same rules as year-summary)
     if kind == "received":
-        q = q.filter(*rec_valid, rec_year == year)
+        scope = [*rec_valid, rec_year == year]
         order_date = rec_date
     elif basis == "received":
-        q = q.filter(*rel_valid, *rec_valid, rec_year == year)
+        scope = [*rel_valid, *rec_valid, rec_year == year]
         order_date = rec_date
     else:
-        q = q.filter(*rel_valid, rel_year == year)
+        scope = [*rel_valid, rel_year == year]
         order_date = rel_date
 
-    if search:
-        q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
+    doc_key = _doc_key_expr()
+    status_key = _status_key_expr()
 
-    total = q.count()
+    def narrowed(q, use_status=True, use_doc=True):
+        if search:
+            q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
+        if use_status and status:
+            q = q.filter(status_key == status)
+        if use_doc and doc_type:
+            q = q.filter(doc_key == doc_type)
+        return q
+
+    # ── Rows (paged) ──
+    rows_q = narrowed(
+        db.query(
+            MainDB.DB_ID,
+            MainDB.DB_DTN,
+            MainDB.DB_DATE_RECEIVED_CENT,
+            MainDB.DB_DATE_RELEASED,
+            MainDB.DB_TYPE_DOC_RELEASED,
+            MainDB.DB_APP_STATUS,
+            MainDB.DB_ENTRY_TYPE,
+            MainDB.DB_PROD_BR_NAME,
+            MainDB.DB_PROD_GEN_NAME,
+        ).filter(*scope)
+    )
+    total = rows_q.count()
     rows = (
-        q.order_by(order_date.asc(), MainDB.DB_ID.asc())
+        rows_q.order_by(order_date.asc(), MainDB.DB_ID.asc())
         .offset((page - 1) * page_size)
         .limit(page_size)
         .all()
+    )
+
+    # ── Facet: status counts (ignores status filter) ──
+    status_rows = (
+        narrowed(
+            db.query(status_key.label("k"), func.count(MainDB.DB_ID).label("n")).filter(
+                *scope
+            ),
+            use_status=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    status_counts = sorted(
+        [{"key": r.k, "count": int(r.n or 0)} for r in status_rows],
+        key=lambda x: (-x["count"], x["key"]),
+    )
+
+    # ── Facet: doc type counts (ignores doc type filter) ──
+    doc_rows = (
+        narrowed(
+            db.query(doc_key.label("k"), func.count(MainDB.DB_ID).label("n")).filter(
+                *scope
+            ),
+            use_doc=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    doc_type_counts = sorted(
+        [{"key": r.k, "count": int(r.n or 0)} for r in doc_rows],
+        key=lambda x: (-x["count"], x["key"]),
     )
 
     def _d(v):
@@ -416,12 +583,155 @@ def get_analytics_year_records(
         "total": total,
         "page": page,
         "page_size": page_size,
+        "status_counts": status_counts,
+        "doc_type_counts": doc_type_counts,
         "data": [
             {
                 "db_id": r.DB_ID,
                 "dtn": str(r.DB_DTN) if r.DB_DTN else None,
+                "entry_type": r.DB_ENTRY_TYPE or None,
                 "date_received_cent": _d(r.DB_DATE_RECEIVED_CENT),
                 "date_released": _d(r.DB_DATE_RELEASED),
+                "type_doc_released": r.DB_TYPE_DOC_RELEASED or None,
+                "app_status": r.DB_APP_STATUS or None,
+                "brand_name": r.DB_PROD_BR_NAME or None,
+                "generic_name": r.DB_PROD_GEN_NAME or None,
+            }
+            for r in rows
+        ],
+    }
+
+
+# ── 2b. Summary KPI — record drill-down (CPR / LOD) ───────────
+def get_analytics_summary_records(
+    db: Session,
+    year: str = "All",
+    month: str = "All",
+    prescription: str = "All",
+    doc: str = "cpr",
+    expiry: str = "all",
+    page: int = 1,
+    page_size: int = 50,
+    search: str = None,
+    status: str = None,
+    doc_type: str = None,
+    completed_only: bool = False,
+) -> dict:
+    """
+    Records behind the CPR / LOD figures in the summary KPI hover.
+
+    doc="cpr" | "lod"
+    expiry (CPR only): "all" | "expired" | "not_expired" | "none"
+    Uses the same base filters (year/month/prescription) and the same
+    CPR/LOD matching as get_analytics_summary, so counts line up.
+    """
+    doc = "lod" if doc == "lod" else "cpr"
+    pattern = "%LOD%" if doc == "lod" else "%CPR%"
+
+    exp_col = getattr(MainDB, CPR_EXPIRY_FIELD)
+    exp_date = func.str_to_date(func.left(exp_col, 10), "%Y-%m-%d")
+    rel_date = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
+
+    scope = [MainDB.DB_TYPE_DOC_RELEASED.ilike(pattern)]
+    if completed_only:
+        scope.append(_is_completed())
+    if doc == "cpr":
+        if expiry == "expired":
+            scope += [exp_date.isnot(None), exp_date < func.curdate()]
+        elif expiry == "not_expired":
+            scope += [exp_date.isnot(None), exp_date >= func.curdate()]
+        elif expiry == "none":
+            scope.append(exp_date.is_(None))
+
+    doc_key = _doc_key_expr()
+    status_key = _status_key_expr()
+
+    def narrowed(q, use_status=True, use_doc=True):
+        if search:
+            q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
+        if use_status and status:
+            q = q.filter(status_key == status)
+        if use_doc and doc_type:
+            q = q.filter(doc_key == doc_type)
+        return q
+
+    def base():
+        return _base_query(db, year, month, prescription)
+
+    # ── Rows (paged) ──
+    rows_q = narrowed(
+        base()
+        .with_entities(
+            MainDB.DB_ID,
+            MainDB.DB_DTN,
+            MainDB.DB_DATE_RECEIVED_CENT,
+            MainDB.DB_DATE_RELEASED,
+            MainDB.DB_TYPE_DOC_RELEASED,
+            MainDB.DB_APP_STATUS,
+            MainDB.DB_ENTRY_TYPE,
+            MainDB.DB_PROD_BR_NAME,
+            MainDB.DB_PROD_GEN_NAME,
+            exp_col.label("secpa_exp"),
+        )
+        .filter(*scope)
+    )
+    total = rows_q.count()
+    rows = (
+        rows_q.order_by(rel_date.asc(), MainDB.DB_ID.asc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    # ── Facet: status counts (ignores status filter) ──
+    status_rows = (
+        narrowed(
+            base()
+            .with_entities(status_key.label("k"), func.count(MainDB.DB_ID).label("n"))
+            .filter(*scope),
+            use_status=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    status_counts = sorted(
+        [{"key": r.k, "count": int(r.n or 0)} for r in status_rows],
+        key=lambda x: (-x["count"], x["key"]),
+    )
+
+    # ── Facet: doc type counts (ignores doc type filter) ──
+    doc_rows = (
+        narrowed(
+            base()
+            .with_entities(doc_key.label("k"), func.count(MainDB.DB_ID).label("n"))
+            .filter(*scope),
+            use_doc=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    doc_type_counts = sorted(
+        [{"key": r.k, "count": int(r.n or 0)} for r in doc_rows],
+        key=lambda x: (-x["count"], x["key"]),
+    )
+
+    def _d(v):
+        return str(v)[:10] if v else None
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "status_counts": status_counts,
+        "doc_type_counts": doc_type_counts,
+        "data": [
+            {
+                "db_id": r.DB_ID,
+                "dtn": str(r.DB_DTN) if r.DB_DTN else None,
+                "entry_type": r.DB_ENTRY_TYPE or None,
+                "date_received_cent": _d(r.DB_DATE_RECEIVED_CENT),
+                "date_released": _d(r.DB_DATE_RELEASED),
+                "secpa_exp_date": _d(r.secpa_exp),
                 "type_doc_released": r.DB_TYPE_DOC_RELEASED or None,
                 "app_status": r.DB_APP_STATUS or None,
                 "brand_name": r.DB_PROD_BR_NAME or None,
