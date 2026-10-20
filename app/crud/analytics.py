@@ -818,6 +818,245 @@ def get_analytics_summary_records(
     }
 
 
+# ── 5c. Data completeness (Date Received / Date Released) ─────
+def _valid_date_cond(col):
+    """True when `col` holds a readable YYYY-MM-DD date between 2000 and 2100."""
+    d = func.str_to_date(func.left(col, 10), "%Y-%m-%d")
+    y = func.year(d)
+    return and_(
+        col.isnot(None),
+        col != "",
+        col != "N/A",
+        d.isnot(None),
+        y >= 2000,
+        y <= 2100,
+    )
+
+
+def _quality_exprs():
+    """(rec_ok, rel_ok, doc_ok, expects, expects_doc, complete, ref_year)."""
+    rec_date = func.str_to_date(func.left(MainDB.DB_DATE_RECEIVED_CENT, 10), "%Y-%m-%d")
+    rel_date = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
+
+    rec_ok = _valid_date_cond(MainDB.DB_DATE_RECEIVED_CENT)
+    rel_ok = _valid_date_cond(MainDB.DB_DATE_RELEASED)
+
+    # coalesce -> never NULL, so the boolean logic below stays two-valued
+    status = func.upper(func.trim(func.coalesce(MainDB.DB_APP_STATUS, "")))
+    doc = func.trim(func.coalesce(MainDB.DB_TYPE_DOC_RELEASED, ""))
+    doc_ok = doc != ""
+
+    # Date Released is only expected once the application is COMPLETED
+    expects = status == "COMPLETED"
+    # Type of Doc Released is expected when COMPLETED, or when a release date exists
+    expects_doc = or_(expects, rel_ok)
+
+    complete = and_(rec_ok, or_(~expects, rel_ok), or_(~expects_doc, doc_ok))
+    ref_year = case(
+        (rec_ok, func.year(rec_date)),
+        (rel_ok, func.year(rel_date)),
+        else_=None,
+    )
+    return rec_ok, rel_ok, doc_ok, expects, expects_doc, complete, ref_year
+
+
+def get_analytics_data_quality(db: Session) -> list:
+    rec_ok, rel_ok, doc_ok, expects, expects_doc, complete, ref_year = _quality_exprs()
+
+    rows = (
+        db.query(
+            ref_year.label("yr"),
+            func.count(MainDB.DB_ID).label("total"),
+            func.sum(case((rec_ok, 1), else_=0)).label("n_rec"),
+            func.sum(case((expects, 1), else_=0)).label("n_exp"),
+            func.sum(case((and_(expects, rel_ok), 1), else_=0)).label("n_rel"),
+            func.sum(case((expects_doc, 1), else_=0)).label("n_expdoc"),
+            func.sum(case((and_(expects_doc, doc_ok), 1), else_=0)).label("n_doc"),
+            func.sum(case((complete, 1), else_=0)).label("n_done"),
+        )
+        .group_by("yr")
+        .all()
+    )
+
+    out = []
+    for r in rows:
+        total = int(r.total or 0)
+        n_rec = int(r.n_rec or 0)
+        n_exp = int(r.n_exp or 0)
+        n_rel = int(r.n_rel or 0)
+        n_expdoc = int(r.n_expdoc or 0)
+        n_doc = int(r.n_doc or 0)
+        n_done = int(r.n_done or 0)
+        out.append(
+            {
+                "year": str(r.yr) if r.yr is not None else "No Date",
+                "total": total,
+                "received_filled": n_rec,
+                "missing_received": total - n_rec,
+                "release_expected": n_exp,
+                "released_filled": n_rel,
+                "missing_released": n_exp - n_rel,
+                "doc_expected": n_expdoc,
+                "doc_filled": n_doc,
+                "missing_doc": n_expdoc - n_doc,
+                "complete": n_done,
+                "incomplete": total - n_done,
+                "completeness": round(n_done / total * 100, 1) if total else 0.0,
+            }
+        )
+
+    out.sort(
+        key=lambda x: (
+            x["year"] == "No Date",
+            int(x["year"]) if x["year"] != "No Date" else 0,
+        )
+    )
+    return out
+
+
+def get_analytics_quality_records(
+    db: Session,
+    year: str = "all",
+    issue: str = "incomplete",
+    page: int = 1,
+    page_size: int = 50,
+    search: str = None,
+    status: str = None,
+    doc_type: str = None,
+) -> dict:
+    """
+    Records behind a Data Completeness cell.
+    year : "all" | "nodate" | "2024" ...
+    issue: "incomplete" | "missing_received" | "missing_released"
+           | "missing_doc" | "complete"
+    """
+    rec_ok, rel_ok, doc_ok, expects, expects_doc, complete, ref_year = _quality_exprs()
+
+    if year == "all":
+        scope = []
+    elif year == "nodate":
+        scope = [~rec_ok, ~rel_ok]
+    else:
+        scope = [ref_year == int(year)]
+
+    if issue == "missing_received":
+        scope.append(~rec_ok)
+    elif issue == "missing_released":
+        scope += [expects, ~rel_ok]
+    elif issue == "missing_doc":
+        scope += [expects_doc, ~doc_ok]
+    elif issue == "complete":
+        scope.append(complete)
+    else:  # "incomplete"
+        scope.append(~complete)
+
+    doc_key = _doc_key_expr()
+    status_key = _status_key_expr()
+
+    def narrowed(q, use_status=True, use_doc=True):
+        if search:
+            q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
+        if use_status and status:
+            q = q.filter(status_key == status)
+        if use_doc and doc_type:
+            q = q.filter(doc_key == doc_type)
+        return q
+
+    # ── Rows (paged) ──
+    rows_q = narrowed(
+        db.query(
+            MainDB.DB_ID,
+            MainDB.DB_DTN,
+            MainDB.DB_DATE_RECEIVED_CENT,
+            MainDB.DB_DATE_RELEASED,
+            MainDB.DB_TYPE_DOC_RELEASED,
+            MainDB.DB_APP_STATUS,
+            MainDB.DB_ENTRY_TYPE,
+            MainDB.DB_PROD_BR_NAME,
+            MainDB.DB_PROD_GEN_NAME,
+            MainDB.DB_SECPA_EXP_DATE,
+            case((rec_ok, 1), else_=0).label("rec_ok"),
+            case((and_(expects, ~rel_ok), 1), else_=0).label("rel_missing"),
+            case((and_(expects_doc, ~doc_ok), 1), else_=0).label("doc_missing"),
+        ).filter(*scope)
+    )
+    total = rows_q.count()
+    rows = (
+        rows_q.order_by(MainDB.DB_ID.asc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    # ── Facets (each ignores its own filter) ──
+    status_rows = (
+        narrowed(
+            db.query(status_key.label("k"), func.count(MainDB.DB_ID).label("n")).filter(
+                *scope
+            ),
+            use_status=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    status_counts = sorted(
+        [{"key": r.k, "count": int(r.n or 0)} for r in status_rows],
+        key=lambda x: (-x["count"], x["key"]),
+    )
+
+    doc_rows = (
+        narrowed(
+            db.query(doc_key.label("k"), func.count(MainDB.DB_ID).label("n")).filter(
+                *scope
+            ),
+            use_doc=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    doc_type_counts = sorted(
+        [{"key": r.k, "count": int(r.n or 0)} for r in doc_rows],
+        key=lambda x: (-x["count"], x["key"]),
+    )
+
+    def _d(v):
+        return str(v)[:10] if v else None
+
+    def _issues(r):
+        out = []
+        if not r.rec_ok:
+            out.append("Missing Date Received")
+        if r.rel_missing:
+            out.append("Missing Date Released")
+        if r.doc_missing:
+            out.append("Missing Type of Doc Released")
+        return out
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "status_counts": status_counts,
+        "doc_type_counts": doc_type_counts,
+        "data": [
+            {
+                "db_id": r.DB_ID,
+                "dtn": str(r.DB_DTN) if r.DB_DTN else None,
+                "entry_type": r.DB_ENTRY_TYPE or None,
+                "date_received_cent": _d(r.DB_DATE_RECEIVED_CENT),
+                "date_released": _d(r.DB_DATE_RELEASED),
+                "secpa_exp_date": _d(r.DB_SECPA_EXP_DATE),
+                "type_doc_released": r.DB_TYPE_DOC_RELEASED or None,
+                "app_status": r.DB_APP_STATUS or None,
+                "brand_name": r.DB_PROD_BR_NAME or None,
+                "generic_name": r.DB_PROD_GEN_NAME or None,
+                "issues": _issues(r),
+            }
+            for r in rows
+        ],
+    }
+
+
 # ── 6. Top Drugs ──────────────────────────────────────────────
 def get_analytics_top_drugs(
     db: Session,
