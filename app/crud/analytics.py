@@ -507,6 +507,25 @@ def _status_key_expr():
     )
 
 
+def _date_range_conds(
+    received_from=None, received_to=None, released_from=None, released_to=None
+):
+    """Inclusive date-range filters on Date Received (Center) / Date Released.
+    Rows whose date can't be parsed (NULL) are excluded when a bound is set."""
+    rec = func.str_to_date(func.left(MainDB.DB_DATE_RECEIVED_CENT, 10), "%Y-%m-%d")
+    rel = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
+    conds = []
+    if received_from:
+        conds.append(rec >= received_from)
+    if received_to:
+        conds.append(rec <= received_to)
+    if released_from:
+        conds.append(rel >= released_from)
+    if released_to:
+        conds.append(rel <= released_to)
+    return conds
+
+
 # ── 5b. Year-by-Year Summary — record drill-down ──────────────
 def get_analytics_year_records(
     db: Session,
@@ -518,6 +537,10 @@ def get_analytics_year_records(
     search: str = None,
     status: str = None,
     doc_type: str = None,
+    received_from=None,
+    received_to=None,
+    released_from=None,
+    released_to=None,
 ) -> dict:
     """
     List the records behind a Year-by-Year Summary cell.
@@ -585,6 +608,8 @@ def get_analytics_year_records(
     else:
         scope = [_is_completed(), *rel_valid, rel_year == year]
         order_date = rel_date
+
+    scope += _date_range_conds(received_from, received_to, released_from, released_to)
 
     doc_key = _doc_key_expr()
     status_key = _status_key_expr()
@@ -692,6 +717,10 @@ def get_analytics_summary_records(
     status: str = None,
     doc_type: str = None,
     completed_only: bool = False,
+    received_from=None,
+    received_to=None,
+    released_from=None,
+    released_to=None,
 ) -> dict:
     """
     Records behind the CPR / LOD figures in the summary KPI hover.
@@ -711,6 +740,7 @@ def get_analytics_summary_records(
     scope = [_doc_norm() == doc.upper()]
     if completed_only:
         scope.append(_is_completed())
+    scope += _date_range_conds(received_from, received_to, released_from, released_to)
     if doc == "cpr":
         if expiry == "expired":
             scope += [exp_date.isnot(None), exp_date < func.curdate()]
@@ -923,6 +953,10 @@ def get_analytics_quality_records(
     search: str = None,
     status: str = None,
     doc_type: str = None,
+    received_from=None,
+    received_to=None,
+    released_from=None,
+    released_to=None,
 ) -> dict:
     """
     Records behind a Data Completeness cell.
@@ -949,6 +983,8 @@ def get_analytics_quality_records(
         scope.append(complete)
     else:  # "incomplete"
         scope.append(~complete)
+
+    scope += _date_range_conds(received_from, received_to, released_from, released_to)
 
     doc_key = _doc_key_expr()
     status_key = _status_key_expr()
