@@ -1,5 +1,6 @@
 # app/api/routes/analytics.py
 
+from datetime import date
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
@@ -58,6 +59,10 @@ def get_summary_records(
     status: str = Query(None, description="Normalized DB_APP_STATUS, or __NONE__"),
     doc_type: str = Query(None, description="Normalized doc type, or __NONE__"),
     completed_only: bool = Query(False, description="Only COMPLETED applications"),
+    received_from: date = Query(None),
+    received_to: date = Query(None),
+    released_from: date = Query(None),
+    released_to: date = Query(None),
     db: Session = Depends(get_db),
 ):
     return crud_analytics.get_analytics_summary_records(
@@ -73,6 +78,10 @@ def get_summary_records(
         status=status,
         doc_type=doc_type,
         completed_only=completed_only,
+        received_from=received_from,
+        received_to=received_to,
+        released_from=released_from,
+        released_to=released_to,
     )
 
 
@@ -121,6 +130,10 @@ def get_year_summary_records(
     search: str = Query(None, description="Filter by DTN"),
     status: str = Query(None, description="Normalized DB_APP_STATUS, or __NONE__"),
     doc_type: str = Query(None, description="Normalized doc type, or __NONE__"),
+    received_from: date = Query(None),
+    received_to: date = Query(None),
+    released_from: date = Query(None),
+    released_to: date = Query(None),
     db: Session = Depends(get_db),
 ):
     return crud_analytics.get_analytics_year_records(
@@ -133,6 +146,10 @@ def get_year_summary_records(
         search=search,
         status=status,
         doc_type=doc_type,
+        received_from=received_from,
+        received_to=received_to,
+        released_from=released_from,
+        released_to=released_to,
     )
 
 
@@ -153,6 +170,10 @@ def get_data_quality_records(
     search: str = Query(None, description="Filter by DTN"),
     status: str = Query(None),
     doc_type: str = Query(None),
+    received_from: date = Query(None),
+    received_to: date = Query(None),
+    released_from: date = Query(None),
+    released_to: date = Query(None),
     db: Session = Depends(get_db),
 ):
     return crud_analytics.get_analytics_quality_records(
@@ -164,6 +185,10 @@ def get_data_quality_records(
         search=search,
         status=status,
         doc_type=doc_type,
+        received_from=received_from,
+        received_to=received_to,
+        released_from=released_from,
+        released_to=released_to,
     )
 
 
