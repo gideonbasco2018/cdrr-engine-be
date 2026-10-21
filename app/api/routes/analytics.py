@@ -20,6 +20,7 @@ from app.schemas.analytics import (
     CountryYearTrendResponse,
 )
 from app.crud import analytics as crud_analytics
+from app.crud import top_companies as crud_top_companies
 
 router = APIRouter(
     prefix="/api/analytics",
@@ -189,6 +190,56 @@ def get_data_quality_records(
         received_to=received_to,
         released_from=released_from,
         released_to=released_to,
+    )
+
+
+@router.get("/top-companies")
+def get_top_companies(
+    year: int = Query(..., ge=2000, le=2100),
+    month: str = Query("All", description="All or 1-12"),
+    top: int = Query(10, ge=1, le=100),
+    prescription: str = Query("All"),
+    basis: str = Query("received", description="received|released"),
+    db: Session = Depends(get_db),
+):
+    return crud_top_companies.get_top_companies(
+        db,
+        year=year,
+        month=month,
+        top=top,
+        prescription=prescription,
+        basis=basis,
+    )
+
+
+@router.get("/top-companies/records")
+def get_top_company_records(
+    year: int = Query(..., ge=2000, le=2100),
+    month: str = Query("All"),
+    prescription: str = Query("All"),
+    basis: str = Query("received"),
+    company: str = Query(...),
+    user_id: str = Query(None, description="evaluator id, 'none' = Unassigned"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    search: str = Query(None),
+    status: str = Query(None),
+    doc_type: str = Query(None),
+    db: Session = Depends(get_db),
+):
+    return crud_top_companies.get_company_records(
+        db,
+        year=year,
+        month=month,
+        prescription=prescription,
+        basis=basis,
+        company=company,
+        user_id=user_id,
+        page=page,
+        page_size=page_size,
+        search=search,
+        status=status,
+        doc_type=doc_type,
     )
 
 
