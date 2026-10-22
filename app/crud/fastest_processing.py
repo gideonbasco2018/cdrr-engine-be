@@ -85,7 +85,13 @@ def _evaluator(user_id, uname, names) -> dict:
 
 # ── Fastest applications ──────────────────────────────────────
 def get_fastest_applications(
-    db: Session, year: int, month: str = "All", top: int = 10, doc: str = "cpr"
+    db: Session,
+    year: int,
+    month: str = "All",
+    top: int = 10,
+    doc: str = "cpr",
+    entry_type: str = None,
+    app_type: str = None,
 ) -> dict:
     rec, rel = _dates()
     days = _workdays(rec, rel)
@@ -96,14 +102,50 @@ def get_fastest_applications(
     else:
         doc = "cpr"
         doc_cond = _is_cpr()
-    scope = [*_period_filters(year, month), doc_cond]
+
+    entry_key = _entry_key_expr()
+    app_type_key = _app_type_key_expr()
+    app_types_sel = _split_multi(app_type)
+    base_scope = [*_period_filters(year, month), doc_cond]
+
+    scope = list(base_scope)
+    if entry_type:
+        scope.append(entry_key == entry_type)
+    if app_types_sel:
+        scope.append(app_type_key.in_(app_types_sel))
+
+    # Each facet ignores its own filter so every option stays selectable,
+    # but respects the other facet.
+    entry_scope = list(base_scope)
+    if app_types_sel:
+        entry_scope.append(app_type_key.in_(app_types_sel))
+    entry_rows = (
+        db.query(entry_key.label("k"), func.count(MainDB.DB_ID).label("n"))
+        .filter(*entry_scope)
+        .group_by("k")
+        .all()
+    )
+    entry_types = sorted(
+        [{"key": r.k, "count": int(r.n or 0)} for r in entry_rows],
+        key=lambda x: (-x["count"], x["key"]),
+    )
+
+    type_scope = list(base_scope)
+    if entry_type:
+        type_scope.append(entry_key == entry_type)
+    type_rows = (
+        db.query(app_type_key.label("k"), func.count(MainDB.DB_ID).label("n"))
+        .filter(*type_scope)
+        .group_by("k")
+        .all()
+    )
+    app_types = sorted(
+        [{"key": r.k, "count": int(r.n or 0)} for r in type_rows],
+        key=lambda x: (-x["count"], x["key"]),
+    )
 
     stats = (
-        db.query(
-            func.count(MainDB.DB_ID),
-            func.avg(days),
-            func.min(days),
-        )
+        db.query(func.count(MainDB.DB_ID), func.avg(days), func.min(days))
         .filter(*scope)
         .one()
     )
@@ -113,6 +155,7 @@ def get_fastest_applications(
         db.query(
             MainDB.DB_ID.label("id"),
             MainDB.DB_DTN.label("dtn"),
+            MainDB.DB_ENTRY_TYPE.label("entry_type"),
             MainDB.DB_EST_LTO_COMP.label("company"),
             MainDB.DB_PROD_BR_NAME.label("brand"),
             MainDB.DB_PROD_GEN_NAME.label("generic"),
@@ -140,11 +183,14 @@ def get_fastest_applications(
         "total": int(stats[0] or 0),
         "avg_days": _r1(stats[1]),
         "fastest_days": int(stats[2]) if stats[2] is not None else None,
+        "entry_types": entry_types,
+        "app_types": app_types,
         "data": [
             {
                 "rank": i,
                 "db_id": r.id,
                 "dtn": str(r.dtn) if r.dtn else None,
+                "entry_type": _entry_label(r.entry_type),
                 "company": (r.company or "").strip(),
                 "brand": r.brand or None,
                 "generic": r.generic or None,
@@ -287,6 +333,35 @@ def _doc_cond(doc: str):
     return or_(_is_cpr(), _is_cert())
 
 
+REGULAR_KEY = "__REGULAR__"
+REGULAR_LABEL = "Regular Application"
+
+
+def _app_type_key_expr():
+    """Application type key. Blank -> __NONE__."""
+    t = func.trim(func.coalesce(MainDB.DB_APP_TYPE, ""))
+    return case((t == "", "__NONE__"), else_=t)
+
+
+def _split_multi(v):
+    """'A|B|C' -> ['A', 'B', 'C']"""
+    return [x for x in (v or "").split("|") if x != ""]
+
+
+def _entry_key_expr():
+    """Entry type key. Blank or 'Original' -> __REGULAR__."""
+    t = func.trim(func.coalesce(MainDB.DB_ENTRY_TYPE, ""))
+    return case(
+        (or_(t == "", func.lower(t) == "original"), REGULAR_KEY),
+        else_=t,
+    )
+
+
+def _entry_label(v):
+    v = (v or "").strip()
+    return REGULAR_LABEL if v == "" or v.lower() == "original" else v
+
+
 def get_fastest_records(
     db: Session,
     year: int,
@@ -303,6 +378,8 @@ def get_fastest_records(
     received_to: str = None,
     released_from: str = None,
     released_to: str = None,
+    entry_type: str = None,
+    app_type: str = None,
 ) -> dict:
     """Applications behind a Fastest Processing number.
     company=None -> all companies; user_id=None -> all evaluators,
@@ -314,6 +391,7 @@ def get_fastest_records(
     doc_key = _doc_key_expr()
     status_key = _status_key_expr()
     ckey = func.upper(func.trim(MainDB.DB_EST_LTO_COMP))
+    app_types_sel = _split_multi(app_type)
     base = [*_period_filters(year, month), _doc_cond(doc)]
 
     def scoped(q, use_status=True, use_doc=True):
@@ -334,6 +412,10 @@ def get_fastest_records(
             q = q.filter(status_key == status)
         if use_doc and doc_type:
             q = q.filter(doc_key == doc_type)
+        if entry_type:
+            q = q.filter(_entry_key_expr() == entry_type)
+        if app_types_sel:
+            q = q.filter(_app_type_key_expr().in_(app_types_sel))
         if received_from:
             q = q.filter(rec >= received_from)
         if received_to:
@@ -406,7 +488,7 @@ def get_fastest_records(
             {
                 "db_id": r.DB_ID,
                 "dtn": str(r.DB_DTN) if r.DB_DTN else None,
-                "entry_type": r.DB_ENTRY_TYPE or None,
+                "entry_type": _entry_label(r.DB_ENTRY_TYPE),
                 "date_received_cent": _d(r.DB_DATE_RECEIVED_CENT),
                 "date_released": _d(r.DB_DATE_RELEASED),
                 "secpa_exp_date": _d(r.DB_SECPA_EXP_DATE),

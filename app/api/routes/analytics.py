@@ -250,10 +250,20 @@ def get_fastest_applications_route(
     month: str = Query("All", description="All or 1-12"),
     top: int = Query(10, ge=1, le=100),
     doc: str = Query("cpr", description="cpr|cert|both"),
+    entry_type: str = Query(None, description="DB_ENTRY_TYPE, or __REGULAR__"),
+    app_type: str = Query(
+        None, description="Pipe-separated DB_APP_TYPE values; __NONE__ = blank"
+    ),
     db: Session = Depends(get_db),
 ):
     return crud_fastest.get_fastest_applications(
-        db, year=year, month=month, top=top, doc=doc
+        db,
+        year=year,
+        month=month,
+        top=top,
+        doc=doc,
+        entry_type=entry_type,
+        app_type=app_type,
     )
 
 
@@ -286,6 +296,8 @@ def get_fastest_records_route(
     received_to: str = Query(None),
     released_from: str = Query(None),
     released_to: str = Query(None),
+    entry_type: str = Query(None),
+    app_type: str = Query(None),
     db: Session = Depends(get_db),
 ):
     return crud_fastest.get_fastest_records(
@@ -304,6 +316,8 @@ def get_fastest_records_route(
         received_to=received_to,
         released_from=released_from,
         released_to=released_to,
+        entry_type=entry_type,
+        app_type=app_type,
     )
 
 
