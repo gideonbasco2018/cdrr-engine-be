@@ -21,6 +21,7 @@ from app.schemas.analytics import (
 )
 from app.crud import analytics as crud_analytics
 from app.crud import top_companies as crud_top_companies
+from app.crud import fastest_processing as crud_fastest
 
 router = APIRouter(
     prefix="/api/analytics",
@@ -240,6 +241,69 @@ def get_top_company_records(
         search=search,
         status=status,
         doc_type=doc_type,
+    )
+
+
+@router.get("/fastest/applications")
+def get_fastest_applications_route(
+    year: int = Query(..., ge=2000, le=2100),
+    month: str = Query("All", description="All or 1-12"),
+    top: int = Query(10, ge=1, le=100),
+    doc: str = Query("cpr", description="cpr|cert|both"),
+    db: Session = Depends(get_db),
+):
+    return crud_fastest.get_fastest_applications(
+        db, year=year, month=month, top=top, doc=doc
+    )
+
+
+@router.get("/fastest/companies")
+def get_fastest_companies_route(
+    year: int = Query(..., ge=2000, le=2100),
+    month: str = Query("All", description="All or 1-12"),
+    top: int = Query(10, ge=1, le=100),
+    min_apps: int = Query(3, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    return crud_fastest.get_fastest_companies(
+        db, year=year, month=month, top=top, min_apps=min_apps
+    )
+
+
+@router.get("/fastest/records")
+def get_fastest_records_route(
+    year: int = Query(..., ge=2000, le=2100),
+    month: str = Query("All"),
+    doc: str = Query("both", description="cpr|cert|both"),
+    company: str = Query(None),
+    user_id: str = Query(None, description="evaluator id, 'none' = Unassigned"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    search: str = Query(None),
+    status: str = Query(None),
+    doc_type: str = Query(None),
+    received_from: str = Query(None),
+    received_to: str = Query(None),
+    released_from: str = Query(None),
+    released_to: str = Query(None),
+    db: Session = Depends(get_db),
+):
+    return crud_fastest.get_fastest_records(
+        db,
+        year=year,
+        month=month,
+        doc=doc,
+        company=company,
+        user_id=user_id,
+        page=page,
+        page_size=page_size,
+        search=search,
+        status=status,
+        doc_type=doc_type,
+        received_from=received_from,
+        received_to=received_to,
+        released_from=released_from,
+        released_to=released_to,
     )
 
 
