@@ -42,7 +42,8 @@ def _apps_subquery(db: Session, year, month, prescription, basis):
 
 def _evaluator_subquery(db: Session):
     """One evaluator per application: the latest Quality Evaluation row
-    with no reroute / reassign markers."""
+    that was not reassigned. Rerouted rows ARE counted; reassigned rows are
+    skipped because a newer row already holds the new assignee."""
     rn = func.row_number().over(
         partition_by=ApplicationLogs.main_db_id,
         order_by=(ApplicationLogs.del_index.desc(), ApplicationLogs.id.desc()),
@@ -56,8 +57,6 @@ def _evaluator_subquery(db: Session):
         )
         .filter(
             ApplicationLogs.application_step.ilike(EVALUATION_STEP_PATTERN),
-            ApplicationLogs.rerouted_at.is_(None),
-            ApplicationLogs.rerouted_by_user_id.is_(None),
             ApplicationLogs.reassigned_at.is_(None),
             ApplicationLogs.reassigned_by_user_id.is_(None),
         )
