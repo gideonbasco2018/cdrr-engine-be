@@ -434,3 +434,46 @@ def get_cmdr_trend(db: Session, months: int = 12) -> List[Dict[str, Any]]:
         {"month": k, "received": received.get(k, 0), "completed": completed.get(k, 0)}
         for k in keys
     ]
+
+
+def get_cmdr_trend_applications(
+    db: Session,
+    month: str,
+    metric: str,
+    skip: int = 0,
+    limit: int = 50,
+) -> Tuple[List[Dict[str, Any]], int]:
+    """Applications behind one point of the trend chart.
+    metric 'received' -> DATE_RECEIVED_FDAC in that month.
+    metric 'completed' -> COMPLETED with DATE_DOC_RELEASING_END in that month.
+    Same rules as get_cmdr_trend, so the counts match the chart."""
+    if metric == "completed":
+        date_col = "DATE_DOC_RELEASING_END"
+        extra = "APP_STATUS = 'COMPLETED' AND "
+    else:
+        date_col = "DATE_RECEIVED_FDAC"
+        extra = ""
+    where = f"WHERE {extra}SUBSTRING(CAST({date_col} AS CHAR), 1, 7) = :month"
+    params = {"month": month}
+
+    selects = [
+        f"SELECT {_union_cols(cfg)}, '{key}' AS `CMDR_TYPE` "
+        f"FROM {cfg['table']} {where}"
+        for key, cfg in CMDR_TYPES.items()  # whitelisted
+    ]
+    union = " UNION ALL ".join(selects)
+
+    total = db.execute(text(f"SELECT COUNT(*) FROM ({union}) AS u"), params).scalar()
+    rows = (
+        db.execute(
+            text(
+                f"SELECT * FROM ({union}) AS u "
+                f"ORDER BY CAST({date_col} AS CHAR) DESC, APP_NUMBER DESC "
+                "LIMIT :limit OFFSET :skip"
+            ),
+            {**params, "skip": skip, "limit": limit},
+        )
+        .mappings()
+        .all()
+    )
+    return [dict(r) for r in rows], int(total or 0)
