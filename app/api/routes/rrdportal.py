@@ -17,6 +17,7 @@ from app.schemas.rrdportal import (
     CmdrFacets,
     CmdrFilterOptions,
     CmdrProductOut,
+    CmdrTrendPoint,
 )
 
 router = APIRouter(prefix="/api/rrdportal")
@@ -122,6 +123,18 @@ def cmdr_facets(
             application_option=application_option,
             types=[t.value for t in cmdr_type] if cmdr_type else None,
         )
+    except SQLAlchemyError as e:
+        raise _db_error(e)
+
+
+@router.get("/cmdr/all/trend", response_model=List[CmdrTrendPoint], tags=["CMDR"])
+def cmdr_trend(
+    months: int = Query(12, ge=1, le=36, description="Months back, including current"),
+    db: Session = Depends(get_rrdportal_db),
+):
+    """Applications received vs completed per month, across all CMDR tables."""
+    try:
+        return crud.get_cmdr_trend(db, months)
     except SQLAlchemyError as e:
         raise _db_error(e)
 

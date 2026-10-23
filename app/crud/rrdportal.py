@@ -5,6 +5,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 from app.schemas.rrdportal import CmdrApplicationOut, CmdrDelegationOut, CmdrProductOut
+from datetime import date
 
 
 def _cols(model, exclude=()) -> str:
@@ -380,3 +381,56 @@ def get_cmdr_products(db: Session, app_type: str, app_uid: str) -> List[Dict[str
         .all()
     )
     return [dict(r) for r in rows]
+
+
+def _month_keys(months: int) -> List[str]:
+    """The last `months` months as 'YYYY-MM', oldest first, ending with the current month."""
+    today = date.today()
+    y, m = today.year, today.month
+    keys: List[str] = []
+    for _ in range(months):
+        keys.append(f"{y:04d}-{m:02d}")
+        m -= 1
+        if m == 0:
+            m, y = 12, y - 1
+    return keys[::-1]
+
+
+def _monthly_counts(
+    db: Session, date_col: str, start: str, extra_where: str = ""
+) -> Dict[str, int]:
+    """Count rows per 'YYYY-MM' of date_col across all CMDR tables.
+    date_col and extra_where are hardcoded literals from the caller, never user input.
+    CAST(... AS CHAR) works whether the column is DATE, DATETIME or VARCHAR."""
+    selects = [
+        f"SELECT SUBSTRING(CAST({date_col} AS CHAR), 1, 7) AS m "
+        f"FROM {cfg['table']} "
+        f"WHERE {extra_where}CAST({date_col} AS CHAR) >= :start"
+        for cfg in CMDR_TYPES.values()
+    ]
+    rows = db.execute(
+        text(
+            f"SELECT m, COUNT(*) AS c FROM ({' UNION ALL '.join(selects)}) AS u "
+            "GROUP BY m"
+        ),
+        {"start": start},
+    ).all()
+    return {r[0]: int(r[1]) for r in rows}
+
+
+def get_cmdr_trend(db: Session, months: int = 12) -> List[Dict[str, Any]]:
+    """Applications received vs completed per month. Months with no rows are returned as 0."""
+    keys = _month_keys(months)
+    start = f"{keys[0]}-01"
+
+    received = _monthly_counts(db, "DATE_RECEIVED_FDAC", start)
+    completed = _monthly_counts(
+        db,
+        "DATE_DOC_RELEASING_END",
+        start,
+        extra_where="APP_STATUS = 'COMPLETED' AND ",
+    )
+    return [
+        {"month": k, "received": received.get(k, 0), "completed": completed.get(k, 0)}
+        for k in keys
+    ]

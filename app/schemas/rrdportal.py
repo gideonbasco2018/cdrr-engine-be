@@ -10,6 +10,7 @@ DateOrStr = Optional[Union[datetime, date, str]]
 
 # ======================= CMDR =======================
 
+
 class CmdrProductOut(BaseModel):
     APP_UID: str
     APP_NUMBER: Optional[int] = None
@@ -79,7 +80,9 @@ class CmdrApplicationOut(BaseModel):
     ASSIGN_DOC_RELEASING_NO_DAYS: Optional[str] = None
     ASSIGN_DOC_RELEASING_NO_DAYS_STATUS: Optional[str] = None
     TOTAL_NO_DAYS: Optional[str] = None
-    COMPANY_ADDRESS: Optional[str] = None  # only exists in PMT_CMDR_INITIAL; null elsewhere
+    COMPANY_ADDRESS: Optional[str] = (
+        None  # only exists in PMT_CMDR_INITIAL; null elsewhere
+    )
 
 
 class CmdrDelegationOut(BaseModel):
@@ -164,3 +167,9 @@ class CmdrFacets(BaseModel):
     type_application: List[FacetItem]
     application_option: List[FacetItem]
     app_status: List[FacetItem]
+
+
+class CmdrTrendPoint(BaseModel):
+    month: str  # "YYYY-MM"
+    received: int
+    completed: int
