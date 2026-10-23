@@ -139,6 +139,24 @@ def cmdr_trend(
         raise _db_error(e)
 
 
+@router.get("/cmdr/all/trend/applications", response_model=CmdrAllPage, tags=["CMDR"])
+def cmdr_trend_applications(
+    month: str = Query(..., pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="YYYY-MM"),
+    metric: str = Query("received", pattern="^(received|completed)$"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_rrdportal_db),
+):
+    """Applications received / completed in one month (the rows behind a chart point)."""
+    try:
+        items, total = crud.get_cmdr_trend_applications(
+            db, month, metric, skip=skip, limit=limit
+        )
+    except SQLAlchemyError as e:
+        raise _db_error(e)
+    return {"items": items, "total": total, "skip": skip, "limit": limit}
+
+
 @router.get("/cmdr/{app_type}", response_model=CmdrApplicationPage, tags=["CMDR"])
 def list_cmdr(
     app_type: CmdrType,
