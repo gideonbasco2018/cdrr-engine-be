@@ -37,12 +37,16 @@ from app.models.user import User  # ADAPT: real module path of your User model
 from app.services.decking_claim import DECKING_STEP, claim_decking_task
 from app.services.decking_decision import submit_decision
 from app.services.appointment_payment import post_payments
+from app.services.workflow_roles import (
+    ROLE_CASHIER,
+    ROLE_DECKER,
+    ROLE_EVALUATOR,
+    get_role_group_ids,
+    user_has_role,
+)
+from app.models.group import Group  # ADAPT: real module path of your Group model
 
 logger = logging.getLogger(__name__)
-
-CASHIER_GROUP_ID = 41
-DECKER_GROUP_ID = 2
-EVALUATOR_GROUP_ID = 3
 
 
 def get_user_group_ids(user) -> list[int]:
@@ -50,12 +54,12 @@ def get_user_group_ids(user) -> list[int]:
     return [g.id for g in (getattr(user, "groups", None) or [])]
 
 
-def is_decker(user) -> bool:
-    return DECKER_GROUP_ID is None or DECKER_GROUP_ID in get_user_group_ids(user)
+def is_decker(db, user) -> bool:
+    return user_has_role(db, user, ROLE_DECKER)
 
 
-def require_decker(user) -> None:
-    if not is_decker(user):
+def require_decker(db, user) -> None:
+    if not is_decker(db, user):
         raise HTTPException(
             status_code=403, detail="Only deckers can access the Decking pool"
         )
@@ -100,7 +104,7 @@ def list_appointment_records(
     current_user=Depends(get_current_active_user),
 ):
     # The unclaimed pool is for cashiers only
-    if unclaimed_only and CASHIER_GROUP_ID not in get_user_group_ids(current_user):
+    if unclaimed_only and not user_has_role(internal_db, current_user, ROLE_CASHIER):
         raise HTTPException(
             status_code=403, detail="Only cashiers can view the unclaimed pool"
         )
@@ -148,7 +152,7 @@ def claim_appointment_records(
     internal_db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    if CASHIER_GROUP_ID not in get_user_group_ids(current_user):
+    if not user_has_role(internal_db, current_user, ROLE_CASHIER):
         raise HTTPException(status_code=403, detail="Only cashiers can claim tasks")
 
     results: list[ClaimResult] = []
@@ -206,12 +210,14 @@ def claim_appointment_records(
 
 
 @router.get("/my-access")
-def get_my_access(current_user=Depends(get_current_active_user)):
-    group_ids = get_user_group_ids(current_user)
+def get_my_access(
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
     return {
-        "group_ids": group_ids,
-        "is_cashier": CASHIER_GROUP_ID in group_ids,
-        "is_decker": is_decker(current_user),
+        "group_ids": get_user_group_ids(current_user),
+        "is_cashier": user_has_role(internal_db, current_user, ROLE_CASHIER),
+        "is_decker": is_decker(internal_db, current_user),
     }
 
 
@@ -252,7 +258,7 @@ def list_decking_unclaimed(
     internal_db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    require_decker(current_user)
+    require_decker(internal_db, current_user)
     rows = (
         internal_db.query(EAppHistory, EApplication, EProcess.process_code)
         .join(
@@ -278,7 +284,7 @@ def claim_decking_tasks(
     internal_db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    require_decker(current_user)
+    require_decker(internal_db, current_user)
     results: list[ClaimResult] = []
 
     for reference_no in dict.fromkeys(payload.reference_numbers):  # de-duplicate
@@ -322,7 +328,7 @@ def _evaluators_query(internal_db: Session):
     # ADAPT: attribute names (is_active, groups, first_name, surname)
     return internal_db.query(User).filter(
         User.is_active.is_(True),
-        User.groups.any(id=EVALUATOR_GROUP_ID),
+        User.groups.any(Group.id.in_(get_role_group_ids(internal_db, ROLE_EVALUATOR))),
     )
 
 
@@ -331,7 +337,7 @@ def list_evaluators(
     internal_db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    require_decker(current_user)
+    require_decker(internal_db, current_user)
     users = _evaluators_query(internal_db).order_by(User.first_name, User.surname).all()
     return [
         {
@@ -352,7 +358,7 @@ def post_decking_decision(
     internal_db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
-    require_decker(current_user)
+    require_decker(internal_db, current_user)
 
     application = (
         internal_db.query(EApplication)
