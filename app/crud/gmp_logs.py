@@ -17,6 +17,7 @@ from datetime import datetime, timezone, timedelta
 from app.models.gmp_record import GMPApplicationLogs, GMPRecord
 from app.models.user import User
 from app.crud.notification import create_notification, already_notified_today
+from app.crud.gmp_record import GMP_MULTI_ASSIGNEE_STEPS
 from app.schemas.notification import NotificationCreate
 
 _PHT = timezone(timedelta(hours=8))
@@ -459,6 +460,10 @@ def advance_step(
     deadline_date: Optional[datetime] = None,
     working_days: Optional[int] = None,
     completion_status: Optional[str] = None,
+    # List of {"id":, "name":} — when the NEXT step is multi-assignee
+    # (GMP_MULTI_ASSIGNEE_STEPS), one open log is created per entry instead
+    # of the single next_assignee_id/name pair above.
+    next_assignees: Optional[List[Dict]] = None,
 ) -> Optional[GMPApplicationLogs]:
     """
     1. Find (or auto-create) the current OPEN log for current_step.
@@ -468,17 +473,21 @@ def advance_step(
     """
     now = _now()
 
-    # Find current open log
-    current_log = (
-        db.query(GMPApplicationLogs)
-        .filter(
-            GMPApplicationLogs.gmp_record_id == gmp_record_id,
-            GMPApplicationLogs.application_step == current_step,
-            GMPApplicationLogs.del_thread == "Open",
-        )
-        .order_by(GMPApplicationLogs.del_index.desc())
-        .first()
+    # Find current open log. A multi-assignee step (e.g. CDRR-OD Signature
+    # Facilitator) can have several open logs at once — one per assignee — so
+    # the acting user's OWN log must be picked, not just "the latest open
+    # one". Every other step only ever has one open log at a time, so this
+    # extra filter is a no-op there.
+    current_log_query = db.query(GMPApplicationLogs).filter(
+        GMPApplicationLogs.gmp_record_id == gmp_record_id,
+        GMPApplicationLogs.application_step == current_step,
+        GMPApplicationLogs.del_thread == "Open",
     )
+    if current_step in GMP_MULTI_ASSIGNEE_STEPS and performed_by_id is not None:
+        current_log_query = current_log_query.filter(
+            GMPApplicationLogs.user_id == performed_by_id
+        )
+    current_log = current_log_query.order_by(GMPApplicationLogs.del_index.desc()).first()
 
     # ── Auto-create the initial log if none exists ────────────────────────────
     # This handles records uploaded via Excel that have no application logs yet.
@@ -531,6 +540,31 @@ def advance_step(
     db.commit()
     db.refresh(current_log)
 
+    # Multi-assignee step: whoever completes it first wins — close every
+    # other still-open log for the same step/record so it drops off their
+    # Tasks too. They never advance on their own (no new log is created for
+    # them), matching CPR's Step4ActionForm.jsx behavior for this step.
+    if current_step in GMP_MULTI_ASSIGNEE_STEPS:
+        siblings = (
+            db.query(GMPApplicationLogs)
+            .filter(
+                GMPApplicationLogs.gmp_record_id == gmp_record_id,
+                GMPApplicationLogs.application_step == current_step,
+                GMPApplicationLogs.del_thread == "Open",
+                GMPApplicationLogs.id != current_log.id,
+            )
+            .all()
+        )
+        for sibling in siblings:
+            sibling.application_status   = "COMPLETED"
+            sibling.application_decision = "Completed by another assignee"
+            sibling.application_remarks  = "Auto-closed: another assignee completed this task first."
+            sibling.accomplished_date    = now
+            sibling.del_thread           = "Close"
+            sibling.del_last_index       = 0
+        if siblings:
+            db.commit()
+
     if not next_step_label:
         # Final step — the workflow ends here (e.g. "Disapprove" at QA Admin /
         # LRD Chief Admin, per GMP_ACTION_ROUTES in gmp_record.py).
@@ -554,31 +588,40 @@ def advance_step(
 
     # Get next del_index
     last_index = get_last_index(db, gmp_record_id)
-    next_index = last_index + 1
 
-    new_log = GMPApplicationLogs(
-        gmp_record_id       = gmp_record_id,
-        application_step    = next_step_label,
-        application_status  = "IN PROGRESS",
-        application_decision= "",
-        application_remarks = "",
-        start_date          = now,
-        del_index           = next_index,
-        del_previous        = current_log.del_index,
-        del_last_index      = 1,
-        del_thread          = "Open",
-        user_name           = next_assignee_name,
-        user_id             = next_assignee_id,
-        is_received         = 1,
-        is_starred          = 0,
-        deadline_date       = deadline_date,
-        working_days        = working_days,
-        sent_by_user_id     = performed_by_id,
-        sent_by_full_name   = performed_by_full_name,
-        sent_by_user_name   = performed_by_name,
-        sent_by_alias       = performed_by_alias,
-    )
-    db.add(new_log)
+    # One log per assignee for a multi-assignee step (e.g. several people
+    # picked for CDRR-OD Signature Facilitator); otherwise the usual single
+    # log for next_assignee_id/next_assignee_name.
+    targets = next_assignees if next_assignees else [
+        {"id": next_assignee_id, "name": next_assignee_name}
+    ]
+
+    new_logs = []
+    for i, target in enumerate(targets):
+        log = GMPApplicationLogs(
+            gmp_record_id       = gmp_record_id,
+            application_step    = next_step_label,
+            application_status  = "IN PROGRESS",
+            application_decision= "",
+            application_remarks = "",
+            start_date          = now,
+            del_index           = last_index + 1 + i,
+            del_previous        = current_log.del_index,
+            del_last_index      = 1,
+            del_thread          = "Open",
+            user_name           = target["name"],
+            user_id             = target["id"],
+            is_received         = 1,
+            is_starred          = 0,
+            deadline_date       = deadline_date,
+            working_days        = working_days,
+            sent_by_user_id     = performed_by_id,
+            sent_by_full_name   = performed_by_full_name,
+            sent_by_user_name   = performed_by_name,
+            sent_by_alias       = performed_by_alias,
+        )
+        db.add(log)
+        new_logs.append(log)
 
     # Update GMP_CURRENT_STEP on the parent record, and mirror it onto every
     # sibling reference number under the same DTN — only the primary ('-01')
@@ -594,12 +637,14 @@ def advance_step(
             ).update({"GMP_CURRENT_STEP": next_step_label}, synchronize_session=False)
 
     db.commit()
-    db.refresh(new_log)
+    for log in new_logs:
+        db.refresh(log)
 
     dtn = get_gmp_dtn(db, gmp_record_id)
-    _notify_gmp_assigned(db, new_log, dtn)
+    for log in new_logs:
+        _notify_gmp_assigned(db, log, dtn)
 
-    return new_log
+    return new_logs[0]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

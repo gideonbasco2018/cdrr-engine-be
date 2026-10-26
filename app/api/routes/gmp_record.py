@@ -1102,13 +1102,22 @@ def advance_step(
     # The assignee is identified by id; the username stored on the new row is
     # looked up from it (the frontend no longer sends a name). A bad/inactive
     # id is a 400 here, before anything is written.
+    # Multi-assignee steps (e.g. CDRR-OD Signature Facilitator) send a list of
+    # ids instead — one open log per person, first to complete wins (see
+    # gmp_logs.advance_step). Takes priority over the single-assignee path.
+    next_assignees = None
+    if req.next_assignee_ids and next_step_label:
+        next_assignees = [
+            {"id": uid, "name": _resolve_assignee(db, uid)} for uid in req.next_assignee_ids
+        ]
+
     next_assignee_id = req.next_assignee_id if next_step_label else None
     # "Send back" actions (Return to X, and the Checker's return to Evaluator)
     # default to whoever last held the step they're going back to, so a bounced
     # application lands with the person who was working it. The frontend
     # pre-fills the same person in an editable dropdown; this is the safety net
     # for callers that don't (bulk endorse) or when the pick doesn't come through.
-    if next_assignee_id is None and next_step_label:
+    if next_assignee_id is None and next_step_label and not next_assignees:
         next_assignee_id = gmp_logs.previous_active_step_holder_id(
             db, record_id, next_step_label
         )
@@ -1120,6 +1129,7 @@ def advance_step(
         next_assignee_name,
         next_assignee_id,
         next_step_label, next_del_index,
+        next_assignees=next_assignees,
         performed_by_name=getattr(current_user, "username", None),
         performed_by_id=getattr(current_user, "id", None),
         performed_by_alias=getattr(current_user, "alias", None),
