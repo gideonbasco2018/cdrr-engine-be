@@ -2,7 +2,9 @@
 from typing import Literal
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from app.services.drive_files import extract_folder_id, list_folder, get_file_bytes
+
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -82,6 +84,31 @@ def to_task_item(history, app, process_code) -> dict:
         "start_date": history.start_date,
         "updated_at": history.updated_at,
     }
+
+
+def _get_accessible_application(internal_db, reference_no, current_user):
+    application = (
+        internal_db.query(EApplication)
+        .filter(EApplication.reference_number == reference_no)
+        .first()
+    )
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    has_access = (
+        internal_db.query(EAppHistory.history_uuid)
+        .filter(
+            EAppHistory.application_uuid == application.application_uuid,
+            EAppHistory.user_uuid == current_user.user_uuid,
+        )
+        .first()
+        is not None
+    )
+    if not has_access:
+        raise HTTPException(
+            status_code=403, detail="You do not have access to this application"
+        )
+    root_id = extract_folder_id(application.drive_link)  # ADAPT: column name
+    return application, root_id
 
 
 router = APIRouter(
@@ -492,3 +519,54 @@ def get_appointment_record(
     if not record:
         raise HTTPException(status_code=404, detail="Appointment record not found")
     return record
+
+
+@router.get("/claimed/{reference_no}/drive-files")
+def list_drive_files(
+    reference_no: str,
+    folder_id: str | None = None,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    _, root_id = _get_accessible_application(internal_db, reference_no, current_user)
+    if not root_id:
+        return {"root_id": None, "items": []}
+    try:
+        return {"root_id": root_id, "items": list_folder(root_id, folder_id)}
+    except PermissionError as err:
+        raise HTTPException(status_code=403, detail=str(err))
+    except Exception:
+        logger.exception("Drive list failed for %s", reference_no)
+        raise HTTPException(
+            status_code=502, detail="Could not read the Google Drive folder"
+        )
+
+
+@router.get("/claimed/{reference_no}/drive-files/{file_id}/content")
+def get_drive_file_content(
+    reference_no: str,
+    file_id: str,
+    download: bool = False,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    _, root_id = _get_accessible_application(internal_db, reference_no, current_user)
+    if not root_id:
+        raise HTTPException(
+            status_code=404, detail="No Drive folder for this application"
+        )
+    try:
+        content, mime, name = get_file_bytes(root_id, file_id)
+    except PermissionError as err:
+        raise HTTPException(status_code=403, detail=str(err))
+    except Exception:
+        logger.exception("Drive download failed for %s/%s", reference_no, file_id)
+        raise HTTPException(
+            status_code=502, detail="Could not read the file from Google Drive"
+        )
+    disposition = "attachment" if download else "inline"
+    return Response(
+        content=content,
+        media_type=mime,
+        headers={"Content-Disposition": f'{disposition}; filename="{name}"'},
+    )
