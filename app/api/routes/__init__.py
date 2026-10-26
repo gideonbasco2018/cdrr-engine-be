@@ -52,6 +52,7 @@ from app.api.routes import (
     checklist,
     appointment_records,
     sne_assignments,
+    workflow_roles,
 )
 
 api_router = APIRouter()
@@ -103,3 +104,4 @@ api_router.include_router(rrdportal.router)
 api_router.include_router(checklist.router)
 api_router.include_router(appointment_records.router)
 api_router.include_router(sne_assignments.router)
+api_router.include_router(workflow_roles.router)
