@@ -191,7 +191,7 @@ def submit_correction(
     new_record = MainDB(
         DB_DTN=new_dtn_int,
         # Carry over unchanged fields from original
-        DB_APP_STATUS="ON-PROCESS",
+        DB_APP_STATUS="IN PROGRESS",
         DB_USER_UPLOADER=current_user.username,
         DB_PROCESSING_TYPE=original.DB_PROCESSING_TYPE,
         DB_EST_CAT=original.DB_EST_CAT,
