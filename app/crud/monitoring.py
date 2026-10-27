@@ -1421,20 +1421,15 @@ def get_evaluator_app_types(
     return {"columns": columns, "steps": ordered_steps, "units": result}
 
 
-_RX_SHORT = {
-    "Prescription Drug (RX)": "RX",
-    "Over-the-Counter (OTC)": "OTC",
-}
-
-
 def get_in_progress_summary(db: Session) -> dict:
     """
     In-progress task count per active user, with:
       - the user's unit (team) from the active LeadAssignment
       - the user's group (functional role) from that SAME assignment, so the
         unit and the role always belong together
-      - a breakdown by product combination (classification / processing type /
-        entry type)
+      - a breakdown by application type, classification, processing type and
+        entry type (one entry per combination, so the UI can regroup it by
+        any single dimension)
 
     The in_progress number uses the same rule as get_users_task_summary
     (count of application_logs rows with status IN PROGRESS, excluding
@@ -1449,7 +1444,8 @@ def get_in_progress_summary(db: Session) -> dict:
         _exclude_action_types(
             db.query(
                 ApplicationLogs.user_id.label("user_id"),
-                _clean_text(MainDB.DB_PROD_CLASS_PRESCRIP).label("prescription"),
+                _clean_text(MainDB.DB_APP_TYPE).label("app_type"),
+                _clean_text(MainDB.DB_PROD_CLASS_PRESCRIP).label("classification"),
                 _processing_type_expr().label("processing_type"),
                 _entry_type_expr().label("entry_type"),
                 func.count(ApplicationLogs.id).label("cnt"),
@@ -1462,20 +1458,25 @@ def get_in_progress_summary(db: Session) -> dict:
         )
         .group_by(
             ApplicationLogs.user_id,
-            "prescription",
+            "app_type",
+            "classification",
             "processing_type",
             "entry_type",
         )
         .all()
     )
 
-    # user_id -> { label: count }
-    types_by_user: dict[int, dict[str, int]] = {}
+    # user_id -> { (app_type, classification, processing_type, entry_type): count }
+    combos_by_user: dict[int, dict[tuple, int]] = {}
     for r in rows:
-        rx = _RX_SHORT.get(r.prescription, r.prescription)
-        label = f"{rx} · {r.processing_type} / {r.entry_type}"
-        bucket = types_by_user.setdefault(r.user_id, {})
-        bucket[label] = bucket.get(label, 0) + int(r.cnt)
+        key = (
+            r.app_type or "N/A",
+            r.classification or "N/A",
+            r.processing_type or "N/A",
+            r.entry_type or "N/A",
+        )
+        bucket = combos_by_user.setdefault(r.user_id, {})
+        bucket[key] = bucket.get(key, 0) + int(r.cnt)
 
     # user_id -> (unit_id, unit_name, group_id, group_name) from the first
     # active assignment (unit and role come from the same row)
@@ -1512,7 +1513,7 @@ def get_in_progress_summary(db: Session) -> dict:
 
     data = []
     for u in users:
-        types = types_by_user.get(u.id, {})
+        combos = combos_by_user.get(u.id, {})
         if u.id in assignment_of:
             unit_id, unit_name, group_id, group_name = assignment_of[u.id]
         else:
@@ -1526,10 +1527,21 @@ def get_in_progress_summary(db: Session) -> dict:
                 "unit_name": unit_name,
                 "group_id": group_id,
                 "group_name": group_name,
-                "in_progress": sum(types.values()),
+                "in_progress": sum(combos.values()),
                 "by_type": [
-                    {"label": label, "count": n}
-                    for label, n in sorted(types.items(), key=lambda kv: -kv[1])
+                    {
+                        "app_type": app_type,
+                        "classification": classification,
+                        "processing_type": processing_type,
+                        "entry_type": entry_type,
+                        "count": n,
+                    }
+                    for (
+                        app_type,
+                        classification,
+                        processing_type,
+                        entry_type,
+                    ), n in sorted(combos.items(), key=lambda kv: -kv[1])
                 ],
             }
         )
