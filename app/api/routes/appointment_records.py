@@ -26,6 +26,11 @@ from app.schemas.appointment_record import (
     DeckingDecisionResult,
     EvaluatorOut,
     MyTaskItem,
+    NodExtendRequest,
+    NodOut,
+    NodReceiveRequest,
+    WorksheetIn,
+    WorksheetResponse,
     PostPaymentRequest,
     PostPaymentResult,
     StepActionOut,
@@ -46,12 +51,19 @@ from app.services.workflow_roles import (
     ROLE_CASHIER,
     ROLE_DECKER,
     ROLE_EVALUATOR,
+    ROLE_FGMP_EVALUATOR,
     get_role_group_ids,
     user_has_role,
 )
 from app.models.group import Group  # ADAPT: real module path of your Group model
+from app.models.e_app_notice_of_deficiency import EAppNoticeOfDeficiency
+from app.services.fgmp_nod import extend_nod, list_nods, receive_documents
+from app.services.fgmp_worksheet import build_out as build_worksheet_out
+from app.services.fgmp_worksheet import latest_row as latest_worksheet
+from app.services.fgmp_worksheet import save_draft as save_worksheet_draft
 from app.services.fgmp_workflow import (
     CERTIFICATE_ISSUANCE_TYPES,
+    EVALUATOR_STEP,
     STEP_GROUP_IDS,
     TYPE_OF_ISSUANCE_OPTIONS,
     TYPE_OF_ISSUANCE_STEP,
@@ -466,10 +478,32 @@ def _group_members_query(internal_db: Session, group_id: int):
     )
 
 
-def _evaluators_query(internal_db: Session):
+def _evaluator_group_ids(internal_db: Session, user) -> set[int]:
+    """The groups whose members this decker may hand an application to.
+
+    Same split as the decking pool: an FGMP decker gets the FGMP evaluators, a
+    CPR decker the usual evaluators, and a decker for both gets both lists.
+    """
+    group_ids = get_user_group_ids(user)
+    sees_fgmp = FGMP_DECKER_GROUP_ID in group_ids
+    sees_others = DECKER_GROUP_ID in group_ids
+    # If an admin has not set the FGMP role yet, fall back to the evaluator
+    # group the FGMP workflow itself uses.
+    fgmp = get_role_group_ids(internal_db, ROLE_FGMP_EVALUATOR) or {
+        STEP_GROUP_IDS[EVALUATOR_STEP]
+    }
+    usual = get_role_group_ids(internal_db, ROLE_EVALUATOR)
+    if sees_fgmp and not sees_others:
+        return fgmp
+    if sees_others and not sees_fgmp:
+        return usual
+    return fgmp | usual
+
+
+def _evaluators_query(internal_db: Session, user):
     return internal_db.query(User).filter(
         User.is_active.is_(True),
-        User.groups.any(Group.id.in_(get_role_group_ids(internal_db, ROLE_EVALUATOR))),
+        User.groups.any(Group.id.in_(_evaluator_group_ids(internal_db, user))),
     )
 
 
@@ -489,7 +523,11 @@ def list_evaluators(
     current_user=Depends(get_current_active_user),
 ):
     require_decker(internal_db, current_user)
-    users = _evaluators_query(internal_db).order_by(User.first_name, User.surname).all()
+    users = (
+        _evaluators_query(internal_db, current_user)
+        .order_by(User.first_name, User.surname)
+        .all()
+    )
     return _as_assignee_list(users)
 
 
@@ -602,6 +640,8 @@ def post_step_decision(
             payload.remarks,
             payload.assignee_uuid,
             payload.type_of_issuance,
+            payload.nod.model_dump() if payload.nod else None,
+            payload.worksheet.model_dump() if payload.worksheet else None,
         )
         internal_db.commit()
     except PermissionError as err:
@@ -618,6 +658,206 @@ def post_step_decision(
         )
 
     return result
+
+
+def _nod_out(nod) -> dict:
+    """One NOD as the API returns it."""
+    return {
+        "nod_number": nod.nod_number,
+        "activity": nod.activity,
+        "deficiencies": nod.deficiencies,
+        "requested_documents": nod.requested_documents or [],
+        "issued_date": nod.issued_date,
+        "working_days": nod.working_days,
+        "due_date": nod.due_date,
+        "extended_due_date": nod.extended_due_date,
+        "extension_reason": nod.extension_reason,
+        "extended_at": nod.extended_at,
+        "documents_received_date": nod.documents_received_date,
+        "status": nod.status,
+        "issued_by": (
+            f"{nod.issued_by.first_name or ''} {nod.issued_by.surname or ''}".strip()
+            if nod.issued_by
+            else None
+        ),
+        "email_sent_at": nod.email_sent_at,
+    }
+
+
+@router.get("/claimed/{reference_no}/nods", response_model=list[NodOut])
+def get_nods(
+    reference_no: str,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    """The Notices of Deficiency issued on an application. Same access rule as
+    the application itself: only people who have worked on it."""
+    application = (
+        internal_db.query(EApplication)
+        .filter(EApplication.reference_number == reference_no)
+        .first()
+    )
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    has_access = (
+        internal_db.query(EAppHistory.history_uuid)
+        .filter(
+            EAppHistory.application_uuid == application.application_uuid,
+            EAppHistory.user_uuid == current_user.user_uuid,
+        )
+        .first()
+        is not None
+    )
+    if not has_access:
+        raise HTTPException(
+            status_code=403, detail="You do not have access to this application"
+        )
+    return [_nod_out(n) for n in list_nods(internal_db, application.application_uuid)]
+
+
+def _load_nod_for_evaluator(
+    internal_db: Session, reference_no: str, nod_number: int, user
+):
+    """Extending or recording documents is the evaluator's job: the caller must
+    hold the task at the Quality Evaluation step. The NOD row is locked."""
+    application, task = _require_step_holder(internal_db, reference_no, user)
+    if task.application_step != EVALUATOR_STEP:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Only the {EVALUATOR_STEP} step can change a Notice of Deficiency",
+        )
+    nod = (
+        internal_db.query(EAppNoticeOfDeficiency)
+        .filter(
+            EAppNoticeOfDeficiency.application_uuid == application.application_uuid,
+            EAppNoticeOfDeficiency.nod_number == nod_number,
+            EAppNoticeOfDeficiency.is_deleted.is_(False),
+        )
+        .with_for_update()
+        .first()
+    )
+    if not nod:
+        raise HTTPException(status_code=404, detail="Notice of Deficiency not found")
+    return nod
+
+
+@router.post("/claimed/{reference_no}/nods/{nod_number}/extend", response_model=NodOut)
+def post_nod_extension(
+    reference_no: str,
+    nod_number: int,
+    payload: NodExtendRequest,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    nod = _load_nod_for_evaluator(internal_db, reference_no, nod_number, current_user)
+    try:
+        extend_nod(nod, current_user.user_uuid, payload.new_due_date, payload.reason)
+        internal_db.commit()
+    except ValueError as err:
+        internal_db.rollback()
+        raise HTTPException(status_code=422, detail=str(err))
+    internal_db.refresh(nod)
+    return _nod_out(nod)
+
+
+@router.post("/claimed/{reference_no}/nods/{nod_number}/receive", response_model=NodOut)
+def post_nod_documents_received(
+    reference_no: str,
+    nod_number: int,
+    payload: NodReceiveRequest,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    nod = _load_nod_for_evaluator(internal_db, reference_no, nod_number, current_user)
+    try:
+        receive_documents(
+            nod, current_user.user_uuid, payload.received_ids, payload.received_date
+        )
+        internal_db.commit()
+    except ValueError as err:
+        internal_db.rollback()
+        raise HTTPException(status_code=422, detail=str(err))
+    internal_db.refresh(nod)
+    return _nod_out(nod)
+
+
+def _worksheet_response(internal_db: Session, application, can_edit: bool) -> dict:
+    # The evaluator sees their latest version, even a draft. Everyone else sees
+    # the latest version that was sent on.
+    row = latest_worksheet(
+        internal_db, application.application_uuid, submitted_only=not can_edit
+    )
+    return {
+        "worksheet": build_worksheet_out(internal_db, row) if row else None,
+        "can_edit": can_edit,
+    }
+
+
+@router.get("/claimed/{reference_no}/worksheet", response_model=WorksheetResponse)
+def get_worksheet(
+    reference_no: str,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    """The GMP Clearance Worksheet. Same access rule as the application itself:
+    only people who have worked on it."""
+    application = (
+        internal_db.query(EApplication)
+        .filter(EApplication.reference_number == reference_no)
+        .first()
+    )
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    has_access = (
+        internal_db.query(EAppHistory.history_uuid)
+        .filter(
+            EAppHistory.application_uuid == application.application_uuid,
+            EAppHistory.user_uuid == current_user.user_uuid,
+        )
+        .first()
+        is not None
+    )
+    if not has_access:
+        raise HTTPException(
+            status_code=403, detail="You do not have access to this application"
+        )
+    task = open_task_held_by(
+        internal_db, application.application_uuid, current_user.user_uuid
+    )
+    can_edit = bool(task and task.application_step == EVALUATOR_STEP)
+    return _worksheet_response(internal_db, application, can_edit)
+
+
+@router.put("/claimed/{reference_no}/worksheet", response_model=WorksheetResponse)
+def put_worksheet(
+    reference_no: str,
+    payload: WorksheetIn,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    """Auto-save while the evaluator types. Only the evaluator holding the
+    Quality Evaluation task may save."""
+    application, task = _require_step_holder(internal_db, reference_no, current_user)
+    if task.application_step != EVALUATOR_STEP:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Only the {EVALUATOR_STEP} step can change the worksheet",
+        )
+    try:
+        save_worksheet_draft(
+            internal_db, application, current_user.user_uuid, payload.model_dump()
+        )
+        internal_db.commit()
+    except ValueError as err:
+        internal_db.rollback()
+        raise HTTPException(status_code=422, detail=str(err))
+    except Exception:
+        internal_db.rollback()
+        logger.exception("Unexpected error saving the worksheet for %s", reference_no)
+        raise HTTPException(
+            status_code=500, detail="Unexpected error while saving the worksheet"
+        )
+    return _worksheet_response(internal_db, application, True)
 
 
 @router.post(
@@ -643,7 +883,7 @@ def post_decking_decision(
     # the assigned evaluator must really be an active evaluator
     if payload.evaluator_uuid:
         is_valid = (
-            _evaluators_query(internal_db)
+            _evaluators_query(internal_db, current_user)
             .filter(User.user_uuid == payload.evaluator_uuid)
             .first()
             is not None

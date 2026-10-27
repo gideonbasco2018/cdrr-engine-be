@@ -34,6 +34,8 @@ from app.models.e_app_documents import EAppDocument
 from app.models.e_app_order_of_payment import EAppOrderOfPayment
 from app.models.e_app_payment_verification import EAppPaymentVerification
 from app.models.e_app_table_of_changes import EAppTableOfChanges
+from app.models.e_app_notice_of_deficiency import EAppNoticeOfDeficiency
+from app.models.e_app_fgmp_worksheet import EAppFgmpWorksheet
 
 
 from app.models.e_application_ref import EApplicationRef

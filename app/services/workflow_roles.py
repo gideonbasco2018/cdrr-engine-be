@@ -6,7 +6,10 @@ from app.models.workflow_role_group import WorkflowRoleGroup
 ROLE_CASHIER = "cashier"
 ROLE_DECKER = "decker"
 ROLE_EVALUATOR = "evaluator"
-ALL_ROLES = (ROLE_CASHIER, ROLE_DECKER, ROLE_EVALUATOR)
+# Who an FGMP decker may assign. FGMP has its own evaluators, so they are not
+# in the evaluator role above (which Decking uses for everything else).
+ROLE_FGMP_EVALUATOR = "fgmp_evaluator"
+ALL_ROLES = (ROLE_CASHIER, ROLE_DECKER, ROLE_EVALUATOR, ROLE_FGMP_EVALUATOR)
 
 
 def get_role_group_ids(db: Session, role_key: str) -> set[int]:

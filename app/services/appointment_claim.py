@@ -9,6 +9,7 @@ from app.models.e_app_parties import EAppParty
 from app.models.e_application import EApplication
 from app.models.e_application_ref import EApplicationRef
 from app.models.e_process import EProcess
+from app.services.fgmp_claim import FGMP_PROCESS_CODE, create_fgmp_details
 
 CLAIM_STEP = "Payment Verification/Posting"
 CLAIM_STATUS = "IN PROGRESS"
@@ -64,28 +65,32 @@ def claim_record(db: Session, record: AppointmentRecord, user_uuid: str) -> str:
     db.add(ref)
     db.flush()  # ref_uuid is needed as the PK of e_application
 
-    db.add(
-        EApplication(
-            application_uuid=ref.ref_uuid,
-            reference_number=record.reference_no,
-            activity=record.activity,
-            applicant_company=record.company_name,
-            email_address=record.applicant_email,
-            contact_no=record.applicant_phone,
-            address=_text(form.get("Address")),
-            tin=_text(form.get("TIN")),
-            lto_no=_text(form.get("LTO No.")),
-            application_type=_text(form.get("Application Type")),
-            source_system="appointment",
-            source_id=record.id,
-            drive_folder_id=record.drive_folder_id,
-            drive_link=record.drive_link,
-            form_data=record.form_data,
-            worksheet_data=record.worksheet_data,
-            files_summary=record.files_summary,
-        )
+    application = EApplication(
+        application_uuid=ref.ref_uuid,
+        reference_number=record.reference_no,
+        activity=record.activity,
+        applicant_company=record.company_name,
+        email_address=record.applicant_email,
+        contact_no=record.applicant_phone,
+        address=_text(form.get("Address")),
+        tin=_text(form.get("TIN")),
+        # the FGMP form calls it "LTO Number"
+        lto_no=_text(form.get("LTO No.") or form.get("LTO Number")),
+        application_type=_text(form.get("Application Type")),
+        source_system="appointment",
+        source_id=record.id,
+        drive_folder_id=record.drive_folder_id,
+        drive_link=record.drive_link,
+        form_data=record.form_data,
+        worksheet_data=record.worksheet_data,
+        files_summary=record.files_summary,
     )
+    db.add(application)
     db.flush()  # a duplicate reference_number fails here (unique constraint)
+
+    # FGMP-only values live in their own table, not on the general record
+    if process.process_code == FGMP_PROCESS_CODE:
+        create_fgmp_details(db, application)
 
     # form_data -> e_app_parties (one row per party that has a name)
     for party_type in PARTY_TYPES:

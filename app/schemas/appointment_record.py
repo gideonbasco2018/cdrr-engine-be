@@ -267,6 +267,91 @@ class StepActionOut(BaseModel):
     next_step: Optional[str] = None
 
 
+class NodIssueRequest(BaseModel):
+    """The Notice of Deficiency a For Compliance decision issues."""
+
+    deficiencies: str = Field(min_length=1, max_length=5000)
+    # The documents asked for, typed by the evaluator (blank ones are dropped)
+    documents: list[str] = Field(default_factory=list, max_length=30)
+
+
+class WorksheetFormRow(BaseModel):
+    """One row of Annex B or of the Approved Medicinal Products table."""
+
+    dosage_forms: list[str] = Field(default_factory=list, max_length=40)
+    product_type: Optional[str] = Field(default=None, max_length=100)
+    operations: list[str] = Field(default_factory=list, max_length=40)
+
+
+class WorksheetAnnexRow(BaseModel):
+    """A row the evaluator added to Worksheet B's Annex C."""
+
+    id: str = Field(default="", max_length=40)
+    after: int = Field(default=0, ge=0, le=20)
+    contents: str = Field(default="", max_length=2000)
+    remarks: str = Field(default="", max_length=2000)
+
+
+class WorksheetIn(BaseModel):
+    """Everything the evaluator fills in. The whole worksheet is sent each time."""
+
+    gmp_evidence: list[str] = Field(default_factory=list, max_length=20)
+    issuing_authority: Optional[str] = Field(default=None, max_length=255)
+    issuing_country: Optional[str] = Field(default=None, max_length=100)
+    foreign_certificate_number: Optional[str] = Field(default=None, max_length=100)
+    foreign_certificate_validity: Optional[str] = Field(default=None, max_length=100)
+    inspection_dates: Optional[str] = Field(default=None, max_length=100)
+    date_issued_text: Optional[str] = Field(default=None, max_length=5000)
+    approved_dosage_forms_note: Optional[str] = Field(default=None, max_length=5000)
+    applied_forms: list[WorksheetFormRow] = Field(default_factory=list, max_length=100)
+    approved_products: list[WorksheetFormRow] = Field(default_factory=list, max_length=100)
+    remarks: Optional[str] = Field(default=None, max_length=5000)
+    compliance_notes: Optional[str] = Field(default=None, max_length=5000)
+    recommendation: Optional[
+        Literal["APPROVED", "FOR INSPECTION", "FOR COMPLIANCE", "DENIAL"]
+    ] = None
+    annex_c: dict[str, str] = Field(default_factory=dict)
+    annex_rows: list[WorksheetAnnexRow] = Field(default_factory=list, max_length=100)
+
+
+# `date` is also the name of a field below, which would hide the type inside
+# that class; the alias keeps it usable.
+DateOnly = date
+
+
+class WorksheetPerson(BaseModel):
+    name: Optional[str] = None
+    designation: Optional[str] = None
+
+
+class WorksheetEvaluator(WorksheetPerson):
+    # the day each round was sent on, oldest first
+    dates: list[DateOnly] = []
+
+
+class WorksheetChecker(WorksheetPerson):
+    # empty until the Checker sends their decision
+    date: Optional[DateOnly] = None
+
+
+class WorksheetOut(WorksheetIn):
+    version: int
+    status: str  # DRAFT | SUBMITTED
+    variant: str  # A | B
+    saved_at: datetime
+    # these fill themselves from who did the work and when
+    evaluated_by: WorksheetEvaluator
+    checked_by: Optional[WorksheetChecker] = None
+
+
+class WorksheetResponse(BaseModel):
+    # None when no worksheet has been saved (or none has been sent on yet, for
+    # a reader who is not the evaluator)
+    worksheet: Optional[WorksheetOut] = None
+    # True only for the evaluator holding the Quality Evaluation task
+    can_edit: bool = False
+
+
 class StepDecisionRequest(BaseModel):
     decision: str = Field(min_length=1, max_length=100)
     remarks: Optional[str] = Field(default=None, max_length=500)
@@ -275,6 +360,11 @@ class StepDecisionRequest(BaseModel):
     assignee_uuid: Optional[str] = None
     # Optional; only the step that decides it may set it (the Evaluator)
     type_of_issuance: Optional[str] = Field(default=None, max_length=255)
+    # Required with For Compliance, not allowed with any other action
+    nod: Optional[NodIssueRequest] = None
+    # The evaluator's final worksheet, sent with the decision so the last
+    # keystrokes are never lost. Forwarding the application locks it.
+    worksheet: Optional[WorksheetIn] = None
 
 
 class StepDecisionResult(BaseModel):
@@ -284,3 +374,33 @@ class StepDecisionResult(BaseModel):
     next_step: Optional[str] = None
     assignee_uuid: Optional[str] = None
     type_of_issuance: Optional[str] = None
+    nod_number: Optional[int] = None
+
+
+class NodExtendRequest(BaseModel):
+    new_due_date: date
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class NodReceiveRequest(BaseModel):
+    # ids of the requested documents that came in (the "id" in each entry)
+    received_ids: list[str] = Field(default_factory=list, max_length=30)
+    received_date: Optional[date] = None
+
+
+class NodOut(BaseModel):
+    nod_number: int
+    activity: str
+    deficiencies: str
+    requested_documents: list[dict[str, Any]] = []
+    issued_date: date
+    working_days: int
+    due_date: date
+    extended_due_date: Optional[date] = None
+    extension_reason: Optional[str] = None
+    extended_at: Optional[datetime] = None
+    documents_received_date: Optional[date] = None
+    # WAITING | COMPLIED | CLOSED. "Overdue" is worked out from the dates.
+    status: str
+    issued_by: Optional[str] = None
+    email_sent_at: Optional[datetime] = None

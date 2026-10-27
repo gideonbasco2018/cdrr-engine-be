@@ -21,8 +21,14 @@ from app.services.appointment_payment import (
     CLOSED_THREAD,
     COMPLETED_STATUS,
 )
+from app.services.fgmp_nod import issue_nod
+from app.services.fgmp_worksheet import lock_for_forwarding, save_draft
 
 NEXT_STATUS = "IN PROGRESS"
+
+# The action that sends the application back to the applicant. Choosing it
+# issues a Notice of Deficiency (see app/services/fgmp_nod.py).
+COMPLIANCE_ACTION = "For Compliance"
 
 # Step labels, also used as the tab titles on the e-application page
 DECKER_STEP = "Decking"
@@ -214,15 +220,32 @@ def submit_step_decision(
     remarks: str | None,
     assignee_uuid: str | None,
     type_of_issuance: str | None = None,
+    nod: dict | None = None,
+    worksheet: dict | None = None,
 ) -> dict:
     """Close the user's open task and, unless the action ends the workflow,
     open the next step's task.
+
+    `nod` ({"deficiencies": str, "documents": [str]}) is required for, and only
+    allowed with, the For Compliance action: it becomes a Notice of Deficiency
+    saved in the same transaction.
+
+    `worksheet` is the evaluator's final GMP Clearance Worksheet. It is saved
+    with the decision, and locked (SUBMITTED) when the evaluator forwards the
+    application to someone else. For Compliance keeps the same draft.
 
     Does NOT commit. The caller commits or rolls back.
     Raises PermissionError when the task is not held by the user, and
     ValueError for an unknown action or a missing assignee.
     """
     remarks = (remarks or "").strip() or None
+    if decision == COMPLIANCE_ACTION:
+        if not nod:
+            raise ValueError("Write what is lacking for the Notice of Deficiency")
+        # the history keeps the reason even when no remarks were typed
+        remarks = remarks or (nod.get("deficiencies") or "").strip() or None
+    elif nod:
+        raise ValueError(f"A Notice of Deficiency goes only with {COMPLIANCE_ACTION}")
 
     history = (
         db.query(EAppHistory)
@@ -283,6 +306,26 @@ def submit_step_decision(
     history.del_thread = CLOSED_THREAD
     history.del_last_index = CLOSED_LAST_INDEX
 
+    # For Compliance: the NOD is saved with the decision, linked to its row
+    issued_nod = None
+    if decision == COMPLIANCE_ACTION:
+        issued_nod = issue_nod(
+            db,
+            application,
+            history,
+            user_uuid,
+            nod.get("deficiencies"),
+            nod.get("documents"),
+        )
+
+    # The worksheet is the evaluator's. Forwarding it to another person locks
+    # it; any other action (For Compliance) leaves it a draft.
+    if current_step == EVALUATOR_STEP:
+        if next_step and next_step != current_step:
+            lock_for_forwarding(db, application, user_uuid, history, worksheet)
+        elif worksheet is not None:
+            save_draft(db, application, user_uuid, worksheet)
+
     if next_step:
         db.add(
             EAppHistory(
@@ -307,4 +350,5 @@ def submit_step_decision(
         "next_step": next_step,
         "assignee_uuid": assignee_uuid,
         "type_of_issuance": type_of_issuance,
+        "nod_number": issued_nod.nod_number if issued_nod else None,
     }
