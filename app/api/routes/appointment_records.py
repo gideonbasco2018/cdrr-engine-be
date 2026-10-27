@@ -692,26 +692,9 @@ def get_nods(
 ):
     """The Notices of Deficiency issued on an application. Same access rule as
     the application itself: only people who have worked on it."""
-    application = (
-        internal_db.query(EApplication)
-        .filter(EApplication.reference_number == reference_no)
-        .first()
+    application, _ = _get_accessible_application(
+        internal_db, reference_no, current_user
     )
-    if not application:
-        raise HTTPException(status_code=404, detail="Application not found")
-    has_access = (
-        internal_db.query(EAppHistory.history_uuid)
-        .filter(
-            EAppHistory.application_uuid == application.application_uuid,
-            EAppHistory.user_uuid == current_user.user_uuid,
-        )
-        .first()
-        is not None
-    )
-    if not has_access:
-        raise HTTPException(
-            status_code=403, detail="You do not have access to this application"
-        )
     return [_nod_out(n) for n in list_nods(internal_db, application.application_uuid)]
 
 
@@ -801,26 +784,9 @@ def get_worksheet(
 ):
     """The GMP Clearance Worksheet. Same access rule as the application itself:
     only people who have worked on it."""
-    application = (
-        internal_db.query(EApplication)
-        .filter(EApplication.reference_number == reference_no)
-        .first()
+    application, _ = _get_accessible_application(
+        internal_db, reference_no, current_user
     )
-    if not application:
-        raise HTTPException(status_code=404, detail="Application not found")
-    has_access = (
-        internal_db.query(EAppHistory.history_uuid)
-        .filter(
-            EAppHistory.application_uuid == application.application_uuid,
-            EAppHistory.user_uuid == current_user.user_uuid,
-        )
-        .first()
-        is not None
-    )
-    if not has_access:
-        raise HTTPException(
-            status_code=403, detail="You do not have access to this application"
-        )
     task = open_task_held_by(
         internal_db, application.application_uuid, current_user.user_uuid
     )
