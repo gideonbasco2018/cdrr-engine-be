@@ -563,3 +563,19 @@ def evaluator_app_types_endpoint(
     return crud_monitoring.get_evaluator_app_types(
         db, date_from=date_from, date_to=date_to
     )
+
+
+@router.get(
+    "/in-progress-summary",
+    summary="In-progress task count per user, with unit and application type breakdown",
+)
+def in_progress_summary_endpoint(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """
+    For every active user: in-progress task count, unit (team), group (role),
+    and a breakdown by classification / processing type / entry type. Used by
+    the In Progress monitoring modal (Per User, Per Unit and Per Group tabs).
+    """
+    return crud_monitoring.get_in_progress_summary(db)
