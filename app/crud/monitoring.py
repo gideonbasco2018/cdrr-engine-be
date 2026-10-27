@@ -22,6 +22,7 @@ from app.models.application_logs import ApplicationLogs
 from app.models.user import User
 from app.models.user_groups import UserGroup
 import math
+from app.models.group import Group
 
 # Excluded action types across both queries
 EXCLUDED_ACTION_TYPES = ("REROUTE", "REASSIGNMENT")
@@ -1418,3 +1419,120 @@ def get_evaluator_app_types(
         unit["totals"] = unit_totals
 
     return {"columns": columns, "steps": ordered_steps, "units": result}
+
+
+_RX_SHORT = {
+    "Prescription Drug (RX)": "RX",
+    "Over-the-Counter (OTC)": "OTC",
+}
+
+
+def get_in_progress_summary(db: Session) -> dict:
+    """
+    In-progress task count per active user, with:
+      - the user's unit (team) from the active LeadAssignment
+      - the user's group (functional role) from that SAME assignment, so the
+        unit and the role always belong together
+      - a breakdown by product combination (classification / processing type /
+        entry type)
+
+    The in_progress number uses the same rule as get_users_task_summary
+    (count of application_logs rows with status IN PROGRESS, excluding
+    REROUTE / REASSIGNMENT), so the totals match the In Progress modal.
+    MainDB is outer-joined so a log without a MainDB row is still counted.
+
+    A user assigned to several units is shown under the first one
+    (alphabetical), so no task is counted twice. A user without an active
+    assignment falls back to their first UserGroup and has no unit.
+    """
+    rows = (
+        _exclude_action_types(
+            db.query(
+                ApplicationLogs.user_id.label("user_id"),
+                _clean_text(MainDB.DB_PROD_CLASS_PRESCRIP).label("prescription"),
+                _processing_type_expr().label("processing_type"),
+                _entry_type_expr().label("entry_type"),
+                func.count(ApplicationLogs.id).label("cnt"),
+            )
+            .outerjoin(MainDB, MainDB.DB_ID == ApplicationLogs.main_db_id)
+            .filter(
+                ApplicationLogs.user_id.isnot(None),
+                func.upper(ApplicationLogs.application_status) == "IN PROGRESS",
+            )
+        )
+        .group_by(
+            ApplicationLogs.user_id,
+            "prescription",
+            "processing_type",
+            "entry_type",
+        )
+        .all()
+    )
+
+    # user_id -> { label: count }
+    types_by_user: dict[int, dict[str, int]] = {}
+    for r in rows:
+        rx = _RX_SHORT.get(r.prescription, r.prescription)
+        label = f"{rx} · {r.processing_type} / {r.entry_type}"
+        bucket = types_by_user.setdefault(r.user_id, {})
+        bucket[label] = bucket.get(label, 0) + int(r.cnt)
+
+    # user_id -> (unit_id, unit_name, group_id, group_name) from the first
+    # active assignment (unit and role come from the same row)
+    assignment_rows = (
+        db.query(
+            LeadAssignment.member_user_id,
+            Unit.id,
+            Unit.name,
+            Group.id,
+            Group.name,
+        )
+        .join(Unit, Unit.id == LeadAssignment.unit_id)
+        .join(Group, Group.id == LeadAssignment.group_id)
+        .filter(LeadAssignment.is_active.is_(True), Unit.is_active.is_(True))
+        .order_by(Unit.name, Group.name)
+        .all()
+    )
+    assignment_of: dict[int, tuple] = {}
+    for member_id, unit_id, unit_name, group_id, group_name in assignment_rows:
+        assignment_of.setdefault(member_id, (unit_id, unit_name, group_id, group_name))
+
+    # Fallback group for users without an active assignment
+    user_group_rows = (
+        db.query(UserGroup.user_id, Group.id, Group.name)
+        .join(Group, Group.id == UserGroup.group_id)
+        .order_by(Group.name)
+        .all()
+    )
+    fallback_group_of: dict[int, tuple] = {}
+    for user_id, group_id, group_name in user_group_rows:
+        fallback_group_of.setdefault(user_id, (group_id, group_name))
+
+    users = db.query(User).filter(User.is_active == True).all()  # noqa: E712
+
+    data = []
+    for u in users:
+        types = types_by_user.get(u.id, {})
+        if u.id in assignment_of:
+            unit_id, unit_name, group_id, group_name = assignment_of[u.id]
+        else:
+            unit_id, unit_name = None, None
+            group_id, group_name = fallback_group_of.get(u.id, (None, None))
+        data.append(
+            {
+                "user_id": u.id,
+                "full_name": f"{u.first_name} {u.surname}".strip(),
+                "unit_id": unit_id,
+                "unit_name": unit_name,
+                "group_id": group_id,
+                "group_name": group_name,
+                "in_progress": sum(types.values()),
+                "by_type": [
+                    {"label": label, "count": n}
+                    for label, n in sorted(types.items(), key=lambda kv: -kv[1])
+                ],
+            }
+        )
+
+    data.sort(key=lambda d: -d["in_progress"])
+    return {"total_users": len(data), "data": data}
