@@ -272,8 +272,25 @@ def get_company_monitoring(
     by_year = year in (None, "", "All")
     rec_grp = (func.year(rec) if by_year else func.month(rec)).label("grp")
     rel_grp = (func.year(rel) if by_year else func.month(rel)).label("grp")
+    done = and_(_completed(), rel_ok)
+
+    def blank():
+        return {
+            "received": 0,
+            "processed": 0,
+            "avg_tat": None,
+            # of the applications RECEIVED in the period: how many are released
+            "released_of_received": 0,
+            "avg_tat_received": None,
+        }
+
     rec_rows = (
-        db.query(rec_grp, func.count(MainDB.DB_ID).label("n"))
+        db.query(
+            rec_grp,
+            func.count(MainDB.DB_ID).label("n"),
+            func.sum(case((done, 1), else_=0)).label("rel"),
+            func.avg(case((and_(done, tat_ok), days))).label("avg"),
+        )
         .filter(in_company, rec_ok, *_period(rec, year, month))
         .group_by("grp")
         .all()
@@ -291,24 +308,33 @@ def get_company_monitoring(
     buckets = {}
     for r in rec_rows:
         if r.grp is not None:
-            buckets.setdefault(
-                int(r.grp), {"received": 0, "processed": 0, "avg_tat": None}
-            )["received"] = int(r.n)
+            b = buckets.setdefault(int(r.grp), blank())
+            b["received"] = int(r.n)
+            b["released_of_received"] = int(r.rel or 0)
+            b["avg_tat_received"] = _r1(r.avg)
     for r in rel_rows:
         if r.grp is not None:
-            b = buckets.setdefault(
-                int(r.grp), {"received": 0, "processed": 0, "avg_tat": None}
-            )
+            b = buckets.setdefault(int(r.grp), blank())
             b["processed"] = int(r.n)
             b["avg_tat"] = _r1(r.avg)
     if not by_year:
         months = [int(month)] if month not in (None, "", "All") else range(1, 13)
         for m in months:
-            buckets.setdefault(m, {"received": 0, "processed": 0, "avg_tat": None})
+            buckets.setdefault(m, blank())
     periods = [
         {"label": str(k) if by_year else MONTH_ABBR[k], "key": k, **buckets[k]}
         for k in sorted(buckets)
     ]
+
+    # Totals for the "received" view
+    rc = (
+        db.query(
+            func.sum(case((done, 1), else_=0)),
+            func.avg(case((and_(done, tat_ok), days))),
+        )
+        .filter(in_company, rec_ok, *_period(rec, year, month))
+        .one()
+    )
 
     # Evaluators (for the chosen basis)
     ev1 = _evaluator_subquery(db)
@@ -350,6 +376,8 @@ def get_company_monitoring(
             "within": within,
             "beyond": beyond,
             "no_charter": tat_count - within - beyond,
+            "released_of_received": int(rc[0] or 0),
+            "avg_tat_received": _r1(rc[1]),
         },
         "periods": periods,
         "evaluators": evaluators,
