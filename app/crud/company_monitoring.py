@@ -512,3 +512,156 @@ def get_company_records(
         )
 
     return {"total": int(total), "page": page, "page_size": page_size, "data": data}
+
+
+# ── 4. Released applications by type of document released ────
+def get_company_released_docs(
+    db: Session,
+    companies: list,
+    year: str = "All",
+    month: str = "All",
+    view: str = "released",
+) -> dict:
+    """Breakdown of the released applications by DB_TYPE_DOC_RELEASED.
+
+    view = "received": received in the period AND already released (any date).
+    view = "released": released (processed) in the period.
+    Same filters as the numbers shown in the monitoring table.
+    """
+    view = "received" if view == "received" else "released"
+    keys = _norms(companies)
+    rec, rel = _dates()
+    rec_ok = _valid(MainDB.DB_DATE_RECEIVED_CENT, rec)
+    rel_ok = _valid(MainDB.DB_DATE_RELEASED, rel)
+    done = and_(_completed(), rel_ok)
+    tat_ok = and_(rec_ok, rel >= rec)
+    days = _workdays(rec, rel)
+
+    if view == "received":
+        period = [rec_ok, *_period(rec, year, month)]
+    else:
+        period = [*_period(rel, year, month)]
+
+    doc = func.coalesce(
+        func.nullif(func.trim(MainDB.DB_TYPE_DOC_RELEASED), ""), "No document type"
+    )
+    rows = (
+        db.query(
+            doc.label("doc"),
+            func.count(MainDB.DB_ID).label("n"),
+            func.avg(case((tat_ok, days))).label("avg"),
+        )
+        .filter(_in_companies(keys), done, *period)
+        .group_by(doc)
+        .order_by(func.count(MainDB.DB_ID).desc(), doc)
+        .all()
+    )
+    total = sum(int(r.n) for r in rows)
+    return {
+        "view": view,
+        "year": year,
+        "month": month,
+        "total": total,
+        "data": [
+            {
+                "doc": r.doc,
+                "count": int(r.n),
+                "percent": round(int(r.n) * 100 / total, 1) if total else 0,
+                "avg_tat": _r1(r.avg),
+            }
+            for r in rows
+        ],
+    }
+
+
+# ── 5. Applications of one document type (expand sa modal) ───
+def get_company_released_doc_records(
+    db: Session,
+    companies: list,
+    doc: str,
+    year: str = "All",
+    month: str = "All",
+    view: str = "released",
+    page: int = 1,
+    page_size: int = 10,
+) -> dict:
+    """Applications behind one row of get_company_released_docs (same filters)."""
+    view = "received" if view == "received" else "released"
+    keys = _norms(companies)
+    rec, rel = _dates()
+    rec_ok = _valid(MainDB.DB_DATE_RECEIVED_CENT, rec)
+    rel_ok = _valid(MainDB.DB_DATE_RELEASED, rel)
+    done = and_(_completed(), rel_ok)
+    days = case((and_(rec_ok, rel >= rec), _workdays(rec, rel)), else_=None)
+
+    if view == "received":
+        period = [rec_ok, *_period(rec, year, month)]
+    else:
+        period = [*_period(rel, year, month)]
+
+    docx = func.coalesce(
+        func.nullif(func.trim(MainDB.DB_TYPE_DOC_RELEASED), ""), "No document type"
+    )
+    ev1 = _evaluator_subquery(db)
+
+    def scoped(q):
+        return (
+            q.select_from(MainDB)
+            .outerjoin(ev1, ev1.c.main_db_id == MainDB.DB_ID)
+            .filter(_in_companies(keys), done, docx == doc, *period)
+        )
+
+    total = scoped(db.query(func.count(MainDB.DB_ID))).scalar() or 0
+    rows = (
+        scoped(
+            db.query(
+                MainDB.DB_ID.label("id"),
+                MainDB.DB_DTN.label("dtn"),
+                MainDB.DB_PROD_BR_NAME.label("brand"),
+                MainDB.DB_PROD_GEN_NAME.label("generic"),
+                MainDB.DB_DATE_RECEIVED_CENT.label("received"),
+                MainDB.DB_DATE_RELEASED.label("released"),
+                MainDB.DB_TIMELINE_CITIZEN_CHARTER.label("charter"),
+                days.label("days"),
+                ev1.c.user_id.label("ev_id"),
+                ev1.c.user_name.label("ev_name"),
+            )
+        )
+        .order_by(rec.desc(), MainDB.DB_ID.desc())
+        .offset((max(page, 1) - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    names = _names(db, [r.ev_id for r in rows])
+
+    def _d(v):
+        s = str(v)[:10] if v else None
+        return None if s in (None, "", "N/A") else s
+
+    data = []
+    for r in rows:
+        tat = int(r.days) if r.days is not None else None
+        charter = int(r.charter) if r.charter else None
+        if tat is None or not charter:
+            timeline = "N/A"
+        else:
+            timeline = "Within" if tat <= charter else "Beyond"
+        brand, generic = r.brand or "", r.generic or ""
+        data.append(
+            {
+                "db_id": r.id,
+                "dtn": str(r.dtn) if r.dtn else None,
+                "drug": (
+                    f"{brand} ({generic})"
+                    if brand and generic
+                    else brand or generic or None
+                ),
+                "date_received": _d(r.received),
+                "date_released": _d(r.released),
+                "tat_days": tat,
+                "charter_days": charter,
+                "timeline": timeline,
+                "evaluator": _evaluator(r.ev_id, r.ev_name, names),
+            }
+        )
+    return {"total": int(total), "page": page, "page_size": page_size, "data": data}
