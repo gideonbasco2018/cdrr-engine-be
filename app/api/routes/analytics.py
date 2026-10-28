@@ -439,3 +439,39 @@ def get_company_monitoring_records_route(
         page=page,
         page_size=page_size,
     )
+
+
+@router.get("/company-monitoring/released-docs")
+def get_company_released_docs_route(
+    company: List[str] = Query(..., description="One or more company names"),
+    year: str = Query("All"),
+    month: str = Query("All"),
+    view: str = Query("released", description="received|released"),
+    db: Session = Depends(get_db),
+):
+    return crud_company_monitoring.get_company_released_docs(
+        db, companies=company, year=year, month=month, view=view
+    )
+
+
+@router.get("/company-monitoring/released-docs/records")
+def get_company_released_doc_records_route(
+    company: List[str] = Query(..., description="One or more company names"),
+    doc: str = Query(..., description="Document type, or 'No document type'"),
+    year: str = Query("All"),
+    month: str = Query("All"),
+    view: str = Query("released", description="received|released"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    return crud_company_monitoring.get_company_released_doc_records(
+        db,
+        companies=company,
+        doc=doc,
+        year=year,
+        month=month,
+        view=view,
+        page=page,
+        page_size=page_size,
+    )
