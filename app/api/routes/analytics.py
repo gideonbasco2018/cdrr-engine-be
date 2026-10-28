@@ -475,3 +475,32 @@ def get_company_released_doc_records_route(
         page=page,
         page_size=page_size,
     )
+
+
+@router.get("/company-monitoring/kpi-records")
+def get_company_kpi_records_route(
+    company: List[str] = Query(..., description="One or more company names"),
+    kind: str = Query(..., description="received|processed|open|tat|within|beyond"),
+    year: str = Query("All"),
+    month: str = Query("All"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(15, ge=1, le=200),
+    search: str = Query(None, description="DTN or drug name"),
+    state: str = Query(None, description="released|open"),
+    doc: str = Query(None, description="Document type released"),
+    result: str = Query(None, description="within|beyond|none"),
+    db: Session = Depends(get_db),
+):
+    return crud_company_monitoring.get_company_kpi_records(
+        db,
+        companies=company,
+        kind=kind,
+        year=year,
+        month=month,
+        page=page,
+        page_size=page_size,
+        search=search,
+        state=state,
+        doc=doc,
+        result=result,
+    )
