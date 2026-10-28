@@ -1,12 +1,15 @@
 # app/crud/gmp_analytics.py
 
+import calendar
 import re
 from collections import Counter
+from datetime import date, timedelta
 from typing import Dict
 from sqlalchemy.orm import Session
-from sqlalchemy import case, func, Float, Integer, String, cast, literal, text
+from sqlalchemy import and_, or_, case, func, Float, Integer, String, cast, literal, text
 from app.models.gmp_record import GMPRecord, GMPApplicationLogs
 from app.crud.gmp_record import GMP_LOG_STEPS, GMP_TERMINAL_STATUSES
+from app.services.fgmp_claim import country_from_address
 
 
 MONTH_ABBR = {
@@ -244,8 +247,12 @@ def get_gmp_analytics_trend(
     month: str = "All",
     est_category: str = "All",
 ) -> list:
+    # All years -> a point per year; one year -> per month; one month -> per day.
+    by_day = year != "All" and month != "All"
     if year == "All":
         group_expr = func.year(GMPRecord.GMP_DATE_RECEIVED).label("grp")
+    elif by_day:
+        group_expr = func.day(GMPRecord.GMP_DATE_RECEIVED).label("grp")
     else:
         group_expr = func.month(GMPRecord.GMP_DATE_RECEIVED).label("grp")
 
@@ -257,10 +264,26 @@ def get_gmp_analytics_trend(
             func.count(GMPRecord.GMP_ID).label("received"),
             _released_case().label("released"),
             _disapproved_case().label("disapproved"),
+            _on_process_case().label("on_process"),
         )
         .group_by("grp")
         .all()
     )
+
+    if by_day:
+        # Every day of the month, so quiet days show as 0 instead of vanishing.
+        found = {int(r.grp): r for r in rows if r.grp is not None}
+        abbr = MONTH_ABBR[int(month)]
+        return [
+            {
+                "label":       f"{abbr} {d}",
+                "received":    int(found[d].received    or 0) if d in found else 0,
+                "released":    int(found[d].released    or 0) if d in found else 0,
+                "disapproved": int(found[d].disapproved or 0) if d in found else 0,
+                "on_process":  int(found[d].on_process  or 0) if d in found else 0,
+            }
+            for d in range(1, calendar.monthrange(int(year), int(month))[1] + 1)
+        ]
 
     result = []
     for r in rows:
@@ -276,6 +299,7 @@ def get_gmp_analytics_trend(
             "received":   int(r.received    or 0),
             "released":   int(r.released    or 0),
             "disapproved": int(r.disapproved or 0),
+            "on_process": int(r.on_process  or 0),
             "_s":         sort_key,
         })
 
@@ -375,38 +399,60 @@ def get_gmp_analytics_by_category(
 
 
 # ── 5. Workflow Step Timing ─────────────────────────────────────
-def get_gmp_analytics_step_timing(db: Session) -> list:
-    duration = func.timestampdiff(text("DAY"), GMPApplicationLogs.start_date, GMPApplicationLogs.accomplished_date)
+def _working_minutes(start, end) -> int:
+    """Minutes between two datetimes with Saturdays and Sundays taken out, so a
+    step that sits over a weekend isn't charged for it. Same weekday rule as
+    _wd_diff (the Avg TAT tile): Monday-Friday, no holiday calendar. Exact to
+    the minute, so a same-day hand-over still shows its hours, not 0."""
+    if end <= start:
+        return 0
+    total = 0
+    day = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    while day <= end:
+        nxt = day + timedelta(days=1)
+        if day.weekday() < 5:
+            total += int((min(end, nxt) - max(start, day)).total_seconds() // 60)
+        day = nxt
+    return total
 
+
+def get_gmp_analytics_step_timing(db: Session) -> list:
+    """Average WORKING time each workflow step took, from its log entries
+    (start -> accomplished), finished entries only. Weekends excluded; values
+    are returned in minutes (`*_minutes`) and in working days (`*_days`)."""
     rows = (
         db.query(
-            GMPApplicationLogs.application_step.label("step"),
-            func.count(GMPApplicationLogs.id).label("total"),
-            func.avg(duration).cast(Float).label("avg_days"),
-            func.min(duration).cast(Integer).label("min_days"),
-            func.max(duration).cast(Integer).label("max_days"),
+            GMPApplicationLogs.application_step,
+            GMPApplicationLogs.start_date,
+            GMPApplicationLogs.accomplished_date,
         )
         .filter(
             GMPApplicationLogs.application_status == "COMPLETED",
             GMPApplicationLogs.start_date.isnot(None),
             GMPApplicationLogs.accomplished_date.isnot(None),
         )
-        .group_by(GMPApplicationLogs.application_step)
         .all()
     )
 
-    by_step = {r.step: r for r in rows}
+    durations: Dict[str, list] = {}
+    for step, start, end in rows:
+        durations.setdefault(step, []).append(_working_minutes(start, end))
+
     result = []
     for step in STEP_ORDER:
-        r = by_step.get(step)
-        if r is None:
+        d = durations.get(step)
+        if not d:
             continue
+        avg = sum(d) / len(d)
         result.append({
-            "step":      step,
-            "total":     int(r.total or 0),
-            "avg_days":  round(r.avg_days, 2) if r.avg_days is not None else None,
-            "min_days":  r.min_days,
-            "max_days":  r.max_days,
+            "step":        step,
+            "total":       len(d),
+            "avg_days":    round(avg / 1440, 2),
+            "min_days":    min(d) // 1440,
+            "max_days":    max(d) // 1440,
+            "avg_minutes": round(avg, 1),
+            "min_minutes": min(d),
+            "max_minutes": max(d),
         })
     return result
 
@@ -701,7 +747,14 @@ def get_gmp_analytics_pics_country(
 
     for r in rows:
         country = _match_pics_country(r.GMP_FOREIGN_MANUFACTURER_ADDRESS)
-        key = country or OTHER
+        # The bar chart names every country, not only PIC/S members. `country`
+        # stays PIC/S-only: the mismatch check below depends on that.
+        shown = country
+        if not shown:
+            other = country_from_address(r.GMP_FOREIGN_MANUFACTURER_ADDRESS)
+            # Same spelling as the PIC/S list ("Taiwan" -> "Chinese Taipei"), so one country is never split in two bars.
+            shown = _PICS_COUNTRY_ALIASES.get(other.lower(), other) if other else None
+        key = shown or OTHER
         country_counts[key] = country_counts.get(key, 0) + 1
 
         declared = (r.GMP_PICS_NONPICS or "").strip().upper()
@@ -733,14 +786,287 @@ def get_gmp_analytics_pics_country(
             })
 
     by_country = sorted(
-        ({"name": k, "count": v} for k, v in country_counts.items() if k != OTHER),
-        key=lambda x: -x["count"],
+        ({"name": k, "count": v, "pics": k in PICS_MEMBER_COUNTRIES} for k, v in country_counts.items() if k != OTHER),
+        key=lambda x: (-x["count"], x["name"]),
     )[:limit]
     if country_counts.get(OTHER):
-        by_country.append({"name": OTHER, "count": country_counts[OTHER]})
+        by_country.append({"name": OTHER, "count": country_counts[OTHER], "pics": False})
 
     return {
         "by_country":      by_country,
         "mismatch_count":  len(mismatches),
         "mismatches":      mismatches[:mismatch_limit],
+    }
+
+
+# ── 9. Month-by-month summary ─────────────────────────────────
+def get_gmp_analytics_monthly(
+    db: Session,
+    year: str = "All",
+    est_category: str = "All",
+) -> list:
+    """One row per month: how many records were RECEIVED that month, how many
+    of those have since been released / disapproved / are still on process
+    (same cohort view as the trend chart, so the numbers reconcile with the
+    KPI tiles), plus `released_in_month` — records whose Released Date falls
+    in that month regardless of when they were received, i.e. actual output.
+    year="All" lists every month across all years."""
+    rec_year = func.year(GMPRecord.GMP_DATE_RECEIVED)
+    rec_month = func.month(GMPRecord.GMP_DATE_RECEIVED)
+    tat_days = _wd_diff(GMPRecord.GMP_DATE_RECEIVED, GMPRecord.GMP_RELEASED_DATE)
+    has_tat = GMPRecord.GMP_DATE_RECEIVED.isnot(None) & GMPRecord.GMP_RELEASED_DATE.isnot(None)
+
+    cohort = (
+        _base_query(db, year, "All", est_category)
+        .filter(GMPRecord.GMP_DATE_RECEIVED.isnot(None))
+        .with_entities(
+            rec_year.label("yr"),
+            rec_month.label("mo"),
+            func.count(GMPRecord.GMP_ID).label("received"),
+            _released_case().label("released"),
+            _disapproved_case().label("disapproved"),
+            _on_process_case().label("on_process"),
+            func.avg(case((has_tat, tat_days))).cast(Float).label("avg_tat"),
+        )
+        .group_by("yr", "mo")
+        .all()
+    )
+
+    rel_year = func.year(GMPRecord.GMP_RELEASED_DATE)
+    rel_month = func.month(GMPRecord.GMP_RELEASED_DATE)
+    out_q = (
+        db.query(rel_year.label("yr"), rel_month.label("mo"), func.count(GMPRecord.GMP_ID).label("n"))
+        .filter(GMPRecord.GMP_TRASH.is_(None), GMPRecord.GMP_RELEASED_DATE.isnot(None))
+    )
+    if est_category != "All":
+        out_q = out_q.filter(GMPRecord.GMP_EST_CATEGORY == est_category)
+    if year != "All":
+        out_q = out_q.filter(rel_year == int(year))
+    output_by_month = {(int(r.yr), int(r.mo)): int(r.n or 0) for r in out_q.group_by("yr", "mo").all()}
+
+    merged = {}
+    for r in cohort:
+        if r.yr is None or r.mo is None:
+            continue
+        merged[(int(r.yr), int(r.mo))] = {
+            "received":     int(r.received or 0),
+            "released":     int(r.released or 0),
+            "disapproved":  int(r.disapproved or 0),
+            "on_process":   int(r.on_process or 0),
+            "avg_tat_days": round(r.avg_tat, 1) if r.avg_tat is not None else None,
+        }
+    for key in output_by_month:
+        merged.setdefault(key, {"received": 0, "released": 0, "disapproved": 0, "on_process": 0, "avg_tat_days": None})
+
+    result = []
+    for (yr, mo) in sorted(merged):
+        m = merged[(yr, mo)]
+        result.append({
+            "period":            f"{yr}-{mo:02d}",
+            "label":             f"{MONTH_ABBR.get(mo, mo)} {yr}",
+            "received":          m["received"],
+            "released":          m["released"],
+            "disapproved":       m["disapproved"],
+            "on_process":        m["on_process"],
+            "release_rate":      round(m["released"] / m["received"] * 100, 1) if m["received"] else 0.0,
+            "released_in_month": output_by_month.get((yr, mo), 0),
+            "avg_tat_days":      m["avg_tat_days"],
+        })
+    return result
+
+
+# ── 9b. Mini trends for the KPI tiles ─────────────────────────
+def get_gmp_analytics_sparklines(
+    db: Session,
+    year: str = "All",
+    month: str = "All",
+    est_category: str = "All",
+) -> dict:
+    """The series behind the little trend line on each KPI tile: one point per
+    DAY. Same cohort view as the monthly table — each point is the records
+    RECEIVED that day, split by where they stand now. Days with nothing
+    received count as 0, so the line follows the real rhythm of the work.
+      - a month picked: that whole month
+      - otherwise: from the first to the last day that has records, in the
+        picked year (or across all years)
+    """
+    day = GMPRecord.GMP_DATE_RECEIVED
+    tat_days = _wd_diff(GMPRecord.GMP_DATE_RECEIVED, GMPRecord.GMP_RELEASED_DATE)
+    has_tat = GMPRecord.GMP_DATE_RECEIVED.isnot(None) & GMPRecord.GMP_RELEASED_DATE.isnot(None)
+    rows = (
+        _base_query(db, year, month, est_category)
+        .filter(GMPRecord.GMP_DATE_RECEIVED.isnot(None))
+        .with_entities(
+            day.label("d"),
+            func.count(GMPRecord.GMP_ID).label("received"),
+            _released_case().label("released"),
+            _disapproved_case().label("disapproved"),
+            _on_process_case().label("on_process"),
+            func.avg(case((has_tat, tat_days))).cast(Float).label("avg_tat"),
+        )
+        .group_by("d")
+        .all()
+    )
+    by_day = {r.d: r for r in rows if r.d is not None}
+    if not by_day:
+        return {"granularity": "day", "points": []}
+    if year != "All" and month != "All":
+        start = date(int(year), int(month), 1)
+        end = date(int(year), int(month), calendar.monthrange(int(year), int(month))[1])
+    else:
+        start, end = min(by_day), max(by_day)
+
+    points = []
+    for offset in range((end - start).days + 1):
+        d = start + timedelta(days=offset)
+        r = by_day.get(d)
+        points.append({
+            "date":         d.isoformat(),
+            "label":        f"{MONTH_ABBR[d.month]} {d.day}, {d.year}" if year == "All" else f"{MONTH_ABBR[d.month]} {d.day}",
+            "received":     int(r.received or 0) if r else 0,
+            "released":     int(r.released or 0) if r else 0,
+            "disapproved":  int(r.disapproved or 0) if r else 0,
+            "on_process":   int(r.on_process or 0) if r else 0,
+            "avg_tat_days": round(r.avg_tat, 1) if r and r.avg_tat is not None else None,
+        })
+    return {"granularity": "day", "points": points}
+
+
+# ── 10. Data completeness (Date Received / Released Date / Type of Issuance) ──
+# Mirrors CPR's Data Completeness (crud/analytics.py) so both read the same:
+#   Date Received    — always expected
+#   Released Date    — expected once the record is RELEASED / COMPLETED
+#   Type of Issuance — expected once RELEASED / COMPLETED, or a release date exists
+# FGMP stores real DATE columns, so "valid" only means present and in a sane
+# 2000–2100 range (no text like "NOD 90" to catch, unlike CPR).
+def _quality_exprs():
+    def valid(col):
+        return and_(col.isnot(None), func.year(col) >= 2000, func.year(col) <= 2100)
+
+    rec_ok = valid(GMPRecord.GMP_DATE_RECEIVED)
+    rel_ok = valid(GMPRecord.GMP_RELEASED_DATE)
+    status = func.upper(func.trim(func.coalesce(GMPRecord.GMP_APP_STATUS, "")))
+    expects = status.in_(["RELEASED", "COMPLETED"])
+    doc_ok = func.trim(func.coalesce(GMPRecord.GMP_TYPE_OF_ISSUANCE, "")) != ""
+    expects_doc = or_(expects, rel_ok)
+    complete = and_(rec_ok, or_(~expects, rel_ok), or_(~expects_doc, doc_ok))
+    ref_year = case(
+        (rec_ok, func.year(GMPRecord.GMP_DATE_RECEIVED)),
+        (rel_ok, func.year(GMPRecord.GMP_RELEASED_DATE)),
+        else_=None,
+    )
+    return rec_ok, rel_ok, doc_ok, expects, expects_doc, complete, ref_year
+
+
+def get_gmp_analytics_data_quality(db: Session, est_category: str = "All") -> list:
+    rec_ok, rel_ok, doc_ok, expects, expects_doc, complete, ref_year = _quality_exprs()
+
+    q = db.query(
+        ref_year.label("yr"),
+        func.count(GMPRecord.GMP_ID).label("total"),
+        func.sum(case((rec_ok, 1), else_=0)).label("n_rec"),
+        func.sum(case((expects, 1), else_=0)).label("n_exp"),
+        func.sum(case((and_(expects, rel_ok), 1), else_=0)).label("n_rel"),
+        func.sum(case((expects_doc, 1), else_=0)).label("n_expdoc"),
+        func.sum(case((and_(expects_doc, doc_ok), 1), else_=0)).label("n_doc"),
+        func.sum(case((complete, 1), else_=0)).label("n_done"),
+    ).filter(GMPRecord.GMP_TRASH.is_(None))
+    if est_category != "All":
+        q = q.filter(GMPRecord.GMP_EST_CATEGORY == est_category)
+
+    out = []
+    for r in q.group_by("yr").all():
+        total, n_rec, n_exp = int(r.total or 0), int(r.n_rec or 0), int(r.n_exp or 0)
+        n_rel, n_expdoc, n_doc, n_done = int(r.n_rel or 0), int(r.n_expdoc or 0), int(r.n_doc or 0), int(r.n_done or 0)
+        out.append({
+            "year":             str(r.yr) if r.yr is not None else "No Date",
+            "total":            total,
+            "received_filled":  n_rec,
+            "missing_received": total - n_rec,
+            "release_expected": n_exp,
+            "released_filled":  n_rel,
+            "missing_released": n_exp - n_rel,
+            "doc_expected":     n_expdoc,
+            "doc_filled":       n_doc,
+            "missing_doc":      n_expdoc - n_doc,
+            "complete":         n_done,
+            "incomplete":       total - n_done,
+            "completeness":     round(n_done / total * 100, 1) if total else 0.0,
+        })
+    out.sort(key=lambda x: (x["year"] == "No Date", int(x["year"]) if x["year"] != "No Date" else 0))
+    return out
+
+
+def get_gmp_analytics_quality_records(
+    db: Session,
+    year: str = "all",
+    issue: str = "incomplete",
+    page: int = 1,
+    page_size: int = 50,
+    search: str = None,
+) -> dict:
+    """Records behind one Data Completeness cell. issue: incomplete |
+    missing_received | missing_released | missing_doc. year: "all", a year, or
+    "No Date"."""
+    rec_ok, rel_ok, doc_ok, expects, expects_doc, complete, ref_year = _quality_exprs()
+    q = db.query(GMPRecord).filter(GMPRecord.GMP_TRASH.is_(None))
+
+    if year == "No Date":
+        q = q.filter(ref_year.is_(None))
+    elif year != "all":
+        q = q.filter(ref_year == int(year))
+
+    if issue == "missing_received":
+        q = q.filter(~rec_ok)
+    elif issue == "missing_released":
+        q = q.filter(expects, ~rel_ok)
+    elif issue == "missing_doc":
+        q = q.filter(expects_doc, ~doc_ok)
+    else:
+        q = q.filter(~complete)
+
+    if search:
+        s = f"%{search.strip()}%"
+        q = q.filter(or_(
+            cast(GMPRecord.GMP_DTN, String).like(s),
+            GMPRecord.GMP_LTO_COMPANY.like(s),
+        ))
+
+    page = max(1, page)
+    page_size = max(1, min(200, page_size))
+    total = q.count()
+    rows = (
+        q.order_by(GMPRecord.GMP_ID.desc())
+        .offset((page - 1) * page_size).limit(page_size).all()
+    )
+
+    def _missing(r):
+        status = (r.GMP_APP_STATUS or "").strip().upper()
+        released_like = status in ("RELEASED", "COMPLETED")
+        has_rel = r.GMP_RELEASED_DATE is not None
+        miss = []
+        if r.GMP_DATE_RECEIVED is None:
+            miss.append("Date Received")
+        if released_like and not has_rel:
+            miss.append("Released Date")
+        if (released_like or has_rel) and not (r.GMP_TYPE_OF_ISSUANCE or "").strip():
+            miss.append("Type of Issuance")
+        return miss
+
+    return {
+        "data": [{
+            "gmp_id":           r.GMP_ID,
+            "dtn":              str(r.GMP_DTN) if r.GMP_DTN is not None else None,
+            "reference_no":     r.GMP_REFERENCE_NO,
+            "company":          r.GMP_LTO_COMPANY,
+            "status":           r.GMP_APP_STATUS,
+            "current_step":     r.GMP_CURRENT_STEP,
+            "date_received":    str(r.GMP_DATE_RECEIVED) if r.GMP_DATE_RECEIVED is not None else None,
+            "released_date":    str(r.GMP_RELEASED_DATE) if r.GMP_RELEASED_DATE is not None else None,
+            "type_of_issuance": r.GMP_TYPE_OF_ISSUANCE,
+            "missing":          _missing(r),
+        } for r in rows],
+        "total":       total,
+        "page":        page,
+        "total_pages": max(1, -(-total // page_size)),
     }

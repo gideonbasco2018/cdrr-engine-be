@@ -1,5 +1,6 @@
 # app/api/routes/gmp_analytics.py
 
+from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
@@ -17,6 +18,10 @@ from app.schemas.gmp_analytics import (
     GMPAnalyticsAgingResponse,
     GMPAnalyticsNODResponse,
     GMPAnalyticsPicsCountryResponse,
+    GMPAnalyticsMonthlyResponse,
+    GMPAnalyticsSparklinesResponse,
+    GMPAnalyticsDataQualityResponse,
+    GMPAnalyticsQualityRecordsResponse,
 )
 from app.crud import gmp_analytics as crud_gmp_analytics
 
@@ -135,4 +140,45 @@ def get_pics_country(
 ):
     return crud_gmp_analytics.get_gmp_analytics_pics_country(
         db, year=year, month=month, est_category=est_category, limit=limit, mismatch_limit=mismatch_limit
+    )
+
+
+@router.get("/monthly", response_model=GMPAnalyticsMonthlyResponse)
+def get_monthly(
+    year: str = Query("All"),
+    est_category: str = Query("All"),
+    db: Session = Depends(get_db),
+):
+    return {"data": crud_gmp_analytics.get_gmp_analytics_monthly(db, year=year, est_category=est_category)}
+
+
+@router.get("/sparklines", response_model=GMPAnalyticsSparklinesResponse)
+def get_sparklines(
+    year: str = Query("All"),
+    month: str = Query("All"),
+    est_category: str = Query("All"),
+    db: Session = Depends(get_db),
+):
+    return crud_gmp_analytics.get_gmp_analytics_sparklines(db, year=year, month=month, est_category=est_category)
+
+
+@router.get("/data-quality", response_model=GMPAnalyticsDataQualityResponse)
+def get_data_quality(
+    est_category: str = Query("All"),
+    db: Session = Depends(get_db),
+):
+    return {"data": crud_gmp_analytics.get_gmp_analytics_data_quality(db, est_category=est_category)}
+
+
+@router.get("/data-quality/records", response_model=GMPAnalyticsQualityRecordsResponse)
+def get_data_quality_records(
+    year: str = Query("all"),
+    issue: str = Query("incomplete", pattern="^(incomplete|missing_received|missing_released|missing_doc)$"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    search: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    return crud_gmp_analytics.get_gmp_analytics_quality_records(
+        db, year=year, issue=issue, page=page, page_size=page_size, search=search
     )
