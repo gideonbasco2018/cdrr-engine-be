@@ -59,9 +59,22 @@ GMP_LOG_STEPS = [
     ("OD Receiving",    6),
     ("OD Releasing",    7),
     ("FROO",            8),
+    # Appended rather than inserted positionally (del_index doesn't imply
+    # traversal order — see the note above) so every existing step keeps its
+    # number. Sits between OD Receiving and OD Releasing in the actual route
+    # (GMP_ACTION_ROUTES below) and in the frontend's GMP_STEPS display order.
+    ("CDRR-OD Signature Facilitator", 9),
 ]
 
 GMP_STEP_DEL_INDEX: Dict[str, int] = {label: idx for label, idx in GMP_LOG_STEPS}
+
+# The CDRR-OD Signature Facilitator step can be assigned to several people at
+# once (group id 40 — shared with CPR's identical step; same real office).
+# Whoever completes it first wins: advance_step() auto-closes the other open
+# logs for this step on the same record (see gmp_logs.py), mirroring CPR's
+# Step4ActionForm.jsx MULTI_ASSIGNEE_STEPS behavior.
+GMP_SIGNATURE_FACILITATOR_STEP = "CDRR-OD Signature Facilitator"
+GMP_MULTI_ASSIGNEE_STEPS = {GMP_SIGNATURE_FACILITATOR_STEP}
 
 # FROO's step label (group id 37) and the action it takes to hand the NFI back
 # to the Evaluator. OD Releasing no longer routes new records here (the
@@ -116,8 +129,13 @@ GMP_ACTION_ROUTES: Dict[tuple, Optional[str]] = {
     ("LRD Chief Admin", "Return to QA Admin"):        "QA Admin",
     ("LRD Chief Admin", "Disapprove"):                None,
 
-    ("OD Receiving", "Endorsed to OD - Releasing"):   "OD Releasing",
+    # Routes to the Signature Facilitator step (group 40, multi-assignee —
+    # see GMP_MULTI_ASSIGNEE_STEPS above), not straight to OD Releasing.
+    # Action text matches CPR's identical step exactly.
+    ("OD Receiving", "Endorsed to CDRR Director for signature"): GMP_SIGNATURE_FACILITATOR_STEP,
     ("OD Receiving", "Return to LRD Chief Admin"):    "LRD Chief Admin",
+
+    (GMP_SIGNATURE_FACILITATOR_STEP, "Endorsed to OD Releasing"): "OD Releasing",
 
     # OD Releasing is now always the end of the workflow, for every issuance
     # type — it used to redirect NFI issuance types on to FROO instead of

@@ -5,9 +5,9 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from app.services.drive_files import extract_folder_id, list_folder, get_file_bytes
 
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased, joinedload
 
 from app.core.appointment_db import get_appointment_db
 from app.core.deps import get_current_active_user
@@ -26,8 +26,16 @@ from app.schemas.appointment_record import (
     DeckingDecisionResult,
     EvaluatorOut,
     MyTaskItem,
+    NodExtendRequest,
+    NodOut,
+    NodReceiveRequest,
+    WorksheetIn,
+    WorksheetResponse,
     PostPaymentRequest,
     PostPaymentResult,
+    StepActionOut,
+    StepDecisionRequest,
+    StepDecisionResult,
 )
 from app.services.appointment_claim import (
     DEL_LAST_INDEX,
@@ -43,12 +51,41 @@ from app.services.workflow_roles import (
     ROLE_CASHIER,
     ROLE_DECKER,
     ROLE_EVALUATOR,
+    ROLE_FGMP_EVALUATOR,
     get_role_group_ids,
     user_has_role,
 )
 from app.models.group import Group  # ADAPT: real module path of your Group model
+from app.models.e_app_notice_of_deficiency import EAppNoticeOfDeficiency
+from app.services.fgmp_nod import extend_nod, list_nods, receive_documents
+from app.services.fgmp_worksheet import build_out as build_worksheet_out
+from app.services.fgmp_worksheet import latest_row as latest_worksheet
+from app.services.fgmp_worksheet import save_draft as save_worksheet_draft
+from app.services.fgmp_workflow import (
+    CERTIFICATE_ISSUANCE_TYPES,
+    EVALUATOR_STEP,
+    STEP_GROUP_IDS,
+    TYPE_OF_ISSUANCE_OPTIONS,
+    TYPE_OF_ISSUANCE_STEP,
+    actions_for_step,
+    next_certificate_number,
+    open_task_held_by,
+    resolve_next_step,
+    submit_step_decision,
+)
 
 logger = logging.getLogger(__name__)
+
+# Only the process filter below still uses fixed group IDs. Everything else
+# goes through the role lookup in app/services/workflow_roles.py.
+DECKER_GROUP_ID = 2
+
+# FGMP runs its own workflow with its own groups, so an FGMP decker is not a
+# CPR decker and vice versa (see the `groups` table).
+FGMP_PROCESS_CODE = "FGMP"
+FGMP_DECKER_GROUP_ID = 30
+# Which group handles each workflow step lives with the routing table, in
+# app/services/fgmp_workflow.py (STEP_GROUP_IDS).
 
 
 def get_user_group_ids(user) -> list[int]:
@@ -57,7 +94,42 @@ def get_user_group_ids(user) -> list[int]:
 
 
 def is_decker(db, user) -> bool:
-    return user_has_role(db, user, ROLE_DECKER)
+    # FGMP deckers (group 30) count too; the rest comes from the role lookup
+    return user_has_role(db, user, ROLE_DECKER) or (
+        FGMP_DECKER_GROUP_ID in get_user_group_ids(user)
+    )
+
+
+def may_deck_process(user, process_code: str | None) -> bool:
+    """Whether this decker handles that process.
+
+    An FGMP decker only sees Foreign GMP applications, a CPR decker only sees
+    the rest, and someone in both groups sees both.
+    """
+    group_ids = get_user_group_ids(user)
+    sees_fgmp = FGMP_DECKER_GROUP_ID in group_ids
+    sees_others = DECKER_GROUP_ID in group_ids
+    if sees_fgmp and not sees_others:
+        return process_code == FGMP_PROCESS_CODE
+    if sees_others and not sees_fgmp:
+        return process_code != FGMP_PROCESS_CODE
+    return True
+
+
+def limit_to_decker_processes(query, user):
+    """Same rule as may_deck_process, applied to a Decking query."""
+    group_ids = get_user_group_ids(user)
+    sees_fgmp = FGMP_DECKER_GROUP_ID in group_ids
+    sees_others = DECKER_GROUP_ID in group_ids
+    if sees_fgmp and not sees_others:
+        return query.filter(EProcess.process_code == FGMP_PROCESS_CODE)
+    if sees_others and not sees_fgmp:
+        return query.filter(EProcess.process_code != FGMP_PROCESS_CODE)
+    return query
+
+
+# Acting on a workflow step is guarded by "do you hold this task?" rather than
+# by group, so the same check works for every step (see _require_step_holder).
 
 
 def require_decker(db, user) -> None:
@@ -67,8 +139,17 @@ def require_decker(db, user) -> None:
         )
 
 
-def to_task_item(history, app, process_code) -> dict:
+def to_task_item(history, app, process_code, came_from=None) -> dict:
+    """`came_from` is the step that handed this task over (the row at
+    history.del_previous), so an open task can say how it arrived: endorsed,
+    returned, or sent back for compliance."""
+    # FGMP applications carry their own details on a 1:1 child row
+    fgmp = getattr(app, "fgmp", None)
     return {
+        "dtn": fgmp.dtn if fgmp else None,
+        "category": fgmp.category if fgmp else None,
+        "foreign_manufacturer": fgmp.foreign_manufacturer if fgmp else None,
+        "type_of_issuance": fgmp.type_of_issuance if fgmp else None,
         "application_uuid": app.application_uuid,
         "process_code": process_code,
         "reference_number": app.reference_number,
@@ -78,6 +159,11 @@ def to_task_item(history, app, process_code) -> dict:
         "application_step": history.application_step,
         "application_status": history.application_status,
         "application_remarks": history.application_remarks,
+        "application_decision": history.application_decision,
+        "from_decision": came_from[0] if came_from else None,
+        "from_step": came_from[1] if came_from else None,
+        "accomplished_date": history.accomplished_date,
+        "del_index": history.del_index,
         "priority": history.priority,
         "step_duedate": history.step_duedate,
         "deadline_date": history.deadline_date,
@@ -254,20 +340,40 @@ def list_my_tasks(
     internal_db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
+    # The step that handed this task over, so the screen can tell an endorsed
+    # application from one returned or sent back for compliance.
+    previous = aliased(EAppHistory)
     query = (
-        internal_db.query(EAppHistory, EApplication, EProcess.process_code)
+        internal_db.query(
+            EAppHistory,
+            EApplication,
+            EProcess.process_code,
+            previous.application_decision,
+            previous.application_step,
+        )
         .join(
             EApplication,
             EApplication.application_uuid == EAppHistory.application_uuid,
         )
         .join(EProcess, EProcess.process_uuid == EAppHistory.process_uuid)
+        .outerjoin(
+            previous,
+            and_(
+                previous.application_uuid == EAppHistory.application_uuid,
+                previous.del_index == EAppHistory.del_previous,
+            ),
+        )
+        .options(joinedload(EApplication.fgmp))
         .filter(EAppHistory.user_uuid == current_user.user_uuid)
     )
     if scope == "processed":
         query = query.filter(
             EAppHistory.del_thread == "Closed",
             EAppHistory.del_last_index == 0,
-        ).order_by(EAppHistory.accomplished_date.desc())
+        ).order_by(
+            EAppHistory.accomplished_date.desc(),
+            EAppHistory.del_index.desc(),
+        )
     else:
         query = query.filter(
             EAppHistory.del_thread == "Open",
@@ -275,8 +381,8 @@ def list_my_tasks(
         ).order_by(EAppHistory.start_date.desc())
 
     return [
-        to_task_item(history, app, process_code)
-        for history, app, process_code in query.all()
+        to_task_item(history, app, process_code, (from_decision, from_step))
+        for history, app, process_code, from_decision, from_step in query.all()
     ]
 
 
@@ -286,22 +392,24 @@ def list_decking_unclaimed(
     current_user=Depends(get_current_active_user),
 ):
     require_decker(internal_db, current_user)
-    rows = (
+    query = (
         internal_db.query(EAppHistory, EApplication, EProcess.process_code)
         .join(
             EApplication,
             EApplication.application_uuid == EAppHistory.application_uuid,
         )
         .join(EProcess, EProcess.process_uuid == EAppHistory.process_uuid)
+        .options(joinedload(EApplication.fgmp))
         .filter(
             EAppHistory.application_step == DECKING_STEP,
             EAppHistory.user_uuid.is_(None),
             EAppHistory.del_thread == DEL_THREAD_OPEN,
             EAppHistory.del_last_index == DEL_LAST_INDEX,
         )
-        .order_by(EAppHistory.start_date.asc())
-        .all()
     )
+    # An FGMP decker only sees Foreign GMP, a CPR decker only sees the rest
+    query = limit_to_decker_processes(query, current_user)
+    rows = query.order_by(EAppHistory.start_date.asc()).all()
     return [to_task_item(history, app, code) for history, app, code in rows]
 
 
@@ -321,6 +429,17 @@ def claim_decking_tasks(
             .first()
         )
         if not application:
+            results.append(ClaimResult(reference_no=reference_no, result="not_found"))
+            continue
+
+        # Same rule as the pool above: a decker cannot claim another
+        # workflow's application by passing its reference number directly.
+        process_code = (
+            application.app_ref.process.process_code
+            if application.app_ref and application.app_ref.process
+            else None
+        )
+        if not may_deck_process(current_user, process_code):
             results.append(ClaimResult(reference_no=reference_no, result="not_found"))
             continue
 
@@ -351,12 +470,51 @@ def claim_decking_tasks(
     return results
 
 
-def _evaluators_query(internal_db: Session):
+def _group_members_query(internal_db: Session, group_id: int):
     # ADAPT: attribute names (is_active, groups, first_name, surname)
     return internal_db.query(User).filter(
         User.is_active.is_(True),
-        User.groups.any(Group.id.in_(get_role_group_ids(internal_db, ROLE_EVALUATOR))),
+        User.groups.any(id=group_id),
     )
+
+
+def _evaluator_group_ids(internal_db: Session, user) -> set[int]:
+    """The groups whose members this decker may hand an application to.
+
+    Same split as the decking pool: an FGMP decker gets the FGMP evaluators, a
+    CPR decker the usual evaluators, and a decker for both gets both lists.
+    """
+    group_ids = get_user_group_ids(user)
+    sees_fgmp = FGMP_DECKER_GROUP_ID in group_ids
+    sees_others = DECKER_GROUP_ID in group_ids
+    # If an admin has not set the FGMP role yet, fall back to the evaluator
+    # group the FGMP workflow itself uses.
+    fgmp = get_role_group_ids(internal_db, ROLE_FGMP_EVALUATOR) or {
+        STEP_GROUP_IDS[EVALUATOR_STEP]
+    }
+    usual = get_role_group_ids(internal_db, ROLE_EVALUATOR)
+    if sees_fgmp and not sees_others:
+        return fgmp
+    if sees_others and not sees_fgmp:
+        return usual
+    return fgmp | usual
+
+
+def _evaluators_query(internal_db: Session, user):
+    return internal_db.query(User).filter(
+        User.is_active.is_(True),
+        User.groups.any(Group.id.in_(_evaluator_group_ids(internal_db, user))),
+    )
+
+
+def _as_assignee_list(users) -> list[dict]:
+    return [
+        {
+            "user_uuid": u.user_uuid,
+            "name": f"{u.first_name or ''} {u.surname or ''}".strip(),
+        }
+        for u in users
+    ]
 
 
 @router.get("/decking/evaluators", response_model=list[EvaluatorOut])
@@ -365,14 +523,307 @@ def list_evaluators(
     current_user=Depends(get_current_active_user),
 ):
     require_decker(internal_db, current_user)
-    users = _evaluators_query(internal_db).order_by(User.first_name, User.surname).all()
-    return [
-        {
-            "user_uuid": u.user_uuid,
-            "name": f"{u.first_name or ''} {u.surname or ''}".strip(),
-        }
-        for u in users
-    ]
+    users = (
+        _evaluators_query(internal_db, current_user)
+        .order_by(User.first_name, User.surname)
+        .all()
+    )
+    return _as_assignee_list(users)
+
+
+# ── FGMP workflow steps (Quality Evaluation onwards) ──────────────────────
+# The actions, where each leads and which group handles each step all live in
+# app/services/fgmp_workflow.py. These endpoints work for every step, so a new
+# step needs no new endpoint.
+def _require_step_holder(internal_db: Session, reference_no: str, user):
+    """Load the application and the caller's own open task on it."""
+    application = (
+        internal_db.query(EApplication)
+        .filter(EApplication.reference_number == reference_no)
+        .first()
+    )
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+    task = open_task_held_by(internal_db, application.application_uuid, user.user_uuid)
+    if not task:
+        raise HTTPException(
+            status_code=403, detail="This task is not currently assigned to you"
+        )
+    return application, task
+
+
+@router.get("/claimed/{reference_no}/step-actions", response_model=list[StepActionOut])
+def list_step_actions(
+    reference_no: str,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    """What the holder of this task may do at the step it is on."""
+    _, task = _require_step_holder(internal_db, reference_no, current_user)
+    return actions_for_step(task.application_step)
+
+
+@router.get("/workflow/issuance-types", response_model=list[str])
+def list_issuance_types(current_user=Depends(get_current_active_user)):
+    """What may be issued, for the step that decides it."""
+    return TYPE_OF_ISSUANCE_OPTIONS
+
+
+@router.get("/workflow/next-certificate-number")
+def peek_next_certificate_number(
+    type_of_issuance: str = Query(..., description="The type being considered"),
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    """The number the next certificate would get, for the preview.
+
+    Nothing is reserved — the number is only taken when the decision is
+    submitted, so a certificate issued elsewhere first would take this one.
+    """
+    if type_of_issuance not in CERTIFICATE_ISSUANCE_TYPES:
+        return {"certificate_number": None}
+    return {"certificate_number": next_certificate_number(internal_db)}
+
+
+@router.get("/workflow/assignees", response_model=list[EvaluatorOut])
+def list_step_assignees(
+    next_step: str = Query(..., description="The step the application is going to"),
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    group_id = STEP_GROUP_IDS.get(next_step)
+    if group_id is None:
+        raise HTTPException(
+            status_code=422, detail=f"Nobody is assignable for step '{next_step}'"
+        )
+    users = (
+        _group_members_query(internal_db, group_id)
+        .order_by(User.first_name, User.surname)
+        .all()
+    )
+    return _as_assignee_list(users)
+
+
+@router.post(
+    "/claimed/{reference_no}/step-decision",
+    response_model=StepDecisionResult,
+)
+def post_step_decision(
+    reference_no: str,
+    payload: StepDecisionRequest,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    application, task = _require_step_holder(internal_db, reference_no, current_user)
+
+    # the person picked must really belong to the next step's group
+    _, next_step = resolve_next_step(task.application_step, payload.decision)
+    group_id = STEP_GROUP_IDS.get(next_step) if next_step else None
+    if payload.assignee_uuid and group_id is not None:
+        is_valid = (
+            _group_members_query(internal_db, group_id)
+            .filter(User.user_uuid == payload.assignee_uuid)
+            .first()
+            is not None
+        )
+        if not is_valid:
+            raise HTTPException(
+                status_code=422, detail=f"Invalid {next_step} selected"
+            )
+
+    try:
+        result = submit_step_decision(
+            internal_db,
+            application,
+            current_user.user_uuid,
+            payload.decision,
+            payload.remarks,
+            payload.assignee_uuid,
+            payload.type_of_issuance,
+            payload.nod.model_dump() if payload.nod else None,
+            payload.worksheet.model_dump() if payload.worksheet else None,
+        )
+        internal_db.commit()
+    except PermissionError as err:
+        internal_db.rollback()
+        raise HTTPException(status_code=403, detail=str(err))
+    except ValueError as err:
+        internal_db.rollback()
+        raise HTTPException(status_code=422, detail=str(err))
+    except Exception:
+        internal_db.rollback()
+        logger.exception("Unexpected error saving the decision for %s", reference_no)
+        raise HTTPException(
+            status_code=500, detail="Unexpected error while saving the decision"
+        )
+
+    return result
+
+
+def _nod_out(nod) -> dict:
+    """One NOD as the API returns it."""
+    return {
+        "nod_number": nod.nod_number,
+        "activity": nod.activity,
+        "deficiencies": nod.deficiencies,
+        "requested_documents": nod.requested_documents or [],
+        "issued_date": nod.issued_date,
+        "working_days": nod.working_days,
+        "due_date": nod.due_date,
+        "extended_due_date": nod.extended_due_date,
+        "extension_reason": nod.extension_reason,
+        "extended_at": nod.extended_at,
+        "documents_received_date": nod.documents_received_date,
+        "status": nod.status,
+        "issued_by": (
+            f"{nod.issued_by.first_name or ''} {nod.issued_by.surname or ''}".strip()
+            if nod.issued_by
+            else None
+        ),
+        "email_sent_at": nod.email_sent_at,
+    }
+
+
+@router.get("/claimed/{reference_no}/nods", response_model=list[NodOut])
+def get_nods(
+    reference_no: str,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    """The Notices of Deficiency issued on an application. Same access rule as
+    the application itself: only people who have worked on it."""
+    application, _ = _get_accessible_application(
+        internal_db, reference_no, current_user
+    )
+    return [_nod_out(n) for n in list_nods(internal_db, application.application_uuid)]
+
+
+def _load_nod_for_evaluator(
+    internal_db: Session, reference_no: str, nod_number: int, user
+):
+    """Extending or recording documents is the evaluator's job: the caller must
+    hold the task at the Quality Evaluation step. The NOD row is locked."""
+    application, task = _require_step_holder(internal_db, reference_no, user)
+    if task.application_step != EVALUATOR_STEP:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Only the {EVALUATOR_STEP} step can change a Notice of Deficiency",
+        )
+    nod = (
+        internal_db.query(EAppNoticeOfDeficiency)
+        .filter(
+            EAppNoticeOfDeficiency.application_uuid == application.application_uuid,
+            EAppNoticeOfDeficiency.nod_number == nod_number,
+            EAppNoticeOfDeficiency.is_deleted.is_(False),
+        )
+        .with_for_update()
+        .first()
+    )
+    if not nod:
+        raise HTTPException(status_code=404, detail="Notice of Deficiency not found")
+    return nod
+
+
+@router.post("/claimed/{reference_no}/nods/{nod_number}/extend", response_model=NodOut)
+def post_nod_extension(
+    reference_no: str,
+    nod_number: int,
+    payload: NodExtendRequest,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    nod = _load_nod_for_evaluator(internal_db, reference_no, nod_number, current_user)
+    try:
+        extend_nod(nod, current_user.user_uuid, payload.new_due_date, payload.reason)
+        internal_db.commit()
+    except ValueError as err:
+        internal_db.rollback()
+        raise HTTPException(status_code=422, detail=str(err))
+    internal_db.refresh(nod)
+    return _nod_out(nod)
+
+
+@router.post("/claimed/{reference_no}/nods/{nod_number}/receive", response_model=NodOut)
+def post_nod_documents_received(
+    reference_no: str,
+    nod_number: int,
+    payload: NodReceiveRequest,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    nod = _load_nod_for_evaluator(internal_db, reference_no, nod_number, current_user)
+    try:
+        receive_documents(
+            nod, current_user.user_uuid, payload.received_ids, payload.received_date
+        )
+        internal_db.commit()
+    except ValueError as err:
+        internal_db.rollback()
+        raise HTTPException(status_code=422, detail=str(err))
+    internal_db.refresh(nod)
+    return _nod_out(nod)
+
+
+def _worksheet_response(internal_db: Session, application, can_edit: bool) -> dict:
+    # The evaluator sees their latest version, even a draft. Everyone else sees
+    # the latest version that was sent on.
+    row = latest_worksheet(
+        internal_db, application.application_uuid, submitted_only=not can_edit
+    )
+    return {
+        "worksheet": build_worksheet_out(internal_db, row) if row else None,
+        "can_edit": can_edit,
+    }
+
+
+@router.get("/claimed/{reference_no}/worksheet", response_model=WorksheetResponse)
+def get_worksheet(
+    reference_no: str,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    """The GMP Clearance Worksheet. Same access rule as the application itself:
+    only people who have worked on it."""
+    application, _ = _get_accessible_application(
+        internal_db, reference_no, current_user
+    )
+    task = open_task_held_by(
+        internal_db, application.application_uuid, current_user.user_uuid
+    )
+    can_edit = bool(task and task.application_step == EVALUATOR_STEP)
+    return _worksheet_response(internal_db, application, can_edit)
+
+
+@router.put("/claimed/{reference_no}/worksheet", response_model=WorksheetResponse)
+def put_worksheet(
+    reference_no: str,
+    payload: WorksheetIn,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    """Auto-save while the evaluator types. Only the evaluator holding the
+    Quality Evaluation task may save."""
+    application, task = _require_step_holder(internal_db, reference_no, current_user)
+    if task.application_step != EVALUATOR_STEP:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Only the {EVALUATOR_STEP} step can change the worksheet",
+        )
+    try:
+        save_worksheet_draft(
+            internal_db, application, current_user.user_uuid, payload.model_dump()
+        )
+        internal_db.commit()
+    except ValueError as err:
+        internal_db.rollback()
+        raise HTTPException(status_code=422, detail=str(err))
+    except Exception:
+        internal_db.rollback()
+        logger.exception("Unexpected error saving the worksheet for %s", reference_no)
+        raise HTTPException(
+            status_code=500, detail="Unexpected error while saving the worksheet"
+        )
+    return _worksheet_response(internal_db, application, True)
 
 
 @router.post(
@@ -398,7 +849,7 @@ def post_decking_decision(
     # the assigned evaluator must really be an active evaluator
     if payload.evaluator_uuid:
         is_valid = (
-            _evaluators_query(internal_db)
+            _evaluators_query(internal_db, current_user)
             .filter(User.user_uuid == payload.evaluator_uuid)
             .first()
             is not None

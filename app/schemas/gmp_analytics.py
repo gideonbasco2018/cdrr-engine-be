@@ -35,6 +35,7 @@ class GMPAnalyticsTrendItem(BaseModel):
     received: int
     released: int
     disapproved: int
+    on_process: int = 0
 
 class GMPAnalyticsTrendResponse(BaseModel):
     data: List[GMPAnalyticsTrendItem]
@@ -95,6 +96,7 @@ class GMPAnalyticsNODResponse(BaseModel):
 class GMPAnalyticsPicsCountryItem(BaseModel):
     name: str
     count: int
+    pics: bool = False  # the country is a current PIC/S member
 
 class GMPAnalyticsPicsMismatchItem(BaseModel):
     gmp_id: int
@@ -118,6 +120,76 @@ class GMPAnalyticsStepTimingItem(BaseModel):
     avg_days: Optional[float] = None
     min_days: Optional[int] = None
     max_days: Optional[int] = None
+    avg_minutes: Optional[float] = None
+    min_minutes: Optional[int] = None
+    max_minutes: Optional[int] = None
 
 class GMPAnalyticsStepTimingResponse(BaseModel):
     data: List[GMPAnalyticsStepTimingItem]
+
+
+class GMPAnalyticsMonthlyItem(BaseModel):
+    period: str
+    label: str
+    received: int
+    released: int
+    disapproved: int
+    on_process: int
+    release_rate: float
+    released_in_month: int
+    avg_tat_days: Optional[float] = None
+
+class GMPAnalyticsMonthlyResponse(BaseModel):
+    data: List[GMPAnalyticsMonthlyItem]
+
+
+class GMPAnalyticsSparkPoint(BaseModel):
+    date: Optional[str] = None  # ISO day, e.g. "2026-09-14"
+    label: str
+    received: int
+    released: int
+    disapproved: int
+    on_process: int
+    avg_tat_days: Optional[float] = None
+
+class GMPAnalyticsSparklinesResponse(BaseModel):
+    granularity: str  # "month" or "day"
+    points: List[GMPAnalyticsSparkPoint]
+
+
+class GMPAnalyticsDataQualityItem(BaseModel):
+    year: str
+    total: int
+    received_filled: int
+    missing_received: int
+    release_expected: int
+    released_filled: int
+    missing_released: int
+    doc_expected: int
+    doc_filled: int
+    missing_doc: int
+    complete: int
+    incomplete: int
+    completeness: float
+
+class GMPAnalyticsDataQualityResponse(BaseModel):
+    data: List[GMPAnalyticsDataQualityItem]
+
+
+class GMPAnalyticsQualityRecord(BaseModel):
+    gmp_id: int
+    dtn: Optional[str] = None
+    reference_no: Optional[str] = None
+    company: Optional[str] = None
+    status: Optional[str] = None
+    current_step: Optional[str] = None
+    date_received: Optional[str] = None
+    released_date: Optional[str] = None
+    type_of_issuance: Optional[str] = None
+    missing: List[str] = []
+
+class GMPAnalyticsQualityRecordsResponse(BaseModel):
+    data: List[GMPAnalyticsQualityRecord]
+    total: int
+    page: int
+    total_pages: int

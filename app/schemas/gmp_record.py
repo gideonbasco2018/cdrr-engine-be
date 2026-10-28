@@ -152,6 +152,11 @@ class GMPAdvanceStepRequest(BaseModel):
     doctrack_remarks: str = ""
     next_assignee_name: Optional[str] = None
     next_assignee_id: Optional[int] = None
+    # Multi-assignee steps only (currently just CDRR-OD Signature Facilitator)
+    # — several people picked at once; whoever completes it first wins, and
+    # the rest auto-close (see gmp_logs.advance_step). Takes priority over
+    # next_assignee_id above when both are present.
+    next_assignee_ids: Optional[List[int]] = None
     action_type: Optional[str] = None
     decision_result: Optional[str] = None
     decision_authority_id: Optional[int] = None
