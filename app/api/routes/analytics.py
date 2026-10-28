@@ -1,6 +1,7 @@
 # app/api/routes/analytics.py
 
 from datetime import date
+from typing import List
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
@@ -22,6 +23,7 @@ from app.schemas.analytics import (
 from app.crud import analytics as crud_analytics
 from app.crud import top_companies as crud_top_companies
 from app.crud import fastest_processing as crud_fastest
+from app.crud import company_monitoring as crud_company_monitoring
 
 router = APIRouter(
     prefix="/api/analytics",
@@ -388,3 +390,52 @@ def get_country_year_trend(
         db, country=country, entity_type=entity_type, prescription=prescription
     )
     return {"country": country, "entity_type": entity_type, "data": data}
+
+
+@router.get("/company-monitoring/search")
+def search_company_names(
+    q: str = Query(..., min_length=2, description="Part of the company name"),
+    limit: int = Query(15, ge=1, le=50),
+    db: Session = Depends(get_db),
+):
+    return {"data": crud_company_monitoring.search_companies(db, q, limit)}
+
+
+@router.get("/company-monitoring")
+def get_company_monitoring_route(
+    company: List[str] = Query(..., description="One or more company names"),
+    year: str = Query("All"),
+    month: str = Query("All", description="All or 1-12 (needs a year)"),
+    basis: str = Query("received", description="received|released"),
+    db: Session = Depends(get_db),
+):
+    return crud_company_monitoring.get_company_monitoring(
+        db, companies=company, year=year, month=month, basis=basis
+    )
+
+
+@router.get("/company-monitoring/records")
+def get_company_monitoring_records_route(
+    company: List[str] = Query(..., description="One or more company names"),
+    year: str = Query("All"),
+    month: str = Query("All"),
+    basis: str = Query("received", description="received|released"),
+    user_id: str = Query(None, description="evaluator id, 'none' = Unassigned"),
+    search: str = Query(None, description="DTN or drug name"),
+    sort: str = Query("received", description="received|tat"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    return crud_company_monitoring.get_company_records(
+        db,
+        companies=company,
+        year=year,
+        month=month,
+        basis=basis,
+        user_id=user_id,
+        search=search,
+        sort=sort,
+        page=page,
+        page_size=page_size,
+    )
