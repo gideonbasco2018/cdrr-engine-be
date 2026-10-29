@@ -1,6 +1,6 @@
 # app/crud/evaluator_monitoring.py
 #
-# Evaluators Monitoring: for one evaluator (or checker), how the closed
+# User Insights: for one evaluator (or checker), how the closed
 # applications they handled did per company and per drug (ranked by average
 # turnaround time), and how many were received / released per year or month.
 #
@@ -9,8 +9,13 @@
 #   - working days     : Mon-Fri between two dates             (Fastest Processing)
 #   - valid date       : readable, year 2000-2100              (Company Monitoring)
 #
-# Who handled an application: the latest step of the role (Quality Evaluation
-# for evaluators, Checking for checkers) that was not reassigned.
+# Who handled an application: every person who has a step of the role (Quality
+# Evaluation for evaluators, Checking for checkers) on it that was NOT
+# reassigned away from them.
+#   - reassigned from A to B   -> counts for B only (A's step is marked)
+#   - reassigned to this person -> counts for this person (their step is not marked)
+#   - rerouted to someone else  -> still counts for the person who had it
+# For one person the "own step" is their latest such step on the application.
 # Closed application = has a valid Date Released.
 #
 # TAT = working days from a START to a FINISH, each with a fallback:
@@ -97,8 +102,11 @@ def _formula(role: str) -> dict:
             "letters (a real misspelling) are still counted separately."
         ),
         "person": (
-            f"{r['label']} = the user of the latest {r['step']} step that was "
-            f"not reassigned. Application logs from before April 2026 mostly "
+            f"{r['label']} = the user of a {r['step']} step on the application "
+            f"that was not reassigned away from them. An app reassigned from "
+            f"one person to another counts for the new person only; an app "
+            f"rerouted to someone else still counts for the person who had "
+            f"it. Application logs from before April 2026 mostly "
             f"have no dates, so those applications use the Date Decked and "
             f"the Date Released instead (and say so)."
         ),
@@ -145,7 +153,8 @@ def _parts(db: Session, role: str, user_id: int) -> SimpleNamespace:
         L.user_id == user_id, L.application_step.ilike(pattern)
     )
 
-    # the person who handled the app: latest non-reassigned step of the role
+    # this person's own step on the app: their latest step of the role that
+    # was not reassigned away from them (see the rules at the top)
     rn = func.row_number().over(
         partition_by=L.main_db_id,
         order_by=(L.del_index.desc(), L.id.desc()),
@@ -160,6 +169,7 @@ def _parts(db: Session, role: str, user_id: int) -> SimpleNamespace:
         )
         .filter(
             L.application_step.ilike(pattern),
+            L.user_id == user_id,
             L.reassigned_at.is_(None),
             L.reassigned_by_user_id.is_(None),
             L.main_db_id.in_(mine),
@@ -291,7 +301,10 @@ def get_evaluator_monitoring(
     month: str = "All",
     role: str = "evaluator",
     source: str = None,
+    split: str = "year",
 ):
+    """split = "year" (the year of the other side) or "month" (its year and
+    month): it only changes how the Received / Released splits are cut."""
     role = _role(role)
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -341,9 +354,30 @@ def get_evaluator_monitoring(
         .all()
         if r.b is not None
     }
-    # What happened to the applications received in each period: the year they
-    # were released in, or "not released" when there is no valid Date Released
-    release_year = case((rel_ok, func.year(rel)), else_=None)
+    # What happened to the applications received in each period: the year (or
+    # month) they were released in, or "not released" when there is no valid
+    # Date Released
+    month_split = split == "month"
+
+    def split_key(d, ok):
+        if month_split:  # 202603 = March 2026
+            return case((ok, func.year(d) * 100 + func.month(d)), else_=None)
+        return case((ok, func.year(d)), else_=None)
+
+    def split_item(ym, count):
+        ym = int(ym)
+        if month_split:
+            y, m = divmod(ym, 100)
+            return {
+                "key": ym,
+                "year": y,
+                "month": m,
+                "label": f"{MONTH_ABBR[m]} {y}",
+                "count": count,
+            }
+        return {"key": ym, "year": ym, "month": None, "label": str(ym), "count": count}
+
+    release_year = split_key(rel, rel_ok)
     split_rows = (
         handled(
             rec_bucket.label("b"),
@@ -361,7 +395,7 @@ def get_evaluator_monitoring(
 
     # ...and the other way round: when the applications released in each
     # period were received ("no received date" when it is missing)
-    receive_year = case((rec_ok, func.year(rec)), else_=None)
+    receive_year = split_key(rec, rec_ok)
     rsplit_rows = (
         closed(
             rel_bucket.label("b"),
@@ -381,7 +415,7 @@ def get_evaluator_monitoring(
         rows = rsplits.get(bucket, [])
         return {
             "received": [
-                {"year": int(y), "count": n}
+                split_item(y, n)
                 for y, n in sorted((x for x in rows if x[0] is not None))
             ],
             "no_received_date": sum(n for y, n in rows if y is None),
@@ -391,7 +425,7 @@ def get_evaluator_monitoring(
         rows = splits.get(bucket, [])
         return {
             "released": [
-                {"year": int(y), "count": n}
+                split_item(y, n)
                 for y, n in sorted((x for x in rows if x[0] is not None))
             ],
             "not_released": sum(n for y, n in rows if y is None),
@@ -735,6 +769,122 @@ def get_evaluator_records(
     }
 
 
+NO_DOC_TYPE = "No document type"
+
+
+# ── 5. Summary of one month ──────────────────────────────────
+def get_month_summary(
+    db: Session,
+    user_id: int,
+    year: int,
+    month: int,
+    role: str = "evaluator",
+    top: int = 5,
+):
+    """One month of one person: received / released / still open, the TAT of
+    what was released that month, and the top companies, drugs and document
+    types among the applications received or released in the month."""
+    role = _role(role)
+    pa = _parts(db, role, user_id)
+    days, tat_ok = pa.days, pa.tat_ok
+    rec, rel = _dates()
+    rec_ok = _valid(MainDB.DB_DATE_RECEIVED_CENT, rec)
+    rel_ok = _valid(MainDB.DB_DATE_RELEASED, rel)
+
+    def in_month(d):
+        return and_(func.year(d) == year, func.month(d) == month)
+
+    received_here = and_(rec_ok, in_month(rec))
+    released_here = and_(rel_ok, in_month(rel))
+
+    def q(*cols):
+        return _handled(db, pa, user_id, *cols)
+
+    def n(cond):
+        return int(q(func.count(MainDB.DB_ID)).filter(cond).scalar() or 0)
+
+    received = n(received_here)
+    released = n(released_here)
+    still_open = n(and_(received_here, ~rel_ok))
+    either = or_(received_here, released_here)
+    total = n(either)
+
+    tat = (
+        q(func.count(MainDB.DB_ID), func.avg(days), func.min(days), func.max(days))
+        .filter(released_here, tat_ok)
+        .one()
+    )
+
+    def ranking(key_expr, col):
+        spelling = _spelling(col)
+        rows = (
+            q(
+                key_expr.label("k"),
+                spelling.label("sp"),
+                func.count(MainDB.DB_ID).label("n"),
+            )
+            .filter(either, ~_empty(col))
+            .group_by(key_expr, spelling)
+            .all()
+        )
+        groups = {}
+        for r in rows:
+            g = groups.setdefault(r.k, {"n": 0, "sp": []})
+            g["n"] += int(r.n)
+            g["sp"].append((int(r.n), r.sp or ""))
+        items = [
+            {"key": k, "name": max(g["sp"])[1], "count": g["n"]}
+            for k, g in groups.items()
+        ]
+        items.sort(key=lambda x: (-x["count"], x["name"]))
+        return items[:top], len(items)
+
+    companies, company_total = ranking(_ckey(), MainDB.DB_EST_LTO_COMP)
+    drugs, drug_total = ranking(_gkey(), MainDB.DB_PROD_GEN_NAME)
+
+    doc = func.trim(MainDB.DB_TYPE_DOC_RELEASED)
+    doc_rows = (
+        q(doc.label("d"), func.count(MainDB.DB_ID).label("n"))
+        .filter(either)
+        .group_by(doc)
+        .all()
+    )
+    docs = {}
+    for r in doc_rows:
+        name = (r.d or "").strip()
+        if not name or name.upper() == "N/A":
+            name = NO_DOC_TYPE
+        docs[name] = docs.get(name, 0) + int(r.n)
+    doc_types = sorted(
+        ({"name": k, "count": v} for k, v in docs.items()),
+        key=lambda x: (-x["count"], x["name"]),
+    )
+
+    return {
+        "role": role,
+        "role_label": ROLES[role]["label"],
+        "year": year,
+        "month": month,
+        "label": f"{MONTH_ABBR[month]} {year}",
+        "total_apps": total,
+        "received": received,
+        "released": released,
+        "still_open": still_open,
+        "tat": {
+            "counted": int(tat[0] or 0),
+            "avg": _r1(tat[1]),
+            "fastest": int(tat[2]) if tat[2] is not None else None,
+            "slowest": int(tat[3]) if tat[3] is not None else None,
+        },
+        "companies": companies,
+        "company_total": company_total,
+        "drugs": drugs,
+        "drug_total": drug_total,
+        "doc_types": doc_types,
+        "no_doc_type": NO_DOC_TYPE,
+    }
+
+
 # ── 4. Applications behind one Received / Released number ────
 def get_period_records(
     db: Session,
@@ -748,6 +898,10 @@ def get_period_records(
     page: int = 1,
     page_size: int = 50,
     role: str = "evaluator",
+    other_month: int = None,
+    company_key: str = None,
+    drug_key: str = None,
+    doc_type: str = None,
 ):
     """The applications counted in one Received or Released number of the
     Received / Released card (the whole number, or one part of its split).
@@ -757,10 +911,12 @@ def get_period_records(
                      released yet.
     side="released": closed and released in the period. other_year = received
                      in that year, rest = no received date.
+    side="either":   received OR released in the period (a whole month row).
+    other_month narrows other_year to one month of the other side.
     bucket is the year, or the month when a year is selected.
     """
     role = _role(role)
-    side = "released" if side == "released" else "received"
+    side = side if side in ("released", "either") else "received"
     pa = _parts(db, role, user_id)
     days, tat_ok = pa.days, pa.tat_ok
     rec, rel = _dates()
@@ -774,23 +930,54 @@ def get_period_records(
             return [func.year(d) == bucket]
         return [func.year(d) == int(year), func.month(d) == bucket]
 
+    def on_other_side(d, ok):
+        """the other side is in other_year (and other_month, when given)"""
+        c = [ok, func.year(d) == other_year]
+        if other_month is not None:
+            c.append(func.month(d) == other_month)
+        return c
+
     if side == "received":
         conds = [rec_ok, *in_bucket(rec)]
         if rest:
             conds.append(~rel_ok)
         elif other_year is not None:
-            conds += [rel_ok, func.year(rel) == other_year]
+            conds += on_other_side(rel, rel_ok)
         order = rec
-    else:
+    elif side == "released":
         conds = [rel_ok, *in_bucket(rel)]
         if rest:
             conds.append(~rec_ok)
         elif other_year is not None:
-            conds += [rec_ok, func.year(rec) == other_year]
+            conds += on_other_side(rec, rec_ok)
         order = rel
+    else:  # either: received or released in the period
+        conds = [
+            or_(
+                and_(rec_ok, *in_bucket(rec)),
+                and_(rel_ok, *in_bucket(rel)),
+            )
+        ]
+        order = func.coalesce(rec, rel)
+
+    # optional: only one company / drug / document type (month summary)
+    extra, extra_name = [], None
+    if company_key:
+        extra.append(_ckey() == company_key.strip().upper())
+        extra_name = "company"
+    if drug_key:
+        extra.append(_gkey() == drug_key.strip().upper())
+        extra_name = "drug"
+    if doc_type:
+        extra.append(
+            _empty(MainDB.DB_TYPE_DOC_RELEASED)
+            if doc_type == NO_DOC_TYPE
+            else func.trim(MainDB.DB_TYPE_DOC_RELEASED) == doc_type
+        )
+        extra_name = "document type"
 
     def scoped(*cols):
-        return _handled(db, pa, user_id, *cols).filter(*conds)
+        return _handled(db, pa, user_id, *cols).filter(*conds, *extra)
 
     total = int(scoped(func.count(MainDB.DB_ID)).scalar() or 0)
     avg = scoped(func.avg(days)).filter(tat_ok).scalar()
@@ -819,18 +1006,25 @@ def get_period_records(
     )
 
     label = str(bucket) if by_year else f"{MONTH_ABBR[bucket]} {year}"
+    other_label = (
+        f"{MONTH_ABBR[other_month]} {other_year}"
+        if other_month is not None
+        else str(other_year)
+    )
     if side == "received":
         title = f"Received in {label}"
         if rest:
             title += " · not released yet"
         elif other_year is not None:
-            title += f" · released in {other_year}"
-    else:
+            title += f" · released in {other_label}"
+    elif side == "released":
         title = f"Released in {label}"
         if rest:
             title += " · no received date"
         elif other_year is not None:
-            title += f" · received in {other_year}"
+            title += f" · received in {other_label}"
+    else:
+        title = f"Received or released in {label}"
 
     def _d(v):
         return str(v)[:10] if v else None
