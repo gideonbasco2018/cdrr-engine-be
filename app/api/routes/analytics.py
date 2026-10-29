@@ -37,11 +37,11 @@ router = APIRouter(
 def require_evaluator_monitoring_access(
     current_user: User = Depends(get_current_active_user),
 ) -> User:
-    """Evaluators Monitoring is open only to the groups listed in the crud file."""
+    """User Insights is open only to the groups listed in the crud file."""
     group_ids = {g.id for g in current_user.groups}
     if not group_ids & crud_evaluator_monitoring.ALLOWED_GROUP_IDS:
         raise HTTPException(
-            status_code=403, detail="Not allowed to view Evaluators Monitoring"
+            status_code=403, detail="Not allowed to view User Insights"
         )
     return current_user
 
@@ -514,10 +514,17 @@ def get_evaluator_monitoring_route(
     month: str = Query("All", description="All or 1-12 (needs a year)"),
     role: str = Query("evaluator", description="evaluator|checker"),
     source: str = Query(None, description="TAT source filter, e.g. decked:released"),
+    split: str = Query("year", description="year|month: how the Received/Released splits are cut"),
     db: Session = Depends(get_db),
 ):
     data = crud_evaluator_monitoring.get_evaluator_monitoring(
-        db, user_id=user_id, year=year, month=month, role=role, source=source
+        db,
+        user_id=user_id,
+        year=year,
+        month=month,
+        role=role,
+        source=source,
+        split=split,
     )
     if data is None:
         raise HTTPException(status_code=404, detail="Evaluator not found")
@@ -560,11 +567,15 @@ def get_evaluator_monitoring_records_route(
 )
 def get_evaluator_monitoring_period_records_route(
     user_id: int = Query(..., description="Evaluator's user id"),
-    side: str = Query(..., description="received|released"),
+    side: str = Query(..., description="received|released|either"),
     bucket: int = Query(..., description="the year, or the month when a year is chosen"),
     year: str = Query("All"),
     month: str = Query("All"),
     other_year: int = Query(None, description="released in / received in this year"),
+    other_month: int = Query(None, description="...and in this month (1-12)"),
+    company_key: str = Query(None, description="only this company (its key)"),
+    drug_key: str = Query(None, description="only this drug (its key)"),
+    doc_type: str = Query(None, description="only this document type"),
     rest: bool = Query(False, description="not released yet / no received date"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=2000),
@@ -579,6 +590,10 @@ def get_evaluator_monitoring_period_records_route(
         year=year,
         month=month,
         other_year=other_year,
+        other_month=other_month,
+        company_key=company_key,
+        drug_key=drug_key,
+        doc_type=doc_type,
         rest=rest,
         page=page,
         page_size=page_size,
@@ -648,4 +663,19 @@ def get_generic_monitoring_records_route(
         search=search,
         page=page,
         page_size=page_size,
+    )
+
+@router.get(
+    "/evaluator-monitoring/month-summary",
+    dependencies=[Depends(require_evaluator_monitoring_access)],
+)
+def get_evaluator_monitoring_month_summary_route(
+    user_id: int = Query(..., description="Evaluator's user id"),
+    year: int = Query(..., ge=2000, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    role: str = Query("evaluator", description="evaluator|checker"),
+    db: Session = Depends(get_db),
+):
+    return crud_evaluator_monitoring.get_month_summary(
+        db, user_id=user_id, year=year, month=month, role=role
     )
