@@ -24,6 +24,7 @@ from app.crud import analytics as crud_analytics
 from app.crud import top_companies as crud_top_companies
 from app.crud import fastest_processing as crud_fastest
 from app.crud import company_monitoring as crud_company_monitoring
+from app.crud import generic_monitoring as crud_generic_monitoring
 
 router = APIRouter(
     prefix="/api/analytics",
@@ -127,7 +128,7 @@ def get_year_summary(
 @router.get("/year-summary/records")
 def get_year_summary_records(
     year: str = Query(..., description="Year (2000-2100) or 'nodate'"),
-    kind: str = Query("released", description="received|released"),
+    kind: str = Query("released", description="received|in_progress|released"),
     basis: str = Query("released", description="released|received"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
@@ -503,4 +504,40 @@ def get_company_kpi_records_route(
         state=state,
         doc=doc,
         result=result,
+    )
+
+
+@router.get("/generic-monitoring/search")
+def search_generic_names(
+    q: str = Query(..., min_length=2, description="Part of the generic name"),
+    limit: int = Query(30, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    return {"data": crud_generic_monitoring.search_generics(db, q, limit)}
+
+
+@router.get("/generic-monitoring")
+def get_generic_monitoring_route(
+    generic: List[str] = Query(..., description="One or more generic names"),
+    db: Session = Depends(get_db),
+):
+    return crud_generic_monitoring.get_generic_summary(db, generics=generic)
+
+
+@router.get("/generic-monitoring/records")
+def get_generic_monitoring_records_route(
+    generic: List[str] = Query(..., description="One or more generic names"),
+    group: str = Query("all", description="all|pending|registered|lod|other"),
+    search: str = Query(None, description="DTN, brand, generic or company"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    return crud_generic_monitoring.get_generic_records(
+        db,
+        generics=generic,
+        group=group,
+        search=search,
+        page=page,
+        page_size=page_size,
     )

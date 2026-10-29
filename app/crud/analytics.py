@@ -407,6 +407,7 @@ def get_analytics_year_summary(db: Session, basis: str = "released") -> list:
         db.query(
             rec_year.label("yr"),
             func.count(MainDB.DB_ID).label("received"),
+            _in_progress_case().label("in_progress"),
         )
         .filter(
             MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
@@ -448,9 +449,11 @@ def get_analytics_year_summary(db: Session, basis: str = "released") -> list:
         else_=0,
     )
     nd_received = db.query(func.count(MainDB.DB_ID)).filter(rec_ok == 0).scalar() or 0
+    nd_in_progress = db.query(_in_progress_case()).filter(rec_ok == 0).scalar() or 0
 
     released_map = {str(r.yr): r for r in released_rows}
     received_map = {str(r.yr): int(r.received or 0) for r in received_rows}
+    in_progress_map = {str(r.yr): int(r.in_progress or 0) for r in received_rows}
 
     result = []
     for yr in sorted(set(released_map) | set(received_map)):
@@ -461,6 +464,7 @@ def get_analytics_year_summary(db: Session, basis: str = "released") -> list:
             {
                 "year": yr,
                 "received": received_map.get(yr, 0),
+                "in_progress": in_progress_map.get(yr, 0),
                 "total": total,  # total released
                 "cpr": cpr,
                 "lod": int(r.lod or 0) if r else 0,
@@ -475,6 +479,7 @@ def get_analytics_year_summary(db: Session, basis: str = "released") -> list:
             {
                 "year": "No Date",
                 "received": int(nd_received),
+                "in_progress": int(nd_in_progress),
                 "total": int(nd.total or 0),
                 "cpr": int(nd.cpr or 0),
                 "lod": int(nd.lod or 0),
@@ -557,7 +562,9 @@ def get_analytics_year_records(
     set (not just the current page). Each facet ignores its own filter so
     the other options stay selectable.
     """
-    kind = "received" if kind == "received" else "released"
+    # "in_progress" is the "received" scope narrowed to IN PROGRESS status
+    in_progress_only = kind == "in_progress"
+    kind = "received" if kind in ("received", "in_progress") else "released"
     basis = "received" if basis == "received" else "released"
 
     rel_date = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
@@ -608,6 +615,15 @@ def get_analytics_year_records(
     else:
         scope = [_is_completed(), *rel_valid, rel_year == year]
         order_date = rel_date
+
+    if in_progress_only:
+        # same status rule as _in_progress_case() so counts match the summary
+        scope.append(
+            or_(
+                MainDB.DB_APP_STATUS.ilike("IN PROGRESS"),
+                MainDB.DB_APP_STATUS.ilike("IN-PROGRESS"),
+            )
+        )
 
     scope += _date_range_conds(received_from, received_to, released_from, released_to)
 
