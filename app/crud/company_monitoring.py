@@ -79,12 +79,20 @@ def _completed():
     return status == "COMPLETED"
 
 
+def _years(year) -> list:
+    """'All' -> [], '2026' -> [2026], '2026,2025' -> [2026, 2025]."""
+    if year in (None, "", "All"):
+        return []
+    return [int(y) for y in str(year).split(",") if y.strip().isdigit()]
+
+
 def _period(d, year, month):
-    """Year / month filter on date expression `d` (month only with a year)."""
+    """Year(s) / month filter on date expression `d` (month only with ONE year)."""
+    ys = _years(year)
     conds = []
-    if year not in (None, "", "All"):
-        conds.append(func.year(d) == int(year))
-        if month not in (None, "", "All"):
+    if ys:
+        conds.append(func.year(d) == ys[0] if len(ys) == 1 else func.year(d).in_(ys))
+        if len(ys) == 1 and month not in (None, "", "All"):
             conds.append(func.month(d) == int(month))
     return conds
 
@@ -269,7 +277,7 @@ def get_company_monitoring(
     beyond = int(p[6] or 0)
 
     # Per month (selected year) or per year (All)
-    by_year = year in (None, "", "All")
+    by_year = len(_years(year)) != 1
     rec_grp = (func.year(rec) if by_year else func.month(rec)).label("grp")
     rel_grp = (func.year(rel) if by_year else func.month(rel)).label("grp")
     done = and_(_completed(), rel_ok)
@@ -665,3 +673,208 @@ def get_company_released_doc_records(
             }
         )
     return {"total": int(total), "page": page, "page_size": page_size, "data": data}
+
+
+# ── 6. Applications behind a KPI card ────────────────────────
+def get_company_kpi_records(
+    db: Session,
+    companies: list,
+    kind: str,
+    year: str = "All",
+    month: str = "All",
+    page: int = 1,
+    page_size: int = 15,
+    search: str = None,
+    state: str = None,
+    doc: str = None,
+    result: str = None,
+) -> dict:
+    """Applications behind a KPI card. Same filters as get_company_monitoring.
+
+    kind  : received | processed | open | tat | within | beyond
+    state : released | open            (optional narrowing)
+    doc   : document type released     (optional narrowing)
+    result: within | beyond | none     (optional narrowing)
+    search: DTN or drug name           (optional narrowing)
+
+    The "summary" and "docs" in the response always describe the whole card
+    (before the optional narrowing) so the graph stays stable while filtering.
+    """
+    keys = _norms(companies)
+    rec, rel = _dates()
+    rec_ok = _valid(MainDB.DB_DATE_RECEIVED_CENT, rec)
+    rel_ok = _valid(MainDB.DB_DATE_RELEASED, rel)
+    done = and_(_completed(), rel_ok)
+    open_cond = or_(not_(_completed()), not_(rel_ok))
+    tat_ok = and_(rec_ok, rel >= rec)
+    charter = MainDB.DB_TIMELINE_CITIZEN_CHARTER
+    wd = _workdays(rec, rel)
+    in_company = _in_companies(keys)
+
+    if kind == "received":
+        filters = [in_company, rec_ok, *_period(rec, year, month)]
+    elif kind == "open":
+        filters = [in_company, rec_ok, *_period(rec, year, month), open_cond]
+    else:  # processed-based cards
+        filters = [in_company, _completed(), rel_ok, *_period(rel, year, month)]
+        if kind in ("tat", "within", "beyond"):
+            filters.append(tat_ok)
+        if kind == "within":
+            filters += [charter > 0, wd <= charter]
+        elif kind == "beyond":
+            filters += [charter > 0, wd > charter]
+
+    # TAT window: release date when released, today when still open
+    end = case((done, rel), (not_(_completed()), func.curdate()), else_=None)
+    days = case(
+        (and_(rec_ok, end.isnot(None), end >= rec), _workdays(rec, end)), else_=None
+    )
+    docx = func.coalesce(
+        func.nullif(func.trim(MainDB.DB_TYPE_DOC_RELEASED), ""), "No document type"
+    )
+    ev1 = _evaluator_subquery(db)
+
+    def scoped(q):
+        return (
+            q.select_from(MainDB)
+            .outerjoin(ev1, ev1.c.main_db_id == MainDB.DB_ID)
+            .filter(*filters)
+        )
+
+    def narrowed(q):
+        q = scoped(q)
+        if state == "released":
+            q = q.filter(done)
+        elif state == "open":
+            q = q.filter(open_cond)
+        if doc:
+            q = q.filter(docx == doc)
+        if result == "within":
+            q = q.filter(days.isnot(None), charter > 0, days <= charter)
+        elif result == "beyond":
+            q = q.filter(days.isnot(None), charter > 0, days > charter)
+        elif result == "none":
+            q = q.filter(or_(days.is_(None), charter.is_(None), charter <= 0))
+        if search and search.strip():
+            like = f"%{search.strip()}%"
+            q = q.filter(
+                or_(
+                    func.concat(MainDB.DB_DTN, "").like(like),
+                    MainDB.DB_PROD_BR_NAME.ilike(like),
+                    MainDB.DB_PROD_GEN_NAME.ilike(like),
+                )
+            )
+        return q
+
+    # ── Whole-card summary (for the graph) ──
+    sm = scoped(
+        db.query(
+            func.count(MainDB.DB_ID),
+            func.sum(case((done, 1), else_=0)),
+            func.sum(
+                case((and_(days.isnot(None), charter > 0, days <= charter), 1), else_=0)
+            ),
+            func.sum(
+                case((and_(days.isnot(None), charter > 0, days > charter), 1), else_=0)
+            ),
+        )
+    ).one()
+    sm_total = int(sm[0] or 0)
+    sm_released = int(sm[1] or 0)
+    sm_within = int(sm[2] or 0)
+    sm_beyond = int(sm[3] or 0)
+    doc_rows = (
+        scoped(db.query(docx.label("doc"), func.count(MainDB.DB_ID).label("n")))
+        .filter(done)
+        .group_by(docx)
+        .order_by(func.count(MainDB.DB_ID).desc(), docx)
+        .all()
+    )
+
+    # ── Narrowed list ──
+    total = narrowed(db.query(func.count(MainDB.DB_ID))).scalar() or 0
+
+    if kind in ("received", "open"):
+        order = [rec.desc(), MainDB.DB_ID.desc()]
+    else:
+        order = [rel.desc(), MainDB.DB_ID.desc()]
+
+    rows = (
+        narrowed(
+            db.query(
+                MainDB.DB_ID.label("id"),
+                MainDB.DB_DTN.label("dtn"),
+                MainDB.DB_PROD_BR_NAME.label("brand"),
+                MainDB.DB_PROD_GEN_NAME.label("generic"),
+                MainDB.DB_TYPE_DOC_RELEASED.label("doc"),
+                MainDB.DB_DATE_RECEIVED_CENT.label("received"),
+                MainDB.DB_DATE_RELEASED.label("released"),
+                charter.label("charter"),
+                days.label("days"),
+                case((done, 1), else_=0).label("is_released"),
+                case((_completed(), 0), else_=1).label("is_open"),
+                ev1.c.user_id.label("ev_id"),
+                ev1.c.user_name.label("ev_name"),
+            )
+        )
+        .order_by(*order)
+        .offset((max(page, 1) - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    names = _names(db, [r.ev_id for r in rows])
+
+    def _d(v):
+        s = str(v)[:10] if v else None
+        return None if s in (None, "", "N/A") else s
+
+    data = []
+    for r in rows:
+        tat = int(r.days) if r.days is not None else None
+        ch = int(r.charter) if r.charter else None
+        if r.is_released:
+            st = "Released"
+        elif r.is_open:
+            st = "Ongoing"
+        else:
+            st = "No release date"
+        if tat is None or not ch:
+            timeline = "N/A"
+        else:
+            timeline = "Within" if tat <= ch else "Beyond"
+        brand, generic = r.brand or "", r.generic or ""
+        data.append(
+            {
+                "db_id": r.id,
+                "dtn": str(r.dtn) if r.dtn else None,
+                "drug": (
+                    f"{brand} ({generic})"
+                    if brand and generic
+                    else brand or generic or None
+                ),
+                "doc": (r.doc or "").strip() or None,
+                "date_received": _d(r.received),
+                "date_released": _d(r.released),
+                "state": st,
+                "tat_days": tat,
+                "charter_days": ch,
+                "timeline": timeline,
+                "evaluator": _evaluator(r.ev_id, r.ev_name, names),
+            }
+        )
+
+    return {
+        "total": int(total),
+        "page": page,
+        "page_size": page_size,
+        "summary": {
+            "total": sm_total,
+            "released": sm_released,
+            "open": sm_total - sm_released,
+            "within": sm_within,
+            "beyond": sm_beyond,
+            "no_result": sm_total - sm_within - sm_beyond,
+        },
+        "docs": [{"doc": r.doc, "count": int(r.n)} for r in doc_rows],
+        "data": data,
+    }

@@ -8,7 +8,6 @@ class AnalyticsSummaryResponse(BaseModel):
     total: int
     cpr: int
     lod: int
-    in_progress: int
     in_progress: int = 0
     completed: int
     cpr_expired: int = 0
@@ -45,6 +44,7 @@ class AnalyticsClassificationResponse(BaseModel):
 class AnalyticsYearItem(BaseModel):
     year: str
     received: int = 0
+    in_progress: int = 0
     total: int
     cpr: int
     lod: int
