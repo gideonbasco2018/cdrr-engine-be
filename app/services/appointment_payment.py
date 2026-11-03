@@ -165,6 +165,7 @@ def post_payments(
 
     return {
         "reference_number": application.reference_number,
+        "posting_batch_uuid": batch_uuid,
         "fully_paid": balance == 0,
         "total_paid": total_paid,
         "balance": balance,
