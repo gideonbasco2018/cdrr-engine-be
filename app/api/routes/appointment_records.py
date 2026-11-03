@@ -46,7 +46,14 @@ from app.models.user import User  # ADAPT: real module path of your User model
 from app.services.decking_claim import DECKING_STEP, claim_decking_task
 from app.services.decking_decision import submit_decision
 from app.services.appointment_payment import post_payments
-from app.services.ar_email import build_ar_snapshot, send_acknowledgement_receipt
+from app.services.ar_email import (
+    DOC_AOOP,
+    DOC_AR,
+    build_aoop_snapshot,
+    build_ar_snapshot,
+    create_notification,
+    deliver_notification,
+)
 from app.services.workflow_roles import (
     ROLE_CASHIER,
     ROLE_DECKER,
@@ -953,18 +960,43 @@ def post_claimed_payments(
             status_code=500, detail="Unexpected error while posting the payment"
         )
 
-    # The payment is committed. Email the Acknowledgement Receipt in the
-    # background; a failure here must never turn the response into an error.
+    # The payment is committed. Log and email the documents in the background;
+    # a failure here must never turn the response into an error.
     try:
         cashier_name = (
             f"{current_user.first_name or ''} {current_user.surname or ''}".strip()
         )
-        snapshot = build_ar_snapshot(
+        jobs = []
+
+        # Always: the Acknowledgement Receipt
+        ar = build_ar_snapshot(
             application, payload.payments, result["total_paid"], cashier_name
         )
-        background_tasks.add_task(send_acknowledgement_receipt, snapshot)
+        ar_id = create_notification(internal_db, application, DOC_AR, ar)
+        jobs.append((ar_id, DOC_AR, ar))
+
+        # Short payment: also the Additional Order of Payment
+        if result.get("additional_op_number"):
+            aoop = build_aoop_snapshot(
+                internal_db, application, result["additional_op_number"]
+            )
+            aoop_id = create_notification(
+                internal_db, application, DOC_AOOP, aoop, source_uuid=aoop["op_uuid"]
+            )
+            jobs.append((aoop_id, DOC_AOOP, aoop))
+
+        internal_db.commit()
+        for notification_id, kind, snapshot in jobs:
+            background_tasks.add_task(
+                deliver_notification,
+                notification_id,
+                kind,
+                snapshot,
+                current_user.user_uuid,
+            )
     except Exception:
-        logger.exception("Could not queue the AR email for %s", reference_no)
+        internal_db.rollback()
+        logger.exception("Could not queue the emails for %s", reference_no)
 
     return result
 
