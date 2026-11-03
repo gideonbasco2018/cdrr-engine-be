@@ -6,10 +6,29 @@ from datetime import date, datetime
 from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 from email.utils import formataddr
+import base64
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 MANILA = ZoneInfo("Asia/Manila")
+
+# cdrr-engine-be/static/images (ADAPT if your static folder is elsewhere)
+LOGO_DIR = Path(__file__).resolve().parents[2] / "static" / "images"
+
+
+def _logo_img(filename: str, width: str, height: str) -> str:
+    """Logo as an inline data URI, so the PDF never depends on a URL or path.
+    Returns an empty string if the file is missing."""
+    try:
+        data = base64.b64encode((LOGO_DIR / filename).read_bytes()).decode()
+    except OSError:
+        logger.warning("AR logo not found: %s", LOGO_DIR / filename)
+        return ""
+    return (
+        f'<img src="data:image/png;base64,{data}" '
+        f'style="width:{width};height:{height};object-fit:contain;">'
+    )
 
 
 def _php(value) -> str:
@@ -99,6 +118,12 @@ def render_ar_html(s: dict) -> str:
       body {{ font-family: Georgia, 'Times New Roman', serif; font-size: 12.5px; color: #111; }}
       .hdr {{ text-align: center; line-height: 1.35; margin-bottom: 14px; }}
       .hdr b {{ font-size: 15px; }}
+      .hdr-table {{ margin-bottom: 14px; }}
+      .hdr-table td {{ vertical-align: middle; }}
+      .hdr-table .logos {{ width: 190px; white-space: nowrap; }}
+      .hdr-table .agency {{ border-left: 1px solid #111; padding-left: 12px; line-height: 1.35; font-size: 14px; }}
+      .hdr-table .agency b {{ font-size: 15px; }}
+      .hdr-table .bp {{ width: 110px; text-align: right; }}
       h1 {{ text-align: center; font-size: 22px; letter-spacing: 1px; margin: 16px 0; }}
       h2 {{ font-size: 13px; text-decoration: underline; margin: 18px 0 4px; }}
       table {{ width: 100%; border-collapse: collapse; }}
@@ -106,8 +131,13 @@ def render_ar_html(s: dict) -> str:
       td.l {{ width: 38%; }}
       .note {{ color: #c00000; font-size: 11.5px; margin-top: 22px; }}
     </style></head><body>
-      <div class="hdr">Republic of the Philippines<br>Department of Health<br>
-        <b>FOOD AND DRUG ADMINISTRATION</b></div>
+      <table class="hdr-table"><tr>
+        <td class="logos">{_logo_img("fda-logo.png", "110px", "64px")}
+            {_logo_img("doh-logo.png", "64px", "64px")}</td>
+        <td class="agency">Republic of the Philippines<br>Department of Health<br>
+            <b>FOOD AND DRUG ADMINISTRATION</b></td>
+        <td class="bp">{_logo_img("bagong-pilipinas-logo.png", "96px", "64px")}</td>
+      </tr></table>
       <h1>ACKNOWLEDGEMENT RECEIPT</h1>
       <h2>General Information</h2><table>{rows(general)}</table>
       <h2>VERIFICATION AND POSTING DETAILS:</h2><table>{rows(posting)}</table>
