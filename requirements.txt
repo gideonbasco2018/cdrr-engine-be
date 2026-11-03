@@ -56,3 +56,4 @@ rarfile
 # PDF generation from HTML (Order of Payment, Certificates, etc.)
 weasyprint
 jinja2
+

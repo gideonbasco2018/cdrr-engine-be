@@ -1,8 +1,7 @@
 # app/api/routes/appointment_records.py
 from typing import Literal
 import logging
-
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from app.services.drive_files import extract_folder_id, list_folder, get_file_bytes
 
 from sqlalchemy import and_, or_
@@ -47,6 +46,7 @@ from app.models.user import User  # ADAPT: real module path of your User model
 from app.services.decking_claim import DECKING_STEP, claim_decking_task
 from app.services.decking_decision import submit_decision
 from app.services.appointment_payment import post_payments
+from app.services.ar_email import build_ar_snapshot, send_acknowledgement_receipt
 from app.services.workflow_roles import (
     ROLE_CASHIER,
     ROLE_DECKER,
@@ -627,9 +627,7 @@ def post_step_decision(
             is not None
         )
         if not is_valid:
-            raise HTTPException(
-                status_code=422, detail=f"Invalid {next_step} selected"
-            )
+            raise HTTPException(status_code=422, detail=f"Invalid {next_step} selected")
 
     try:
         result = submit_step_decision(
@@ -921,6 +919,7 @@ def get_claimed_application(
 def post_claimed_payments(
     reference_no: str,
     payload: PostPaymentRequest,
+    background_tasks: BackgroundTasks,
     internal_db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
@@ -953,6 +952,19 @@ def post_claimed_payments(
         raise HTTPException(
             status_code=500, detail="Unexpected error while posting the payment"
         )
+
+    # The payment is committed. Email the Acknowledgement Receipt in the
+    # background; a failure here must never turn the response into an error.
+    try:
+        cashier_name = (
+            f"{current_user.first_name or ''} {current_user.surname or ''}".strip()
+        )
+        snapshot = build_ar_snapshot(
+            application, payload.payments, result["total_paid"], cashier_name
+        )
+        background_tasks.add_task(send_acknowledgement_receipt, snapshot)
+    except Exception:
+        logger.exception("Could not queue the AR email for %s", reference_no)
 
     return result
 
