@@ -86,8 +86,10 @@ def _general_info(application) -> dict:
 
 
 # ───────────────────────── snapshots ─────────────────────────
-def build_ar_snapshot(application, payments, total_paid, cashier_name: str) -> dict:
-    now = datetime.now(MANILA)
+def build_ar_snapshot(
+    application, payments, total_paid, cashier_name: str, posted_at=None
+) -> dict:
+    now = posted_at or datetime.now(MANILA)
     return {
         **_general_info(application),
         "payment_dates": sorted({_long_date(p.date_of_payment) for p in payments}),
@@ -310,45 +312,99 @@ def create_notification(db, application, kind: str, snapshot: dict, source_uuid=
     return row.notification_uuid
 
 
+def _attempt(db, row, kind: str, snapshot: dict, user_uuid) -> None:
+    """Send once, then log the attempt and the latest status. Commits."""
+    error = None
+    row.recipient_email = row.recipient_email or snapshot.get("email") or ""
+    try:
+        if not row.recipient_email:
+            raise ValueError("No email address on the application")
+        subject, body, filename = _subject_and_body(kind, snapshot)
+        _send_email(
+            row.recipient_email, subject, body, filename, render_pdf(kind, snapshot)
+        )
+    except Exception as err:
+        logger.exception("Email failed: %s (%s)", row.subject, row.recipient_email)
+        error = str(err)[:1000] or err.__class__.__name__
+
+    number = (row.attempts or 0) + 1
+    db.add(
+        EAppEmailNotificationAttempt(
+            notification_uuid=row.notification_uuid,
+            attempt_number=number,
+            status="FAILED" if error else "SENT",
+            error_message=error,
+            attempted_by_user_uuid=user_uuid,
+        )
+    )
+    row.attempts = number
+    row.status = "FAILED" if error else "SENT"
+    row.last_error = error
+    if not error:
+        row.last_sent_at = datetime.now()
+    db.commit()
+
+
 def deliver_notification(notification_uuid: str, kind: str, snapshot: dict, user_uuid):
-    """Background task: render, send, then log the attempt. Never raises."""
+    """Background task with its own session. Never raises."""
     from app.db.session import SessionLocal  # ADAPT: your session factory
 
     db = SessionLocal()
     try:
         row = db.get(EAppEmailNotification, notification_uuid)
-        if not row:
-            return
-        error = None
-        try:
-            if not row.recipient_email:
-                raise ValueError("No email address on the application")
-            subject, body, filename = _subject_and_body(kind, snapshot)
-            _send_email(
-                row.recipient_email, subject, body, filename, render_pdf(kind, snapshot)
-            )
-        except Exception as err:
-            logger.exception("Email failed: %s (%s)", row.subject, row.recipient_email)
-            error = str(err)[:1000] or err.__class__.__name__
-
-        number = (row.attempts or 0) + 1
-        db.add(
-            EAppEmailNotificationAttempt(
-                notification_uuid=row.notification_uuid,
-                attempt_number=number,
-                status="FAILED" if error else "SENT",
-                error_message=error,
-                attempted_by_user_uuid=user_uuid,
-            )
-        )
-        row.attempts = number
-        row.status = "FAILED" if error else "SENT"
-        row.last_error = error
-        if not error:
-            row.last_sent_at = datetime.now()
-        db.commit()
+        if row:
+            _attempt(db, row, kind, snapshot, user_uuid)
     except Exception:
         db.rollback()
         logger.exception("Could not write the email log for %s", notification_uuid)
     finally:
         db.close()
+
+
+def rebuild_snapshot(db, row) -> dict:
+    """The data for a resend, read from the database again.
+    Raises ValueError when it cannot be rebuilt."""
+    from app.models.user import User
+
+    application = row.application
+    if not row.source_uuid:
+        raise ValueError("This email has no source record, so it cannot be resent")
+
+    if row.document_type == DOC_AR:
+        payments = (
+            db.query(EAppPaymentVerification)
+            .filter(EAppPaymentVerification.posting_batch_uuid == row.source_uuid)
+            .all()
+        )
+        if not payments:
+            raise ValueError("The payments for this receipt were not found")
+        total = sum(float(p.amount_paid or 0) for p in payments)
+        cashier = (
+            db.query(User)
+            .filter(User.user_uuid == payments[0].verified_by_user_uuid)
+            .first()
+        )
+        name = (
+            f"{cashier.first_name or ''} {cashier.surname or ''}".strip()
+            if cashier
+            else ""
+        )
+        stamp = getattr(payments[0], "created_at", None)  # ADAPT if named differently
+        return build_ar_snapshot(application, payments, total, name, posted_at=stamp)
+
+    if row.document_type == DOC_AOOP:
+        op = (
+            db.query(EAppOrderOfPayment)
+            .filter(EAppOrderOfPayment.op_uuid == row.source_uuid)
+            .first()
+        )
+        if not op:
+            raise ValueError("The Additional Order of Payment was not found")
+        return build_aoop_snapshot(db, application, op.op_number)
+
+    raise ValueError("Only generated documents can be resent for now")
+
+
+def send_now(db, row, kind: str, snapshot: dict, user_uuid) -> None:
+    """Same as the background send, but in the caller's session (for Resend)."""
+    _attempt(db, row, kind, snapshot, user_uuid)
