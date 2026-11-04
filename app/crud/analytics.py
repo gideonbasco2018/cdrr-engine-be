@@ -355,6 +355,17 @@ def get_analytics_received_released_trend(
         .all()
     )
 
+    ip_rows = (
+        scoped(
+            db.query(bucket(rec).label("k"), func.count(MainDB.DB_ID).label("n")),
+            rec,
+            rec_valid,
+        )
+        .filter(_is_in_progress())
+        .group_by("k")
+        .all()
+    )
+
     b = scoped(
         db.query(
             func.count(MainDB.DB_ID).label("total"),
@@ -370,7 +381,8 @@ def get_analytics_received_released_trend(
 
     rc = {int(r.k): int(r.n or 0) for r in rec_rows if r.k is not None}
     rl = {int(r.k): int(r.n or 0) for r in rel_rows if r.k is not None}
-    keys = sorted(set(rc) | set(rl))
+    ip = {int(r.k): int(r.n or 0) for r in ip_rows if r.k is not None}
+    keys = sorted(set(rc) | set(rl) | set(ip))
     if not by_year and keys:
         keys = list(range(1, max(keys) + 1))  # no gaps between Jan and the last month
 
@@ -382,6 +394,7 @@ def get_analytics_received_released_trend(
                 "label": str(k) if by_year else MONTH_ABBR.get(k, str(k)),
                 "received": rc.get(k, 0),
                 "released": rl.get(k, 0),
+                "in_progress": ip.get(k, 0),
             }
             for k in keys
         ],
