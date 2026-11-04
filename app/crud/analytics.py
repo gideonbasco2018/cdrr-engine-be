@@ -484,6 +484,89 @@ def get_analytics_classification_records(
     }
 
 
+# ── 4c. By Classification — per year / per month trend ────────
+def get_analytics_classification_trend(
+    db: Session,
+    year: str = "All",
+    month: str = "All",
+    prescription: str = "All",
+    classification: str = None,
+    tab: str = "completed",  # completed | in_progress
+    group_by: str = "year",  # year | month
+    bucket_year: int = None,  # required when group_by == "month"
+    basis: str = "received",  # received | released
+    search: str = None,
+    status: str = None,
+    doc_type: str = None,
+) -> dict:
+    date_col = (
+        MainDB.DB_DATE_RELEASED if basis == "released" else MainDB.DB_DATE_RECEIVED_CENT
+    )
+    d = func.str_to_date(func.left(date_col, 10), "%Y-%m-%d")
+    valid = _valid_date_cond(date_col)
+
+    scope = [
+        MainDB.DB_PROD_CLASS_PRESCRIP.isnot(None),
+        MainDB.DB_PROD_CLASS_PRESCRIP != "",
+    ]
+    if classification:
+        scope.append(MainDB.DB_PROD_CLASS_PRESCRIP == classification)
+    scope.append(_is_in_progress() if tab == "in_progress" else _is_completed())
+
+    doc_key = _doc_key_expr()
+    status_key = _status_key_expr()
+
+    def narrowed(q):
+        if search:
+            q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
+        if status:
+            q = q.filter(status_key == status)
+        if doc_type:
+            q = q.filter(doc_key == doc_type)
+        return q
+
+    def base():
+        return _base_query(db, year, month, prescription).filter(*scope)
+
+    by_month = group_by == "month" and bucket_year is not None
+    bucket = func.month(d) if by_month else func.year(d)
+
+    q = narrowed(base()).filter(valid)
+    if by_month:
+        q = q.filter(func.year(d) == int(bucket_year))
+
+    rows = (
+        q.with_entities(bucket.label("k"), func.count(MainDB.DB_ID).label("n"))
+        .group_by("k")
+        .all()
+    )
+    counts = {int(r.k): int(r.n or 0) for r in rows if r.k is not None}
+
+    if by_month:
+        data = [
+            {"key": m, "label": MONTH_ABBR[m], "count": counts.get(m, 0)}
+            for m in range(1, 13)
+        ]
+        no_date = 0
+    else:
+        data = [{"key": y, "label": str(y), "count": counts[y]} for y in sorted(counts)]
+        no_date = int(
+            narrowed(base())
+            .filter(~valid)
+            .with_entities(func.count(MainDB.DB_ID))
+            .scalar()
+            or 0
+        )
+
+    return {
+        "group_by": "month" if by_month else "year",
+        "basis": basis,
+        "data": data,
+        "no_date": no_date,
+        "total": sum(x["count"] for x in data),
+    }
+
+
 # ── 5. Year-by-Year Summary ───────────────────────────────────
 def get_analytics_year_summary(db: Session, basis: str = "released") -> list:
     """
