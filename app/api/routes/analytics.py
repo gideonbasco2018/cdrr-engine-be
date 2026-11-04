@@ -40,9 +40,7 @@ def require_evaluator_monitoring_access(
     """User Insights is open only to the groups listed in the crud file."""
     group_ids = {g.id for g in current_user.groups}
     if not group_ids & crud_evaluator_monitoring.ALLOWED_GROUP_IDS:
-        raise HTTPException(
-            status_code=403, detail="Not allowed to view User Insights"
-        )
+        raise HTTPException(status_code=403, detail="Not allowed to view User Insights")
     return current_user
 
 
@@ -121,10 +119,11 @@ def get_by_classification(
     year: str = Query("All"),
     month: str = Query("All"),
     prescription: str = Query("All"),
+    status: str = Query("all", description="all|completed|in_progress"),
     db: Session = Depends(get_db),
 ):
     data, doc_types = crud_analytics.get_analytics_by_classification(
-        db, year=year, month=month, prescription=prescription
+        db, year=year, month=month, prescription=prescription, status=status
     )
     return {"data": data, "doc_types": doc_types}
 
@@ -514,7 +513,9 @@ def get_evaluator_monitoring_route(
     month: str = Query("All", description="All or 1-12 (needs a year)"),
     role: str = Query("evaluator", description="evaluator|checker"),
     source: str = Query(None, description="TAT source filter, e.g. decked:released"),
-    split: str = Query("year", description="year|month: how the Received/Released splits are cut"),
+    split: str = Query(
+        "year", description="year|month: how the Received/Released splits are cut"
+    ),
     db: Session = Depends(get_db),
 ):
     data = crud_evaluator_monitoring.get_evaluator_monitoring(
@@ -538,7 +539,9 @@ def get_evaluator_monitoring_route(
 def get_evaluator_monitoring_records_route(
     user_id: int = Query(..., description="Evaluator's user id"),
     kind: str = Query(..., description="company|drug"),
-    key: str = Query(..., description="The row's key, as sent by /evaluator-monitoring"),
+    key: str = Query(
+        ..., description="The row's key, as sent by /evaluator-monitoring"
+    ),
     year: str = Query("All"),
     month: str = Query("All", description="All or 1-12 (needs a year)"),
     page: int = Query(1, ge=1),
@@ -568,7 +571,9 @@ def get_evaluator_monitoring_records_route(
 def get_evaluator_monitoring_period_records_route(
     user_id: int = Query(..., description="Evaluator's user id"),
     side: str = Query(..., description="received|released|either"),
-    bucket: int = Query(..., description="the year, or the month when a year is chosen"),
+    bucket: int = Query(
+        ..., description="the year, or the month when a year is chosen"
+    ),
     year: str = Query("All"),
     month: str = Query("All"),
     other_year: int = Query(None, description="released in / received in this year"),
@@ -664,6 +669,7 @@ def get_generic_monitoring_records_route(
         page=page,
         page_size=page_size,
     )
+
 
 @router.get(
     "/evaluator-monitoring/month-summary",
