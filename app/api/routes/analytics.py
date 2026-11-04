@@ -40,9 +40,7 @@ def require_evaluator_monitoring_access(
     """User Insights is open only to the groups listed in the crud file."""
     group_ids = {g.id for g in current_user.groups}
     if not group_ids & crud_evaluator_monitoring.ALLOWED_GROUP_IDS:
-        raise HTTPException(
-            status_code=403, detail="Not allowed to view User Insights"
-        )
+        raise HTTPException(status_code=403, detail="Not allowed to view User Insights")
     return current_user
 
 
@@ -116,17 +114,178 @@ def get_trend(
     return {"data": data}
 
 
-@router.get("/by-classification", response_model=AnalyticsClassificationResponse)
-def get_by_classification(
+@router.get("/trend/received-released")
+def get_trend_received_released(
     year: str = Query("All"),
     month: str = Query("All"),
     prescription: str = Query("All"),
     db: Session = Depends(get_db),
 ):
-    data, doc_types = crud_analytics.get_analytics_by_classification(
+    return crud_analytics.get_analytics_received_released_trend(
         db, year=year, month=month, prescription=prescription
     )
+
+
+@router.get("/trend/records")
+def get_trend_records(
+    year: str = Query("All"),
+    month: str = Query("All"),
+    prescription: str = Query("All"),
+    kind: str = Query(
+        "received",
+        description="received|released|received_released|received_in_progress|received_other",
+    ),
+    bucket: int = Query(None, description="clicked year (year=All) or month"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    search: str = Query(None, description="Filter by DTN"),
+    status: str = Query(None, description="Normalized DB_APP_STATUS, or __NONE__"),
+    doc_type: str = Query(None, description="Normalized doc type, or __NONE__"),
+    classification: str = Query(None, description="Product class, or __NONE__"),
+    received_from: date = Query(None),
+    received_to: date = Query(None),
+    released_from: date = Query(None),
+    released_to: date = Query(None),
+    db: Session = Depends(get_db),
+):
+    return crud_analytics.get_analytics_trend_records(
+        db,
+        year=year,
+        month=month,
+        prescription=prescription,
+        kind=kind,
+        bucket=bucket,
+        page=page,
+        page_size=page_size,
+        search=search,
+        status=status,
+        doc_type=doc_type,
+        classification=classification,
+        received_from=received_from,
+        received_to=received_to,
+        released_from=released_from,
+        released_to=released_to,
+    )
+
+
+@router.get("/trend/timeline")
+def get_trend_timeline(
+    year: str = Query("All"),
+    month: str = Query("All"),
+    prescription: str = Query("All"),
+    kind: str = Query(
+        "received",
+        description="received|released|received_released|received_in_progress|received_other",
+    ),
+    bucket: int = Query(None, description="clicked year (year=All) or month"),
+    group_by: str = Query("year", description="year|month|day"),
+    bucket_year: int = Query(None, ge=2000, le=2100),
+    bucket_month: int = Query(None, ge=1, le=12),
+    basis: str = Query(None, description="received|released"),
+    search: str = Query(None, description="Filter by DTN"),
+    status: str = Query(None),
+    doc_type: str = Query(None),
+    classification: str = Query(None, description="Product class, or __NONE__"),
+    db: Session = Depends(get_db),
+):
+    return crud_analytics.get_analytics_trend_timeline(
+        db,
+        year=year,
+        month=month,
+        prescription=prescription,
+        kind=kind,
+        bucket=bucket,
+        group_by=group_by,
+        bucket_year=bucket_year,
+        bucket_month=bucket_month,
+        basis=basis,
+        search=search,
+        status=status,
+        doc_type=doc_type,
+        classification=classification,
+    )
+
+
+@router.get("/by-classification", response_model=AnalyticsClassificationResponse)
+def get_by_classification(
+    year: str = Query("All"),
+    month: str = Query("All"),
+    prescription: str = Query("All"),
+    status: str = Query("all", description="all|completed|in_progress"),
+    db: Session = Depends(get_db),
+):
+    data, doc_types = crud_analytics.get_analytics_by_classification(
+        db, year=year, month=month, prescription=prescription, status=status
+    )
     return {"data": data, "doc_types": doc_types}
+
+
+@router.get("/by-classification/records")
+def get_by_classification_records(
+    year: str = Query("All"),
+    month: str = Query("All"),
+    prescription: str = Query("All"),
+    classification: str = Query(None, description="Class name; empty = all classes"),
+    tab: str = Query("completed", description="completed|in_progress"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    search: str = Query(None, description="Filter by DTN"),
+    status: str = Query(None, description="Normalized DB_APP_STATUS, or __NONE__"),
+    doc_type: str = Query(None, description="Normalized doc type, or __NONE__"),
+    received_from: date = Query(None),
+    received_to: date = Query(None),
+    released_from: date = Query(None),
+    released_to: date = Query(None),
+    db: Session = Depends(get_db),
+):
+    return crud_analytics.get_analytics_classification_records(
+        db,
+        year=year,
+        month=month,
+        prescription=prescription,
+        classification=classification,
+        tab=tab,
+        page=page,
+        page_size=page_size,
+        search=search,
+        status=status,
+        doc_type=doc_type,
+        received_from=received_from,
+        received_to=received_to,
+        released_from=released_from,
+        released_to=released_to,
+    )
+
+
+@router.get("/by-classification/trend")
+def get_by_classification_trend(
+    year: str = Query("All"),
+    month: str = Query("All"),
+    prescription: str = Query("All"),
+    classification: str = Query(None, description="Class name; empty = all classes"),
+    tab: str = Query("completed", description="completed|in_progress"),
+    group_by: str = Query("year", description="year|month"),
+    bucket_year: int = Query(None, ge=2000, le=2100, description="needed for month"),
+    basis: str = Query("received", description="received|released"),
+    search: str = Query(None, description="Filter by DTN"),
+    status: str = Query(None),
+    doc_type: str = Query(None),
+    db: Session = Depends(get_db),
+):
+    return crud_analytics.get_analytics_classification_trend(
+        db,
+        year=year,
+        month=month,
+        prescription=prescription,
+        classification=classification,
+        tab=tab,
+        group_by=group_by,
+        bucket_year=bucket_year,
+        basis=basis,
+        search=search,
+        status=status,
+        doc_type=doc_type,
+    )
 
 
 @router.get("/year-summary", response_model=AnalyticsYearSummaryResponse)
@@ -536,8 +695,9 @@ def get_evaluator_monitoring_route(
     month: str = Query("All", description="All or 1-12 (needs a year)"),
     role: str = Query("evaluator", description="evaluator, checker or evaluator,checker"),
     source: str = Query(None, description="TAT source filter, e.g. decked:released"),
-    split: str = Query("year", description="year|month: how the Received/Released splits are cut"),
-    sources: str = Query("cpr", description="cpr, fgmp or cpr,fgmp"),
+    split: str = Query(
+        "year", description="year|month: how the Received/Released splits are cut"
+    ),
     db: Session = Depends(get_db),
 ):
     data = crud_evaluator_monitoring.get_evaluator_monitoring(
@@ -562,7 +722,9 @@ def get_evaluator_monitoring_route(
 def get_evaluator_monitoring_records_route(
     user_id: int = Query(..., description="Evaluator's user id"),
     kind: str = Query(..., description="company|drug"),
-    key: str = Query(..., description="The row's key, as sent by /evaluator-monitoring"),
+    key: str = Query(
+        ..., description="The row's key, as sent by /evaluator-monitoring"
+    ),
     year: str = Query("All"),
     month: str = Query("All", description="All or 1-12 (needs a year)"),
     page: int = Query(1, ge=1),
@@ -594,7 +756,9 @@ def get_evaluator_monitoring_records_route(
 def get_evaluator_monitoring_period_records_route(
     user_id: int = Query(..., description="Evaluator's user id"),
     side: str = Query(..., description="received|released|either"),
-    bucket: int = Query(..., description="the year, or the month when a year is chosen"),
+    bucket: int = Query(
+        ..., description="the year, or the month when a year is chosen"
+    ),
     year: str = Query("All"),
     month: str = Query("All"),
     other_year: int = Query(None, description="released in / received in this year"),
@@ -692,6 +856,7 @@ def get_generic_monitoring_records_route(
         page=page,
         page_size=page_size,
     )
+
 
 @router.get(
     "/evaluator-monitoring/month-summary",

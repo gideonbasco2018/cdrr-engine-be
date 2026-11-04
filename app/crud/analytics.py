@@ -106,6 +106,13 @@ def _is_completed():
     return func.upper(func.trim(MainDB.DB_APP_STATUS)) == "COMPLETED"
 
 
+def _is_in_progress():
+    return or_(
+        MainDB.DB_APP_STATUS.ilike("IN PROGRESS"),
+        MainDB.DB_APP_STATUS.ilike("IN-PROGRESS"),
+    )
+
+
 def _doc_completed_case(pattern):
     """Count of rows whose doc type matches `pattern` AND status is COMPLETED."""
     return func.sum(
@@ -214,7 +221,6 @@ def get_analytics_summary(
 
 
 # ── 3. Trend Chart ────────────────────────────────────────────
-# ── 3. Trend Chart ────────────────────────────────────────────
 def get_analytics_trend(
     db: Session,
     year: str = "All",
@@ -296,12 +302,380 @@ def get_analytics_trend(
     return result
 
 
+# ── 3b. Received vs Released trend (+ received breakdown) ─────
+def get_analytics_received_released_trend(
+    db: Session,
+    year: str = "All",
+    month: str = "All",
+    prescription: str = "All",
+) -> dict:
+    """
+    Received : valid DB_DATE_RECEIVED_CENT, bucketed by that date.
+    Released : COMPLETED with valid DB_DATE_RELEASED, bucketed by that date.
+    Breakdown: received applications in scope split into
+               released (COMPLETED) / in_progress / other.
+    year == "All" -> bucket by year, otherwise bucket by month.
+    """
+    by_year = year == "All"
+    rec = func.str_to_date(func.left(MainDB.DB_DATE_RECEIVED_CENT, 10), "%Y-%m-%d")
+    rel = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
+    rec_valid = _valid_date_cond(MainDB.DB_DATE_RECEIVED_CENT)
+    rel_valid = _valid_date_cond(MainDB.DB_DATE_RELEASED)
+
+    def scoped(q, d, valid):
+        q = q.filter(valid)
+        if prescription != "All":
+            q = q.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
+        if not by_year:
+            q = q.filter(func.year(d) == int(year))
+            if month != "All":
+                q = q.filter(func.month(d) == int(month))
+        return q
+
+    def bucket(d):
+        return func.year(d) if by_year else func.month(d)
+
+    rec_rows = (
+        scoped(
+            db.query(bucket(rec).label("k"), func.count(MainDB.DB_ID).label("n")),
+            rec,
+            rec_valid,
+        )
+        .group_by("k")
+        .all()
+    )
+    rel_rows = (
+        scoped(
+            db.query(bucket(rel).label("k"), func.count(MainDB.DB_ID).label("n")),
+            rel,
+            rel_valid,
+        )
+        .filter(_is_completed())
+        .group_by("k")
+        .all()
+    )
+
+    ip_rows = (
+        scoped(
+            db.query(bucket(rec).label("k"), func.count(MainDB.DB_ID).label("n")),
+            rec,
+            rec_valid,
+        )
+        .filter(_is_in_progress())
+        .group_by("k")
+        .all()
+    )
+
+    b = scoped(
+        db.query(
+            func.count(MainDB.DB_ID).label("total"),
+            func.sum(case((_is_completed(), 1), else_=0)).label("released"),
+            func.sum(case((_is_in_progress(), 1), else_=0)).label("in_progress"),
+        ),
+        rec,
+        rec_valid,
+    ).one()
+    received = int(b.total or 0)
+    released = int(b.released or 0)
+    in_progress = int(b.in_progress or 0)
+
+    rc = {int(r.k): int(r.n or 0) for r in rec_rows if r.k is not None}
+    rl = {int(r.k): int(r.n or 0) for r in rel_rows if r.k is not None}
+    ip = {int(r.k): int(r.n or 0) for r in ip_rows if r.k is not None}
+    keys = sorted(set(rc) | set(rl) | set(ip))
+    if not by_year and keys:
+        keys = list(range(1, max(keys) + 1))  # no gaps between Jan and the last month
+
+    return {
+        "group_by": "year" if by_year else "month",
+        "data": [
+            {
+                "key": k,
+                "label": str(k) if by_year else MONTH_ABBR.get(k, str(k)),
+                "received": rc.get(k, 0),
+                "released": rl.get(k, 0),
+                "in_progress": ip.get(k, 0),
+            }
+            for k in keys
+        ],
+        "breakdown": {
+            "received": received,
+            "released": released,
+            "in_progress": in_progress,
+            "other": max(received - released - in_progress, 0),
+        },
+    }
+
+
+def _class_key_expr():
+    """Product classification key; blank -> __NONE__."""
+    return case(
+        (MainDB.DB_PROD_CLASS_PRESCRIP.is_(None), "__NONE__"),
+        (func.trim(MainDB.DB_PROD_CLASS_PRESCRIP) == "", "__NONE__"),
+        else_=MainDB.DB_PROD_CLASS_PRESCRIP,
+    )
+
+
+def _trend_scope(kind, year, month, prescription, bucket):
+    """Shared scope for the Received/Released records and their timeline."""
+    on_release = kind == "released"
+    date_col = MainDB.DB_DATE_RELEASED if on_release else MainDB.DB_DATE_RECEIVED_CENT
+    d = func.str_to_date(func.left(date_col, 10), "%Y-%m-%d")
+
+    scope = [_valid_date_cond(date_col)]
+    if prescription != "All":
+        scope.append(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
+    if year != "All":
+        scope.append(func.year(d) == int(year))
+        if month != "All":
+            scope.append(func.month(d) == int(month))
+    if bucket is not None:
+        scope.append((func.year(d) if year == "All" else func.month(d)) == int(bucket))
+
+    if kind in ("released", "received_released"):
+        scope.append(_is_completed())
+    elif kind == "received_in_progress":
+        scope.append(_is_in_progress())
+    elif kind == "received_other":
+        scope.append(case((or_(_is_completed(), _is_in_progress()), 1), else_=0) == 0)
+    return scope, d
+
+
+# ── 3c. Received vs Released — record drill-down ──────────────
+def get_analytics_trend_records(
+    db: Session,
+    year: str = "All",
+    month: str = "All",
+    prescription: str = "All",
+    kind: str = "received",
+    bucket: int = None,
+    page: int = 1,
+    page_size: int = 50,
+    search: str = None,
+    status: str = None,
+    doc_type: str = None,
+    classification: str = None,
+    received_from=None,
+    received_to=None,
+    released_from=None,
+    released_to=None,
+) -> dict:
+    """
+    kind: received | released                       (line chart points / legend)
+          received_released | received_in_progress
+          | received_other                          (donut slices)
+    bucket: the clicked year (when year == "All") or month (when a year is set).
+    """
+
+    scope, d = _trend_scope(kind, year, month, prescription, bucket)
+    scope += _date_range_conds(received_from, received_to, released_from, released_to)
+
+    doc_key = _doc_key_expr()
+    status_key = _status_key_expr()
+    class_key = _class_key_expr()
+
+    def narrowed(q, use_status=True, use_doc=True, use_class=True):
+        if search:
+            q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
+        if use_status and status:
+            q = q.filter(status_key == status)
+        if use_doc and doc_type:
+            q = q.filter(doc_key == doc_type)
+        if use_class and classification:
+            q = q.filter(class_key == classification)
+        return q
+
+    rows_q = narrowed(
+        db.query(
+            MainDB.DB_ID,
+            MainDB.DB_DTN,
+            MainDB.DB_DATE_RECEIVED_CENT,
+            MainDB.DB_DATE_RELEASED,
+            MainDB.DB_TYPE_DOC_RELEASED,
+            MainDB.DB_APP_STATUS,
+            MainDB.DB_ENTRY_TYPE,
+            MainDB.DB_PROD_BR_NAME,
+            MainDB.DB_PROD_GEN_NAME,
+        ).filter(*scope)
+    )
+    total = rows_q.count()
+    rows = (
+        rows_q.order_by(d.asc(), MainDB.DB_ID.asc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    status_rows = (
+        narrowed(
+            db.query(status_key.label("k"), func.count(MainDB.DB_ID).label("n")).filter(
+                *scope
+            ),
+            use_status=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    status_counts = sorted(
+        [{"key": r.k, "count": int(r.n or 0)} for r in status_rows],
+        key=lambda x: (-x["count"], x["key"]),
+    )
+
+    doc_rows = (
+        narrowed(
+            db.query(doc_key.label("k"), func.count(MainDB.DB_ID).label("n")).filter(
+                *scope
+            ),
+            use_doc=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    doc_type_counts = sorted(
+        [{"key": r.k, "count": int(r.n or 0)} for r in doc_rows],
+        key=lambda x: (-x["count"], x["key"]),
+    )
+
+    class_rows = (
+        narrowed(
+            db.query(class_key.label("k"), func.count(MainDB.DB_ID).label("n")).filter(
+                *scope
+            ),
+            use_class=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    class_counts = sorted(
+        [{"key": r.k, "count": int(r.n or 0)} for r in class_rows],
+        key=lambda x: (-x["count"], x["key"]),
+    )
+
+    def _d(v):
+        return str(v)[:10] if v else None
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "status_counts": status_counts,
+        "doc_type_counts": doc_type_counts,
+        "class_counts": class_counts,
+        "data": [
+            {
+                "db_id": r.DB_ID,
+                "dtn": str(r.DB_DTN) if r.DB_DTN else None,
+                "entry_type": r.DB_ENTRY_TYPE or None,
+                "date_received_cent": _d(r.DB_DATE_RECEIVED_CENT),
+                "date_released": _d(r.DB_DATE_RELEASED),
+                "type_doc_released": r.DB_TYPE_DOC_RELEASED or None,
+                "app_status": r.DB_APP_STATUS or None,
+                "brand_name": r.DB_PROD_BR_NAME or None,
+                "generic_name": r.DB_PROD_GEN_NAME or None,
+            }
+            for r in rows
+        ],
+    }
+
+
+# ── 3d. Received vs Released records — timeline (year / month / day) ──
+def get_analytics_trend_timeline(
+    db: Session,
+    year: str = "All",
+    month: str = "All",
+    prescription: str = "All",
+    kind: str = "received",
+    bucket: int = None,
+    group_by: str = "year",  # year | month | day
+    bucket_year: int = None,  # needed for month / day
+    bucket_month: int = None,  # needed for day
+    basis: str = None,  # received | released (date the bars are cut by)
+    search: str = None,
+    status: str = None,
+    doc_type: str = None,
+    classification: str = None,
+) -> dict:
+    import calendar
+
+    scope, _ = _trend_scope(kind, year, month, prescription, bucket)
+
+    if basis not in ("received", "released"):
+        basis = "released" if kind in ("released", "received_released") else "received"
+    date_col = (
+        MainDB.DB_DATE_RELEASED if basis == "released" else MainDB.DB_DATE_RECEIVED_CENT
+    )
+    t = func.str_to_date(func.left(date_col, 10), "%Y-%m-%d")
+    valid = _valid_date_cond(date_col)
+
+    doc_key = _doc_key_expr()
+    status_key = _status_key_expr()
+    class_key = _class_key_expr()
+
+    def narrowed(q):
+        if search:
+            q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
+        if status:
+            q = q.filter(status_key == status)
+        if doc_type:
+            q = q.filter(doc_key == doc_type)
+        if classification:
+            q = q.filter(class_key == classification)
+        return q
+
+    if group_by == "day" and bucket_year and bucket_month:
+        mode, expr = "day", func.day(t)
+    elif group_by in ("month", "day") and bucket_year:
+        mode, expr = "month", func.month(t)
+    else:
+        mode, expr = "year", func.year(t)
+
+    q = narrowed(
+        db.query(expr.label("k"), func.count(MainDB.DB_ID).label("n")).filter(
+            *scope, valid
+        )
+    )
+    if mode in ("month", "day"):
+        q = q.filter(func.year(t) == int(bucket_year))
+    if mode == "day":
+        q = q.filter(func.month(t) == int(bucket_month))
+
+    counts = {int(r.k): int(r.n or 0) for r in q.group_by("k").all() if r.k is not None}
+
+    if mode == "day":
+        last = calendar.monthrange(int(bucket_year), int(bucket_month))[1]
+        data = [
+            {"key": d, "label": str(d), "count": counts.get(d, 0)}
+            for d in range(1, last + 1)
+        ]
+    elif mode == "month":
+        data = [
+            {"key": m, "label": MONTH_ABBR[m], "count": counts.get(m, 0)}
+            for m in range(1, 13)
+        ]
+    else:
+        data = [{"key": y, "label": str(y), "count": counts[y]} for y in sorted(counts)]
+
+    no_date = int(
+        narrowed(db.query(func.count(MainDB.DB_ID))).filter(*scope, ~valid).scalar()
+        or 0
+    )
+
+    return {
+        "group_by": mode,
+        "basis": basis,
+        "data": data,
+        "no_date": no_date,
+        "total": sum(x["count"] for x in data),
+    }
+
+
 # ── 4. By Classification ──────────────────────────────────────
 def get_analytics_by_classification(
     db: Session,
     year: str = "All",
     month: str = "All",
     prescription: str = "All",
+    status: str = "all",  # all | completed | in_progress
 ) -> list:
     # Step 1: get all distinct doc types dynamically
     doc_types = (
@@ -322,13 +696,17 @@ def get_analytics_by_classification(
     ]
 
     # Step 3: run the main query
+    q = _base_query(db, year, month, prescription).filter(
+        MainDB.DB_PROD_CLASS_PRESCRIP.isnot(None),
+        MainDB.DB_PROD_CLASS_PRESCRIP != "",
+    )
+    if status == "completed":
+        q = q.filter(_is_completed())
+    elif status == "in_progress":
+        q = q.filter(_is_in_progress())
+
     rows = (
-        _base_query(db, year, month, prescription)
-        .filter(
-            MainDB.DB_PROD_CLASS_PRESCRIP.isnot(None),
-            MainDB.DB_PROD_CLASS_PRESCRIP != "",
-        )
-        .with_entities(
+        q.with_entities(
             MainDB.DB_PROD_CLASS_PRESCRIP.label("type"),
             func.count(MainDB.DB_ID).label("count"),
             *dynamic_cols,
@@ -348,6 +726,211 @@ def get_analytics_by_classification(
         result.append(entry)
 
     return result, doc_types
+
+
+# ── 4b. By Classification — record drill-down ─────────────────
+def get_analytics_classification_records(
+    db: Session,
+    year: str = "All",
+    month: str = "All",
+    prescription: str = "All",
+    classification: str = None,  # None = all classes (used by the "By Doc" pie)
+    tab: str = "completed",  # completed | in_progress
+    page: int = 1,
+    page_size: int = 50,
+    search: str = None,
+    status: str = None,
+    doc_type: str = None,
+    received_from=None,
+    received_to=None,
+    released_from=None,
+    released_to=None,
+) -> dict:
+    scope = [
+        MainDB.DB_PROD_CLASS_PRESCRIP.isnot(None),
+        MainDB.DB_PROD_CLASS_PRESCRIP != "",
+    ]
+    if classification:
+        scope.append(MainDB.DB_PROD_CLASS_PRESCRIP == classification)
+    scope.append(_is_in_progress() if tab == "in_progress" else _is_completed())
+    scope += _date_range_conds(received_from, received_to, released_from, released_to)
+
+    doc_key = _doc_key_expr()
+    status_key = _status_key_expr()
+    rel_date = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
+
+    def narrowed(q, use_status=True, use_doc=True):
+        if search:
+            q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
+        if use_status and status:
+            q = q.filter(status_key == status)
+        if use_doc and doc_type:
+            q = q.filter(doc_key == doc_type)
+        return q
+
+    def base():
+        return _base_query(db, year, month, prescription)
+
+    rows_q = narrowed(
+        base()
+        .with_entities(
+            MainDB.DB_ID,
+            MainDB.DB_DTN,
+            MainDB.DB_DATE_RECEIVED_CENT,
+            MainDB.DB_DATE_RELEASED,
+            MainDB.DB_TYPE_DOC_RELEASED,
+            MainDB.DB_APP_STATUS,
+            MainDB.DB_ENTRY_TYPE,
+            MainDB.DB_PROD_BR_NAME,
+            MainDB.DB_PROD_GEN_NAME,
+        )
+        .filter(*scope)
+    )
+    total = rows_q.count()
+    rows = (
+        rows_q.order_by(rel_date.asc(), MainDB.DB_ID.asc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    status_rows = (
+        narrowed(
+            base()
+            .with_entities(status_key.label("k"), func.count(MainDB.DB_ID).label("n"))
+            .filter(*scope),
+            use_status=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    status_counts = sorted(
+        [{"key": r.k, "count": int(r.n or 0)} for r in status_rows],
+        key=lambda x: (-x["count"], x["key"]),
+    )
+
+    doc_rows = (
+        narrowed(
+            base()
+            .with_entities(doc_key.label("k"), func.count(MainDB.DB_ID).label("n"))
+            .filter(*scope),
+            use_doc=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    doc_type_counts = sorted(
+        [{"key": r.k, "count": int(r.n or 0)} for r in doc_rows],
+        key=lambda x: (-x["count"], x["key"]),
+    )
+
+    def _d(v):
+        return str(v)[:10] if v else None
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "status_counts": status_counts,
+        "doc_type_counts": doc_type_counts,
+        "data": [
+            {
+                "db_id": r.DB_ID,
+                "dtn": str(r.DB_DTN) if r.DB_DTN else None,
+                "entry_type": r.DB_ENTRY_TYPE or None,
+                "date_received_cent": _d(r.DB_DATE_RECEIVED_CENT),
+                "date_released": _d(r.DB_DATE_RELEASED),
+                "type_doc_released": r.DB_TYPE_DOC_RELEASED or None,
+                "app_status": r.DB_APP_STATUS or None,
+                "brand_name": r.DB_PROD_BR_NAME or None,
+                "generic_name": r.DB_PROD_GEN_NAME or None,
+            }
+            for r in rows
+        ],
+    }
+
+
+# ── 4c. By Classification — per year / per month trend ────────
+def get_analytics_classification_trend(
+    db: Session,
+    year: str = "All",
+    month: str = "All",
+    prescription: str = "All",
+    classification: str = None,
+    tab: str = "completed",  # completed | in_progress
+    group_by: str = "year",  # year | month
+    bucket_year: int = None,  # required when group_by == "month"
+    basis: str = "received",  # received | released
+    search: str = None,
+    status: str = None,
+    doc_type: str = None,
+) -> dict:
+    date_col = (
+        MainDB.DB_DATE_RELEASED if basis == "released" else MainDB.DB_DATE_RECEIVED_CENT
+    )
+    d = func.str_to_date(func.left(date_col, 10), "%Y-%m-%d")
+    valid = _valid_date_cond(date_col)
+
+    scope = [
+        MainDB.DB_PROD_CLASS_PRESCRIP.isnot(None),
+        MainDB.DB_PROD_CLASS_PRESCRIP != "",
+    ]
+    if classification:
+        scope.append(MainDB.DB_PROD_CLASS_PRESCRIP == classification)
+    scope.append(_is_in_progress() if tab == "in_progress" else _is_completed())
+
+    doc_key = _doc_key_expr()
+    status_key = _status_key_expr()
+
+    def narrowed(q):
+        if search:
+            q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
+        if status:
+            q = q.filter(status_key == status)
+        if doc_type:
+            q = q.filter(doc_key == doc_type)
+        return q
+
+    def base():
+        return _base_query(db, year, month, prescription).filter(*scope)
+
+    by_month = group_by == "month" and bucket_year is not None
+    bucket = func.month(d) if by_month else func.year(d)
+
+    q = narrowed(base()).filter(valid)
+    if by_month:
+        q = q.filter(func.year(d) == int(bucket_year))
+
+    rows = (
+        q.with_entities(bucket.label("k"), func.count(MainDB.DB_ID).label("n"))
+        .group_by("k")
+        .all()
+    )
+    counts = {int(r.k): int(r.n or 0) for r in rows if r.k is not None}
+
+    if by_month:
+        data = [
+            {"key": m, "label": MONTH_ABBR[m], "count": counts.get(m, 0)}
+            for m in range(1, 13)
+        ]
+        no_date = 0
+    else:
+        data = [{"key": y, "label": str(y), "count": counts[y]} for y in sorted(counts)]
+        no_date = int(
+            narrowed(base())
+            .filter(~valid)
+            .with_entities(func.count(MainDB.DB_ID))
+            .scalar()
+            or 0
+        )
+
+    return {
+        "group_by": "month" if by_month else "year",
+        "basis": basis,
+        "data": data,
+        "no_date": no_date,
+        "total": sum(x["count"] for x in data),
+    }
 
 
 # ── 5. Year-by-Year Summary ───────────────────────────────────
