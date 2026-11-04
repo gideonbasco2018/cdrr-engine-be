@@ -166,6 +166,42 @@ def get_trend_records(
     )
 
 
+@router.get("/trend/timeline")
+def get_trend_timeline(
+    year: str = Query("All"),
+    month: str = Query("All"),
+    prescription: str = Query("All"),
+    kind: str = Query(
+        "received",
+        description="received|released|received_released|received_in_progress|received_other",
+    ),
+    bucket: int = Query(None, description="clicked year (year=All) or month"),
+    group_by: str = Query("year", description="year|month|day"),
+    bucket_year: int = Query(None, ge=2000, le=2100),
+    bucket_month: int = Query(None, ge=1, le=12),
+    basis: str = Query(None, description="received|released"),
+    search: str = Query(None, description="Filter by DTN"),
+    status: str = Query(None),
+    doc_type: str = Query(None),
+    db: Session = Depends(get_db),
+):
+    return crud_analytics.get_analytics_trend_timeline(
+        db,
+        year=year,
+        month=month,
+        prescription=prescription,
+        kind=kind,
+        bucket=bucket,
+        group_by=group_by,
+        bucket_year=bucket_year,
+        bucket_month=bucket_month,
+        basis=basis,
+        search=search,
+        status=status,
+        doc_type=doc_type,
+    )
+
+
 @router.get("/by-classification", response_model=AnalyticsClassificationResponse)
 def get_by_classification(
     year: str = Query("All"),

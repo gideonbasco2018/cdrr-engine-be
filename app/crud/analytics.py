@@ -407,6 +407,31 @@ def get_analytics_received_released_trend(
     }
 
 
+def _trend_scope(kind, year, month, prescription, bucket):
+    """Shared scope for the Received/Released records and their timeline."""
+    on_release = kind == "released"
+    date_col = MainDB.DB_DATE_RELEASED if on_release else MainDB.DB_DATE_RECEIVED_CENT
+    d = func.str_to_date(func.left(date_col, 10), "%Y-%m-%d")
+
+    scope = [_valid_date_cond(date_col)]
+    if prescription != "All":
+        scope.append(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
+    if year != "All":
+        scope.append(func.year(d) == int(year))
+        if month != "All":
+            scope.append(func.month(d) == int(month))
+    if bucket is not None:
+        scope.append((func.year(d) if year == "All" else func.month(d)) == int(bucket))
+
+    if kind in ("released", "received_released"):
+        scope.append(_is_completed())
+    elif kind == "received_in_progress":
+        scope.append(_is_in_progress())
+    elif kind == "received_other":
+        scope.append(case((or_(_is_completed(), _is_in_progress()), 1), else_=0) == 0)
+    return scope, d
+
+
 # ── 3c. Received vs Released — record drill-down ──────────────
 def get_analytics_trend_records(
     db: Session,
@@ -431,27 +456,8 @@ def get_analytics_trend_records(
           | received_other                          (donut slices)
     bucket: the clicked year (when year == "All") or month (when a year is set).
     """
-    on_release = kind == "released"
-    date_col = MainDB.DB_DATE_RELEASED if on_release else MainDB.DB_DATE_RECEIVED_CENT
-    d = func.str_to_date(func.left(date_col, 10), "%Y-%m-%d")
 
-    scope = [_valid_date_cond(date_col)]
-    if prescription != "All":
-        scope.append(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
-    if year != "All":
-        scope.append(func.year(d) == int(year))
-        if month != "All":
-            scope.append(func.month(d) == int(month))
-    if bucket is not None:
-        scope.append((func.year(d) if year == "All" else func.month(d)) == int(bucket))
-
-    if kind in ("released", "received_released"):
-        scope.append(_is_completed())
-    elif kind == "received_in_progress":
-        scope.append(_is_in_progress())
-    elif kind == "received_other":
-        scope.append(case((or_(_is_completed(), _is_in_progress()), 1), else_=0) == 0)
-
+    scope, d = _trend_scope(kind, year, month, prescription, bucket)
     scope += _date_range_conds(received_from, received_to, released_from, released_to)
 
     doc_key = _doc_key_expr()
@@ -540,6 +546,93 @@ def get_analytics_trend_records(
             }
             for r in rows
         ],
+    }
+
+
+# ── 3d. Received vs Released records — timeline (year / month / day) ──
+def get_analytics_trend_timeline(
+    db: Session,
+    year: str = "All",
+    month: str = "All",
+    prescription: str = "All",
+    kind: str = "received",
+    bucket: int = None,
+    group_by: str = "year",  # year | month | day
+    bucket_year: int = None,  # needed for month / day
+    bucket_month: int = None,  # needed for day
+    basis: str = None,  # received | released (date the bars are cut by)
+    search: str = None,
+    status: str = None,
+    doc_type: str = None,
+) -> dict:
+    import calendar
+
+    scope, _ = _trend_scope(kind, year, month, prescription, bucket)
+
+    if basis not in ("received", "released"):
+        basis = "released" if kind in ("released", "received_released") else "received"
+    date_col = (
+        MainDB.DB_DATE_RELEASED if basis == "released" else MainDB.DB_DATE_RECEIVED_CENT
+    )
+    t = func.str_to_date(func.left(date_col, 10), "%Y-%m-%d")
+    valid = _valid_date_cond(date_col)
+
+    doc_key = _doc_key_expr()
+    status_key = _status_key_expr()
+
+    def narrowed(q):
+        if search:
+            q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
+        if status:
+            q = q.filter(status_key == status)
+        if doc_type:
+            q = q.filter(doc_key == doc_type)
+        return q
+
+    if group_by == "day" and bucket_year and bucket_month:
+        mode, expr = "day", func.day(t)
+    elif group_by in ("month", "day") and bucket_year:
+        mode, expr = "month", func.month(t)
+    else:
+        mode, expr = "year", func.year(t)
+
+    q = narrowed(
+        db.query(expr.label("k"), func.count(MainDB.DB_ID).label("n")).filter(
+            *scope, valid
+        )
+    )
+    if mode in ("month", "day"):
+        q = q.filter(func.year(t) == int(bucket_year))
+    if mode == "day":
+        q = q.filter(func.month(t) == int(bucket_month))
+
+    counts = {int(r.k): int(r.n or 0) for r in q.group_by("k").all() if r.k is not None}
+
+    if mode == "day":
+        last = calendar.monthrange(int(bucket_year), int(bucket_month))[1]
+        data = [
+            {"key": d, "label": str(d), "count": counts.get(d, 0)}
+            for d in range(1, last + 1)
+        ]
+    elif mode == "month":
+        data = [
+            {"key": m, "label": MONTH_ABBR[m], "count": counts.get(m, 0)}
+            for m in range(1, 13)
+        ]
+    else:
+        data = [{"key": y, "label": str(y), "count": counts[y]} for y in sorted(counts)]
+
+    no_date = int(
+        narrowed(db.query(func.count(MainDB.DB_ID))).filter(*scope, ~valid).scalar()
+        or 0
+    )
+
+    return {
+        "group_by": mode,
+        "basis": basis,
+        "data": data,
+        "no_date": no_date,
+        "total": sum(x["count"] for x in data),
     }
 
 
