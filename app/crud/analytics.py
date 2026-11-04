@@ -305,7 +305,7 @@ def get_analytics_trend(
 # ── 3b. Received vs Released trend (+ received breakdown) ─────
 def get_analytics_received_released_trend(
     db: Session,
-    year: str = "All",
+    years: list = None,
     month: str = "All",
     prescription: str = "All",
 ) -> dict:
@@ -316,7 +316,8 @@ def get_analytics_received_released_trend(
                released (COMPLETED) / in_progress / other.
     year == "All" -> bucket by year, otherwise bucket by month.
     """
-    by_year = year == "All"
+    years = [int(y) for y in (years or [])]
+    by_year = len(years) != 1  # exactly one year -> months, otherwise -> years
     rec = func.str_to_date(func.left(MainDB.DB_DATE_RECEIVED_CENT, 10), "%Y-%m-%d")
     rel = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
     rec_valid = _valid_date_cond(MainDB.DB_DATE_RECEIVED_CENT)
@@ -326,10 +327,10 @@ def get_analytics_received_released_trend(
         q = q.filter(valid)
         if prescription != "All":
             q = q.filter(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
-        if not by_year:
-            q = q.filter(func.year(d) == int(year))
-            if month != "All":
-                q = q.filter(func.month(d) == int(month))
+        if years:
+            q = q.filter(func.year(d).in_(years))
+        if len(years) == 1 and month != "All":
+            q = q.filter(func.month(d) == int(month))
         return q
 
     def bucket(d):
@@ -369,7 +370,9 @@ def get_analytics_received_released_trend(
     b = scoped(
         db.query(
             func.count(MainDB.DB_ID).label("total"),
-            func.sum(case((_is_completed(), 1), else_=0)).label("released"),
+            func.sum(case((and_(_is_completed(), rel_valid), 1), else_=0)).label(
+                "released"
+            ),
             func.sum(case((_is_in_progress(), 1), else_=0)).label("in_progress"),
         ),
         rec,
@@ -416,8 +419,12 @@ def _class_key_expr():
     )
 
 
-def _trend_scope(kind, year, month, prescription, bucket):
-    """Shared scope for the Received/Released records and their timeline."""
+def _trend_scope(kind, years, month, prescription, bucket):
+    """Shared scope for the Received/Released records and their timeline.
+    years : list of years (empty / None = all years)
+    bucket: the month when exactly one year is selected, otherwise the year
+    """
+    years = [int(y) for y in (years or [])]
     on_release = kind == "released"
     date_col = MainDB.DB_DATE_RELEASED if on_release else MainDB.DB_DATE_RECEIVED_CENT
     d = func.str_to_date(func.left(date_col, 10), "%Y-%m-%d")
@@ -425,26 +432,32 @@ def _trend_scope(kind, year, month, prescription, bucket):
     scope = [_valid_date_cond(date_col)]
     if prescription != "All":
         scope.append(MainDB.DB_PROD_CLASS_PRESCRIP == prescription)
-    if year != "All":
-        scope.append(func.year(d) == int(year))
-        if month != "All":
+    if years:
+        scope.append(func.year(d).in_(years))
+        if len(years) == 1 and month != "All":
             scope.append(func.month(d) == int(month))
     if bucket is not None:
-        scope.append((func.year(d) if year == "All" else func.month(d)) == int(bucket))
+        scope.append(
+            (func.month(d) if len(years) == 1 else func.year(d)) == int(bucket)
+        )
 
-    if kind in ("released", "received_released"):
+    # Released = COMPLETED *with* a valid Date Released (same rule as the line chart)
+    released_ok = and_(_is_completed(), _valid_date_cond(MainDB.DB_DATE_RELEASED))
+    if kind == "released":
         scope.append(_is_completed())
+    elif kind == "received_released":
+        scope.append(released_ok)
     elif kind == "received_in_progress":
         scope.append(_is_in_progress())
     elif kind == "received_other":
-        scope.append(case((or_(_is_completed(), _is_in_progress()), 1), else_=0) == 0)
+        scope.append(case((or_(released_ok, _is_in_progress()), 1), else_=0) == 0)
     return scope, d
 
 
 # ── 3c. Received vs Released — record drill-down ──────────────
 def get_analytics_trend_records(
     db: Session,
-    year: str = "All",
+    years: list = None,
     month: str = "All",
     prescription: str = "All",
     kind: str = "received",
@@ -467,7 +480,7 @@ def get_analytics_trend_records(
     bucket: the clicked year (when year == "All") or month (when a year is set).
     """
 
-    scope, d = _trend_scope(kind, year, month, prescription, bucket)
+    scope, d = _trend_scope(kind, years, month, prescription, bucket)
     scope += _date_range_conds(received_from, received_to, released_from, released_to)
 
     doc_key = _doc_key_expr()
@@ -581,7 +594,7 @@ def get_analytics_trend_records(
 # ── 3d. Received vs Released records — timeline (year / month / day) ──
 def get_analytics_trend_timeline(
     db: Session,
-    year: str = "All",
+    years: list = None,
     month: str = "All",
     prescription: str = "All",
     kind: str = "received",
@@ -597,7 +610,7 @@ def get_analytics_trend_timeline(
 ) -> dict:
     import calendar
 
-    scope, _ = _trend_scope(kind, year, month, prescription, bucket)
+    scope, _ = _trend_scope(kind, years, month, prescription, bucket)
 
     if basis not in ("received", "released"):
         basis = "released" if kind in ("released", "received_released") else "received"
