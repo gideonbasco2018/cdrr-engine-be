@@ -378,9 +378,12 @@ def get_analytics_received_released_trend(
         rec,
         rec_valid,
     ).one()
+
     received = int(b.total or 0)
-    released = int(b.released or 0)
+    released_of_received = int(b.released or 0)
     in_progress = int(b.in_progress or 0)
+    # Same records as the line chart's "Released" series
+    released = sum(int(r.n or 0) for r in rel_rows if r.k is not None)
 
     rc = {int(r.k): int(r.n or 0) for r in rec_rows if r.k is not None}
     rl = {int(r.k): int(r.n or 0) for r in rel_rows if r.k is not None}
@@ -404,8 +407,9 @@ def get_analytics_received_released_trend(
         "breakdown": {
             "received": received,
             "released": released,
+            "released_of_received": released_of_received,
             "in_progress": in_progress,
-            "other": max(received - released - in_progress, 0),
+            "other": max(received - released_of_received - in_progress, 0),
         },
     }
 
@@ -425,7 +429,7 @@ def _trend_scope(kind, years, month, prescription, bucket):
     bucket: the month when exactly one year is selected, otherwise the year
     """
     years = [int(y) for y in (years or [])]
-    on_release = kind == "released"
+    on_release = kind in ("released", "received_released")
     date_col = MainDB.DB_DATE_RELEASED if on_release else MainDB.DB_DATE_RECEIVED_CENT
     d = func.str_to_date(func.left(date_col, 10), "%Y-%m-%d")
 
