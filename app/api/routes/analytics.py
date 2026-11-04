@@ -165,6 +165,37 @@ def get_by_classification_records(
     )
 
 
+@router.get("/by-classification/trend")
+def get_by_classification_trend(
+    year: str = Query("All"),
+    month: str = Query("All"),
+    prescription: str = Query("All"),
+    classification: str = Query(None, description="Class name; empty = all classes"),
+    tab: str = Query("completed", description="completed|in_progress"),
+    group_by: str = Query("year", description="year|month"),
+    bucket_year: int = Query(None, ge=2000, le=2100, description="needed for month"),
+    basis: str = Query("received", description="received|released"),
+    search: str = Query(None, description="Filter by DTN"),
+    status: str = Query(None),
+    doc_type: str = Query(None),
+    db: Session = Depends(get_db),
+):
+    return crud_analytics.get_analytics_classification_trend(
+        db,
+        year=year,
+        month=month,
+        prescription=prescription,
+        classification=classification,
+        tab=tab,
+        group_by=group_by,
+        bucket_year=bucket_year,
+        basis=basis,
+        search=search,
+        status=status,
+        doc_type=doc_type,
+    )
+
+
 @router.get("/year-summary", response_model=AnalyticsYearSummaryResponse)
 def get_year_summary(
     basis: str = Query("released", description="released|received"),
