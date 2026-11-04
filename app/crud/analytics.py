@@ -407,6 +407,15 @@ def get_analytics_received_released_trend(
     }
 
 
+def _class_key_expr():
+    """Product classification key; blank -> __NONE__."""
+    return case(
+        (MainDB.DB_PROD_CLASS_PRESCRIP.is_(None), "__NONE__"),
+        (func.trim(MainDB.DB_PROD_CLASS_PRESCRIP) == "", "__NONE__"),
+        else_=MainDB.DB_PROD_CLASS_PRESCRIP,
+    )
+
+
 def _trend_scope(kind, year, month, prescription, bucket):
     """Shared scope for the Received/Released records and their timeline."""
     on_release = kind == "released"
@@ -445,6 +454,7 @@ def get_analytics_trend_records(
     search: str = None,
     status: str = None,
     doc_type: str = None,
+    classification: str = None,
     received_from=None,
     received_to=None,
     released_from=None,
@@ -462,14 +472,17 @@ def get_analytics_trend_records(
 
     doc_key = _doc_key_expr()
     status_key = _status_key_expr()
+    class_key = _class_key_expr()
 
-    def narrowed(q, use_status=True, use_doc=True):
+    def narrowed(q, use_status=True, use_doc=True, use_class=True):
         if search:
             q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
         if use_status and status:
             q = q.filter(status_key == status)
         if use_doc and doc_type:
             q = q.filter(doc_key == doc_type)
+        if use_class and classification:
+            q = q.filter(class_key == classification)
         return q
 
     rows_q = narrowed(
@@ -523,6 +536,21 @@ def get_analytics_trend_records(
         key=lambda x: (-x["count"], x["key"]),
     )
 
+    class_rows = (
+        narrowed(
+            db.query(class_key.label("k"), func.count(MainDB.DB_ID).label("n")).filter(
+                *scope
+            ),
+            use_class=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    class_counts = sorted(
+        [{"key": r.k, "count": int(r.n or 0)} for r in class_rows],
+        key=lambda x: (-x["count"], x["key"]),
+    )
+
     def _d(v):
         return str(v)[:10] if v else None
 
@@ -532,6 +560,7 @@ def get_analytics_trend_records(
         "page_size": page_size,
         "status_counts": status_counts,
         "doc_type_counts": doc_type_counts,
+        "class_counts": class_counts,
         "data": [
             {
                 "db_id": r.DB_ID,
@@ -564,6 +593,7 @@ def get_analytics_trend_timeline(
     search: str = None,
     status: str = None,
     doc_type: str = None,
+    classification: str = None,
 ) -> dict:
     import calendar
 
@@ -579,6 +609,7 @@ def get_analytics_trend_timeline(
 
     doc_key = _doc_key_expr()
     status_key = _status_key_expr()
+    class_key = _class_key_expr()
 
     def narrowed(q):
         if search:
@@ -587,6 +618,8 @@ def get_analytics_trend_timeline(
             q = q.filter(status_key == status)
         if doc_type:
             q = q.filter(doc_key == doc_type)
+        if classification:
+            q = q.filter(class_key == classification)
         return q
 
     if group_by == "day" and bucket_year and bucket_month:

@@ -141,6 +141,7 @@ def get_trend_records(
     search: str = Query(None, description="Filter by DTN"),
     status: str = Query(None, description="Normalized DB_APP_STATUS, or __NONE__"),
     doc_type: str = Query(None, description="Normalized doc type, or __NONE__"),
+    classification: str = Query(None, description="Product class, or __NONE__"),
     received_from: date = Query(None),
     received_to: date = Query(None),
     released_from: date = Query(None),
@@ -159,6 +160,7 @@ def get_trend_records(
         search=search,
         status=status,
         doc_type=doc_type,
+        classification=classification,
         received_from=received_from,
         received_to=received_to,
         released_from=released_from,
@@ -183,6 +185,7 @@ def get_trend_timeline(
     search: str = Query(None, description="Filter by DTN"),
     status: str = Query(None),
     doc_type: str = Query(None),
+    classification: str = Query(None, description="Product class, or __NONE__"),
     db: Session = Depends(get_db),
 ):
     return crud_analytics.get_analytics_trend_timeline(
@@ -199,6 +202,7 @@ def get_trend_timeline(
         search=search,
         status=status,
         doc_type=doc_type,
+        classification=classification,
     )
 
 
