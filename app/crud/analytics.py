@@ -106,6 +106,13 @@ def _is_completed():
     return func.upper(func.trim(MainDB.DB_APP_STATUS)) == "COMPLETED"
 
 
+def _is_in_progress():
+    return or_(
+        MainDB.DB_APP_STATUS.ilike("IN PROGRESS"),
+        MainDB.DB_APP_STATUS.ilike("IN-PROGRESS"),
+    )
+
+
 def _doc_completed_case(pattern):
     """Count of rows whose doc type matches `pattern` AND status is COMPLETED."""
     return func.sum(
@@ -302,6 +309,7 @@ def get_analytics_by_classification(
     year: str = "All",
     month: str = "All",
     prescription: str = "All",
+    status: str = "all",  # all | completed | in_progress
 ) -> list:
     # Step 1: get all distinct doc types dynamically
     doc_types = (
@@ -322,13 +330,17 @@ def get_analytics_by_classification(
     ]
 
     # Step 3: run the main query
+    q = _base_query(db, year, month, prescription).filter(
+        MainDB.DB_PROD_CLASS_PRESCRIP.isnot(None),
+        MainDB.DB_PROD_CLASS_PRESCRIP != "",
+    )
+    if status == "completed":
+        q = q.filter(_is_completed())
+    elif status == "in_progress":
+        q = q.filter(_is_in_progress())
+
     rows = (
-        _base_query(db, year, month, prescription)
-        .filter(
-            MainDB.DB_PROD_CLASS_PRESCRIP.isnot(None),
-            MainDB.DB_PROD_CLASS_PRESCRIP != "",
-        )
-        .with_entities(
+        q.with_entities(
             MainDB.DB_PROD_CLASS_PRESCRIP.label("type"),
             func.count(MainDB.DB_ID).label("count"),
             *dynamic_cols,
