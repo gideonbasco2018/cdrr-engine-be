@@ -1,8 +1,7 @@
 # app/api/routes/appointment_records.py
 from typing import Literal
 import logging
-
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from app.services.drive_files import extract_folder_id, list_folder, get_file_bytes
 
 from sqlalchemy import and_, or_
@@ -47,6 +46,17 @@ from app.models.user import User  # ADAPT: real module path of your User model
 from app.services.decking_claim import DECKING_STEP, claim_decking_task
 from app.services.decking_decision import submit_decision
 from app.services.appointment_payment import post_payments
+from app.services.ar_email import (
+    DOC_AOOP,
+    DOC_AR,
+    build_aoop_snapshot,
+    build_ar_snapshot,
+    create_notification,
+    deliver_notification,
+    rebuild_snapshot,
+    send_now,
+)
+from app.models.e_app_email_notification import EAppEmailNotification
 from app.services.workflow_roles import (
     ROLE_CASHIER,
     ROLE_DECKER,
@@ -627,9 +637,7 @@ def post_step_decision(
             is not None
         )
         if not is_valid:
-            raise HTTPException(
-                status_code=422, detail=f"Invalid {next_step} selected"
-            )
+            raise HTTPException(status_code=422, detail=f"Invalid {next_step} selected")
 
     try:
         result = submit_step_decision(
@@ -921,6 +929,7 @@ def get_claimed_application(
 def post_claimed_payments(
     reference_no: str,
     payload: PostPaymentRequest,
+    background_tasks: BackgroundTasks,
     internal_db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
 ):
@@ -954,7 +963,127 @@ def post_claimed_payments(
             status_code=500, detail="Unexpected error while posting the payment"
         )
 
+    # The payment is committed. Log and email the documents in the background;
+    # a failure here must never turn the response into an error.
+    try:
+        cashier_name = (
+            f"{current_user.first_name or ''} {current_user.surname or ''}".strip()
+        )
+        jobs = []
+
+        # Always: the Acknowledgement Receipt
+        ar = build_ar_snapshot(
+            application, payload.payments, result["total_paid"], cashier_name
+        )
+        ar_id = create_notification(
+            internal_db,
+            application,
+            DOC_AR,
+            ar,
+            source_uuid=result["posting_batch_uuid"],
+        )
+        jobs.append((ar_id, DOC_AR, ar))
+
+        # Short payment: also the Additional Order of Payment
+        if result.get("additional_op_number"):
+            aoop = build_aoop_snapshot(
+                internal_db, application, result["additional_op_number"]
+            )
+            aoop_id = create_notification(
+                internal_db, application, DOC_AOOP, aoop, source_uuid=aoop["op_uuid"]
+            )
+            jobs.append((aoop_id, DOC_AOOP, aoop))
+
+        internal_db.commit()
+        for notification_id, kind, snapshot in jobs:
+            background_tasks.add_task(
+                deliver_notification,
+                notification_id,
+                kind,
+                snapshot,
+                current_user.user_uuid,
+            )
+    except Exception:
+        internal_db.rollback()
+        logger.exception("Could not queue the emails for %s", reference_no)
+
     return result
+
+
+def _notification_out(n) -> dict:
+    return {
+        "notification_uuid": n.notification_uuid,
+        "document_type": n.document_type,
+        "subject": n.subject,
+        "recipient_email": n.recipient_email,
+        "body": n.body,
+        "status": n.status,
+        "attempts": n.attempts,
+        "last_error": n.last_error,
+        "last_sent_at": n.last_sent_at,
+        "created_at": n.created_at,
+        "history": [
+            {
+                "attempt_number": a.attempt_number,
+                "status": a.status,
+                "error_message": a.error_message,
+                "attempted_at": a.attempted_at,
+            }
+            for a in n.attempt_history
+        ],
+    }
+
+
+@router.get("/claimed/{reference_no}/email-notifications")
+def list_email_notifications(
+    reference_no: str,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    application, _ = _get_accessible_application(
+        internal_db, reference_no, current_user
+    )
+    rows = (
+        internal_db.query(EAppEmailNotification)
+        .filter(EAppEmailNotification.application_uuid == application.application_uuid)
+        .order_by(EAppEmailNotification.created_at.asc())
+        .all()
+    )
+    return [_notification_out(n) for n in rows]
+
+
+@router.post("/claimed/{reference_no}/email-notifications/{notification_uuid}/resend")
+def resend_email_notification(
+    reference_no: str,
+    notification_uuid: str,
+    internal_db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    application, _ = _get_accessible_application(
+        internal_db, reference_no, current_user
+    )
+    row = (
+        internal_db.query(EAppEmailNotification)
+        .filter(
+            EAppEmailNotification.notification_uuid == notification_uuid,
+            EAppEmailNotification.application_uuid == application.application_uuid,
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Email not found")
+    try:
+        snapshot = rebuild_snapshot(internal_db, row)
+    except ValueError as err:
+        raise HTTPException(status_code=422, detail=str(err))
+    try:
+        send_now(internal_db, row, row.document_type, snapshot, current_user.user_uuid)
+    except Exception:
+        internal_db.rollback()
+        logger.exception("Resend failed for %s", notification_uuid)
+        raise HTTPException(status_code=500, detail="Could not resend the email")
+    internal_db.refresh(row)
+    return _notification_out(row)
 
 
 @router.get("/{reference_no}", response_model=AppointmentRecordDetail)
