@@ -128,6 +128,43 @@ def get_by_classification(
     return {"data": data, "doc_types": doc_types}
 
 
+@router.get("/by-classification/records")
+def get_by_classification_records(
+    year: str = Query("All"),
+    month: str = Query("All"),
+    prescription: str = Query("All"),
+    classification: str = Query(None, description="Class name; empty = all classes"),
+    tab: str = Query("completed", description="completed|in_progress"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    search: str = Query(None, description="Filter by DTN"),
+    status: str = Query(None, description="Normalized DB_APP_STATUS, or __NONE__"),
+    doc_type: str = Query(None, description="Normalized doc type, or __NONE__"),
+    received_from: date = Query(None),
+    received_to: date = Query(None),
+    released_from: date = Query(None),
+    released_to: date = Query(None),
+    db: Session = Depends(get_db),
+):
+    return crud_analytics.get_analytics_classification_records(
+        db,
+        year=year,
+        month=month,
+        prescription=prescription,
+        classification=classification,
+        tab=tab,
+        page=page,
+        page_size=page_size,
+        search=search,
+        status=status,
+        doc_type=doc_type,
+        received_from=received_from,
+        received_to=received_to,
+        released_from=released_from,
+        released_to=released_to,
+    )
+
+
 @router.get("/year-summary", response_model=AnalyticsYearSummaryResponse)
 def get_year_summary(
     basis: str = Query("released", description="released|received"),
