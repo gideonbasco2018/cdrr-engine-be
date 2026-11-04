@@ -116,26 +116,26 @@ def get_trend(
 
 @router.get("/trend/received-released")
 def get_trend_received_released(
-    year: str = Query("All"),
+    years: List[int] = Query(None, description="One or more years; empty = all"),
     month: str = Query("All"),
     prescription: str = Query("All"),
     db: Session = Depends(get_db),
 ):
     return crud_analytics.get_analytics_received_released_trend(
-        db, year=year, month=month, prescription=prescription
+        db, years=years, month=month, prescription=prescription
     )
 
 
 @router.get("/trend/records")
 def get_trend_records(
-    year: str = Query("All"),
+    years: List[int] = Query(None, description="One or more years; empty = all"),
     month: str = Query("All"),
     prescription: str = Query("All"),
     kind: str = Query(
         "received",
         description="received|released|received_released|received_in_progress|received_other",
     ),
-    bucket: int = Query(None, description="clicked year (year=All) or month"),
+    bucket: int = Query(None, description="clicked month (one year selected) or year"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     search: str = Query(None, description="Filter by DTN"),
@@ -150,7 +150,7 @@ def get_trend_records(
 ):
     return crud_analytics.get_analytics_trend_records(
         db,
-        year=year,
+        years=years,
         month=month,
         prescription=prescription,
         kind=kind,
@@ -170,14 +170,14 @@ def get_trend_records(
 
 @router.get("/trend/timeline")
 def get_trend_timeline(
-    year: str = Query("All"),
+    years: List[int] = Query(None, description="One or more years; empty = all"),
     month: str = Query("All"),
     prescription: str = Query("All"),
     kind: str = Query(
         "received",
         description="received|released|received_released|received_in_progress|received_other",
     ),
-    bucket: int = Query(None, description="clicked year (year=All) or month"),
+    bucket: int = Query(None, description="clicked month (one year selected) or year"),
     group_by: str = Query("year", description="year|month|day"),
     bucket_year: int = Query(None, ge=2000, le=2100),
     bucket_month: int = Query(None, ge=1, le=12),
@@ -190,7 +190,7 @@ def get_trend_timeline(
 ):
     return crud_analytics.get_analytics_trend_timeline(
         db,
-        year=year,
+        years=years,
         month=month,
         prescription=prescription,
         kind=kind,
