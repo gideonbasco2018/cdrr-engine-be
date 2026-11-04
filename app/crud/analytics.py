@@ -362,6 +362,128 @@ def get_analytics_by_classification(
     return result, doc_types
 
 
+# ── 4b. By Classification — record drill-down ─────────────────
+def get_analytics_classification_records(
+    db: Session,
+    year: str = "All",
+    month: str = "All",
+    prescription: str = "All",
+    classification: str = None,  # None = all classes (used by the "By Doc" pie)
+    tab: str = "completed",  # completed | in_progress
+    page: int = 1,
+    page_size: int = 50,
+    search: str = None,
+    status: str = None,
+    doc_type: str = None,
+    received_from=None,
+    received_to=None,
+    released_from=None,
+    released_to=None,
+) -> dict:
+    scope = [
+        MainDB.DB_PROD_CLASS_PRESCRIP.isnot(None),
+        MainDB.DB_PROD_CLASS_PRESCRIP != "",
+    ]
+    if classification:
+        scope.append(MainDB.DB_PROD_CLASS_PRESCRIP == classification)
+    scope.append(_is_in_progress() if tab == "in_progress" else _is_completed())
+    scope += _date_range_conds(received_from, received_to, released_from, released_to)
+
+    doc_key = _doc_key_expr()
+    status_key = _status_key_expr()
+    rel_date = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
+
+    def narrowed(q, use_status=True, use_doc=True):
+        if search:
+            q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
+        if use_status and status:
+            q = q.filter(status_key == status)
+        if use_doc and doc_type:
+            q = q.filter(doc_key == doc_type)
+        return q
+
+    def base():
+        return _base_query(db, year, month, prescription)
+
+    rows_q = narrowed(
+        base()
+        .with_entities(
+            MainDB.DB_ID,
+            MainDB.DB_DTN,
+            MainDB.DB_DATE_RECEIVED_CENT,
+            MainDB.DB_DATE_RELEASED,
+            MainDB.DB_TYPE_DOC_RELEASED,
+            MainDB.DB_APP_STATUS,
+            MainDB.DB_ENTRY_TYPE,
+            MainDB.DB_PROD_BR_NAME,
+            MainDB.DB_PROD_GEN_NAME,
+        )
+        .filter(*scope)
+    )
+    total = rows_q.count()
+    rows = (
+        rows_q.order_by(rel_date.asc(), MainDB.DB_ID.asc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    status_rows = (
+        narrowed(
+            base()
+            .with_entities(status_key.label("k"), func.count(MainDB.DB_ID).label("n"))
+            .filter(*scope),
+            use_status=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    status_counts = sorted(
+        [{"key": r.k, "count": int(r.n or 0)} for r in status_rows],
+        key=lambda x: (-x["count"], x["key"]),
+    )
+
+    doc_rows = (
+        narrowed(
+            base()
+            .with_entities(doc_key.label("k"), func.count(MainDB.DB_ID).label("n"))
+            .filter(*scope),
+            use_doc=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    doc_type_counts = sorted(
+        [{"key": r.k, "count": int(r.n or 0)} for r in doc_rows],
+        key=lambda x: (-x["count"], x["key"]),
+    )
+
+    def _d(v):
+        return str(v)[:10] if v else None
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "status_counts": status_counts,
+        "doc_type_counts": doc_type_counts,
+        "data": [
+            {
+                "db_id": r.DB_ID,
+                "dtn": str(r.DB_DTN) if r.DB_DTN else None,
+                "entry_type": r.DB_ENTRY_TYPE or None,
+                "date_received_cent": _d(r.DB_DATE_RECEIVED_CENT),
+                "date_released": _d(r.DB_DATE_RELEASED),
+                "type_doc_released": r.DB_TYPE_DOC_RELEASED or None,
+                "app_status": r.DB_APP_STATUS or None,
+                "brand_name": r.DB_PROD_BR_NAME or None,
+                "generic_name": r.DB_PROD_GEN_NAME or None,
+            }
+            for r in rows
+        ],
+    }
+
+
 # ── 5. Year-by-Year Summary ───────────────────────────────────
 def get_analytics_year_summary(db: Session, basis: str = "released") -> list:
     """
