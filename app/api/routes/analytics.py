@@ -657,14 +657,14 @@ def get_company_released_doc_records_route(
 def search_evaluator_names(
     q: str = Query("", description="Part of the name or code; empty lists everyone"),
     limit: int = Query(15, ge=1, le=500),
-    role: str = Query("evaluator", description="evaluator, checker or evaluator,checker"),
+    role: str = Query(
+        "evaluator", description="evaluator, checker or evaluator,checker"
+    ),
     sources: str = Query("cpr", description="cpr, fgmp or cpr,fgmp"),
     db: Session = Depends(get_db),
 ):
     return {
-        "data": crud_evaluator_monitoring.search_evaluators(
-            db, q, limit, role, sources
-        )
+        "data": crud_evaluator_monitoring.search_evaluators(db, q, limit, role, sources)
     }
 
 
@@ -674,7 +674,9 @@ def search_evaluator_names(
 )
 def get_evaluator_monitoring_years_route(
     user_id: int = Query(..., description="Evaluator's user id"),
-    role: str = Query("evaluator", description="evaluator, checker or evaluator,checker"),
+    role: str = Query(
+        "evaluator", description="evaluator, checker or evaluator,checker"
+    ),
     sources: str = Query("cpr", description="cpr, fgmp or cpr,fgmp"),
     db: Session = Depends(get_db),
 ):
@@ -693,11 +695,14 @@ def get_evaluator_monitoring_route(
     user_id: int = Query(..., description="Evaluator's user id"),
     year: str = Query("All"),
     month: str = Query("All", description="All or 1-12 (needs a year)"),
-    role: str = Query("evaluator", description="evaluator, checker or evaluator,checker"),
+    role: str = Query(
+        "evaluator", description="evaluator, checker or evaluator,checker"
+    ),
     source: str = Query(None, description="TAT source filter, e.g. decked:released"),
     split: str = Query(
         "year", description="year|month: how the Received/Released splits are cut"
     ),
+    sources: str = Query("cpr", description="cpr, fgmp or cpr,fgmp"),
     db: Session = Depends(get_db),
 ):
     data = crud_evaluator_monitoring.get_evaluator_monitoring(
@@ -729,7 +734,9 @@ def get_evaluator_monitoring_records_route(
     month: str = Query("All", description="All or 1-12 (needs a year)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=2000),
-    role: str = Query("evaluator", description="evaluator, checker or evaluator,checker"),
+    role: str = Query(
+        "evaluator", description="evaluator, checker or evaluator,checker"
+    ),
     source: str = Query(None, description="TAT source filter, e.g. decked:released"),
     sources: str = Query("cpr", description="cpr, fgmp or cpr,fgmp"),
     db: Session = Depends(get_db),
@@ -769,7 +776,9 @@ def get_evaluator_monitoring_period_records_route(
     rest: bool = Query(False, description="not released yet / no received date"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=2000),
-    role: str = Query("evaluator", description="evaluator, checker or evaluator,checker"),
+    role: str = Query(
+        "evaluator", description="evaluator, checker or evaluator,checker"
+    ),
     sources: str = Query("cpr", description="cpr, fgmp or cpr,fgmp"),
     db: Session = Depends(get_db),
 ):
@@ -866,7 +875,9 @@ def get_evaluator_monitoring_month_summary_route(
     user_id: int = Query(..., description="Evaluator's user id"),
     year: int = Query(..., ge=2000, le=2100),
     month: int = Query(..., ge=1, le=12),
-    role: str = Query("evaluator", description="evaluator, checker or evaluator,checker"),
+    role: str = Query(
+        "evaluator", description="evaluator, checker or evaluator,checker"
+    ),
     sources: str = Query("cpr", description="cpr, fgmp or cpr,fgmp"),
     db: Session = Depends(get_db),
 ):
