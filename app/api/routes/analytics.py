@@ -26,6 +26,7 @@ from app.crud import fastest_processing as crud_fastest
 from app.crud import company_monitoring as crud_company_monitoring
 from app.crud import evaluator_monitoring as crud_evaluator_monitoring
 from app.crud import generic_monitoring as crud_generic_monitoring
+from app.crud import drug_monitoring as crud_drug_monitoring
 
 router = APIRouter(
     prefix="/api/analytics",
@@ -510,6 +511,85 @@ def get_top_drugs(
     return {"data": data}
 
 
+@router.get("/drug-detail")
+def get_drug_detail_route(
+    name: str = Query(..., description="Brand name, as listed in /top-drugs"),
+    year: str = Query("All"),
+    month: str = Query("All"),
+    prescription: str = Query("All"),
+    db: Session = Depends(get_db),
+):
+    return crud_drug_monitoring.get_drug_detail(
+        db, name=name, year=year, month=month, prescription=prescription
+    )
+
+
+@router.get("/drug-detail/records")
+def get_drug_detail_records_route(
+    name: str = Query(..., description="Brand name, as listed in /top-drugs"),
+    year: str = Query("All"),
+    month: str = Query("All"),
+    prescription: str = Query("All"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    search: str = Query(None, description="Filter by DTN"),
+    status: str = Query(None, description="Normalized DB_APP_STATUS, or __NONE__"),
+    doc_type: str = Query(None, description="Normalized doc type, or __NONE__"),
+    received_from: date = Query(None),
+    received_to: date = Query(None),
+    released_from: date = Query(None),
+    released_to: date = Query(None),
+    db: Session = Depends(get_db),
+):
+    return crud_drug_monitoring.get_drug_records(
+        db,
+        name=name,
+        year=year,
+        month=month,
+        prescription=prescription,
+        page=page,
+        page_size=page_size,
+        search=search,
+        status=status,
+        doc_type=doc_type,
+        received_from=received_from,
+        received_to=received_to,
+        released_from=released_from,
+        released_to=released_to,
+    )
+
+
+@router.get("/drug-detail/timeline")
+def get_drug_detail_timeline_route(
+    name: str = Query(..., description="Brand name, as listed in /top-drugs"),
+    year: str = Query("All"),
+    month: str = Query("All"),
+    prescription: str = Query("All"),
+    group_by: str = Query("year", description="year|month|day"),
+    bucket_year: int = Query(None, ge=2000, le=2100),
+    bucket_month: int = Query(None, ge=1, le=12),
+    basis: str = Query("received", description="received|released"),
+    search: str = Query(None, description="Filter by DTN"),
+    status: str = Query(None),
+    doc_type: str = Query(None),
+    db: Session = Depends(get_db),
+):
+    return crud_drug_monitoring.get_drug_timeline(
+        db,
+        name=name,
+        year=year,
+        month=month,
+        prescription=prescription,
+        group_by=group_by,
+        bucket_year=bucket_year,
+        bucket_month=bucket_month,
+        basis=basis,
+        search=search,
+        status=status,
+        doc_type=doc_type,
+    )
+
+
 @router.get("/top-countries", response_model=AnalyticsTopCountriesResponse)
 def get_top_countries(
     entity_type: str = Query("mfr"),
@@ -528,6 +608,45 @@ def get_top_countries(
         limit=limit,
     )
     return {"data": data}
+
+
+@router.get("/top-countries/records")
+def get_top_country_records(
+    country: str = Query(..., description="Country name, as listed in /top-countries"),
+    entity_type: str = Query(
+        "mfr", description="mfr|trader|importer|distributor|repacker"
+    ),
+    year: str = Query("All"),
+    month: str = Query("All"),
+    prescription: str = Query("All"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    search: str = Query(None, description="Filter by DTN"),
+    status: str = Query(None),
+    doc_type: str = Query(None),
+    received_from: date = Query(None),
+    received_to: date = Query(None),
+    released_from: date = Query(None),
+    released_to: date = Query(None),
+    db: Session = Depends(get_db),
+):
+    return crud_analytics.get_analytics_country_records(
+        db,
+        entity_type=entity_type,
+        country=country,
+        year=year,
+        month=month,
+        prescription=prescription,
+        page=page,
+        page_size=page_size,
+        search=search,
+        status=status,
+        doc_type=doc_type,
+        received_from=received_from,
+        received_to=received_to,
+        released_from=released_from,
+        released_to=released_to,
+    )
 
 
 @router.get("/frp-tat-trend", response_model=AnalyticsFRPTATResponse)

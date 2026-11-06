@@ -1721,7 +1721,10 @@ def get_analytics_top_drugs(
         _base_query(db, year, month, prescription)
         .filter(
             MainDB.DB_PROD_BR_NAME.isnot(None),
-            MainDB.DB_PROD_BR_NAME != "",
+            func.trim(MainDB.DB_PROD_BR_NAME) != "",
+            func.lower(func.trim(MainDB.DB_PROD_BR_NAME)).notin_(
+                ["none", "n/a", "na", "-"]
+            ),
         )
         .with_entities(
             MainDB.DB_PROD_BR_NAME.label("name"),
@@ -1800,6 +1803,112 @@ def get_analytics_top_countries(
         }
         for r in rows
     ]
+
+
+# ── 7a. Top Countries — record drill-down ─────────────────────
+def get_analytics_country_records(
+    db: Session,
+    entity_type: str = "mfr",
+    country: str = None,
+    year: str = "All",
+    month: str = "All",
+    prescription: str = "All",
+    page: int = 1,
+    page_size: int = 50,
+    search: str = None,
+    status: str = None,
+    doc_type: str = None,
+    received_from=None,
+    received_to=None,
+    released_from=None,
+    released_to=None,
+) -> dict:
+    """Applications behind one country row (same filters as /top-countries)."""
+    field = getattr(MainDB, ENTITY_FIELD_MAP.get(entity_type, "DB_PROD_MANU_COUNTRY"))
+
+    scope = [field == country]
+    scope += _date_range_conds(received_from, received_to, released_from, released_to)
+
+    doc_key = _doc_key_expr()
+    status_key = _status_key_expr()
+    rec_date = func.str_to_date(func.left(MainDB.DB_DATE_RECEIVED_CENT, 10), "%Y-%m-%d")
+
+    def base():
+        return _base_query(db, year, month, prescription)
+
+    def narrowed(q, use_status=True, use_doc=True):
+        if search:
+            q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
+        if use_status and status:
+            q = q.filter(status_key == status)
+        if use_doc and doc_type:
+            q = q.filter(doc_key == doc_type)
+        return q
+
+    rows_q = narrowed(
+        base()
+        .with_entities(
+            MainDB.DB_ID,
+            MainDB.DB_DTN,
+            MainDB.DB_DATE_RECEIVED_CENT,
+            MainDB.DB_DATE_RELEASED,
+            MainDB.DB_TYPE_DOC_RELEASED,
+            MainDB.DB_APP_STATUS,
+            MainDB.DB_ENTRY_TYPE,
+            MainDB.DB_PROD_BR_NAME,
+            MainDB.DB_PROD_GEN_NAME,
+        )
+        .filter(*scope)
+    )
+    total = rows_q.count()
+    rows = (
+        rows_q.order_by(rec_date.desc(), MainDB.DB_ID.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    def facet(expr, use_status=True, use_doc=True):
+        rs = (
+            narrowed(
+                base()
+                .with_entities(expr.label("k"), func.count(MainDB.DB_ID).label("n"))
+                .filter(*scope),
+                use_status=use_status,
+                use_doc=use_doc,
+            )
+            .group_by("k")
+            .all()
+        )
+        return sorted(
+            [{"key": r.k, "count": int(r.n or 0)} for r in rs],
+            key=lambda x: (-x["count"], str(x["key"])),
+        )
+
+    def _d(v):
+        return str(v)[:10] if v else None
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "status_counts": facet(status_key, use_status=False),
+        "doc_type_counts": facet(doc_key, use_doc=False),
+        "data": [
+            {
+                "db_id": r.DB_ID,
+                "dtn": str(r.DB_DTN) if r.DB_DTN else None,
+                "entry_type": r.DB_ENTRY_TYPE or None,
+                "date_received_cent": _d(r.DB_DATE_RECEIVED_CENT),
+                "date_released": _d(r.DB_DATE_RELEASED),
+                "type_doc_released": r.DB_TYPE_DOC_RELEASED or None,
+                "app_status": r.DB_APP_STATUS or None,
+                "brand_name": r.DB_PROD_BR_NAME or None,
+                "generic_name": r.DB_PROD_GEN_NAME or None,
+            }
+            for r in rows
+        ],
+    }
 
 
 # ── 7b. Country Year Trend ────────────────────────────────────
