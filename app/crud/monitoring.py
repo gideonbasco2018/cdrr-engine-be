@@ -1421,6 +1421,128 @@ def get_evaluator_app_types(
     return {"columns": columns, "steps": ordered_steps, "units": result}
 
 
+def get_evaluator_daily_activity(
+    db: Session,
+    step: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    group_by: str = "day",
+) -> list[dict]:
+    """
+    Per user and per day (or month / year), how many applications were:
+      - received  : decked to the user (same decked date rule as
+                    get_evaluator_app_types: accomplished_date of the closest
+                    earlier log, falling back to start_date)
+      - completed : accomplished by the user (accomplished_date)
+
+    Each metric is bucketed and date-filtered by its OWN date, so "completed
+    on Nov 5" counts everything finished that day, no matter when it was
+    decked.
+
+    Returns a flat list, one row per (unit, user, period):
+      { unit_id, unit_name, user_id, name, date, received, completed }
+    `date` is YYYY-MM-DD, YYYY-MM or YYYY depending on group_by.
+    A user in several active units appears under each of them; a user with
+    activity but no active unit appears under "No Unit". Users with no
+    activity in the range are not returned.
+    """
+    fmt = {"day": "%Y-%m-%d", "month": "%Y-%m", "year": "%Y"}.get(group_by, "%Y-%m-%d")
+    step_expr = func.upper(_clean_text(ApplicationLogs.application_step))
+
+    base_q = _exclude_action_types(
+        db.query(
+            ApplicationLogs.user_id.label("user_id"),
+            ApplicationLogs.main_db_id.label("main_db_id"),
+            step_expr.label("step"),
+            func.coalesce(_date_assigned_expr(), ApplicationLogs.start_date).label(
+                "decked_at"
+            ),
+            ApplicationLogs.accomplished_date.label("accomplished_at"),
+        )
+        .join(MainDB, MainDB.DB_ID == ApplicationLogs.main_db_id)
+        .filter(ApplicationLogs.user_id.isnot(None))
+    )
+    if step:
+        base_q = base_q.filter(step_expr == step.strip().upper())
+    base = base_q.subquery()
+
+    # One application is counted once per user per period. With "all steps"
+    # an application that passes through two steps counts once per step,
+    # same as the totals in the By application type view.
+    app_key = (
+        base.c.main_db_id if step else func.concat(base.c.main_db_id, "|", base.c.step)
+    )
+
+    start_dt = datetime.combine(date_from, datetime.min.time()) if date_from else None
+    end_dt = datetime.combine(date_to, datetime.max.time()) if date_to else None
+
+    def _count_by_period(date_col):
+        q = db.query(
+            base.c.user_id.label("user_id"),
+            func.date_format(date_col, fmt).label("period"),
+            func.count(distinct(app_key)).label("cnt"),
+        ).filter(date_col.isnot(None))
+        if start_dt:
+            q = q.filter(date_col >= start_dt)
+        if end_dt:
+            q = q.filter(date_col <= end_dt)
+        return q.group_by(base.c.user_id, "period").all()
+
+    counts: dict[tuple, dict] = {}
+    for r in _count_by_period(base.c.decked_at):
+        counts.setdefault((r.user_id, r.period), {"received": 0, "completed": 0})
+        counts[(r.user_id, r.period)]["received"] = int(r.cnt)
+    for r in _count_by_period(base.c.accomplished_at):
+        counts.setdefault((r.user_id, r.period), {"received": 0, "completed": 0})
+        counts[(r.user_id, r.period)]["completed"] = int(r.cnt)
+
+    if not counts:
+        return []
+
+    # Units of each user (same membership rule as get_evaluator_app_types)
+    memberships = (
+        db.query(Unit.id, Unit.name, User.id, User.first_name, User.surname)
+        .join(LeadAssignment, LeadAssignment.unit_id == Unit.id)
+        .join(User, User.id == LeadAssignment.member_user_id)
+        .filter(LeadAssignment.is_active.is_(True), Unit.is_active.is_(True))
+        .all()
+    )
+    names: dict[int, str] = {}
+    units_of: dict[int, list] = {}
+    for unit_id, unit_name, uid, first, last in memberships:
+        names[uid] = f"{first} {last}".strip()
+        pair = (unit_id, unit_name)
+        user_units = units_of.setdefault(uid, [])
+        if pair not in user_units:
+            user_units.append(pair)
+
+    # Users with activity but no active unit assignment
+    active_ids = {uid for (uid, _) in counts}
+    orphan_ids = [uid for uid in active_ids if uid not in units_of]
+    if orphan_ids:
+        for u in db.query(User).filter(User.id.in_(orphan_ids)).all():
+            names[u.id] = f"{u.first_name} {u.surname}".strip()
+            units_of[u.id] = [(None, "No Unit")]
+
+    rows: list[dict] = []
+    for (uid, period), v in counts.items():
+        for unit_id, unit_name in units_of.get(uid, [(None, "No Unit")]):
+            rows.append(
+                {
+                    "unit_id": unit_id,
+                    "unit_name": unit_name,
+                    "user_id": uid,
+                    "name": names.get(uid, f"User {uid}"),
+                    "date": period,
+                    "received": v["received"],
+                    "completed": v["completed"],
+                }
+            )
+
+    rows.sort(key=lambda r: (r["unit_name"], r["name"], r["date"]))
+    return rows
+
+
 def get_in_progress_summary(db: Session) -> dict:
     """
     In-progress task count per active user, with:
