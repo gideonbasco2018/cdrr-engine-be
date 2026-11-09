@@ -566,6 +566,34 @@ def evaluator_app_types_endpoint(
 
 
 @router.get(
+    "/evaluator-app-types/daily",
+    summary="Daily received (decked) and completed counts per unit and user",
+)
+def evaluator_daily_activity_endpoint(
+    step: Optional[str] = Query(
+        None, description="Application step, e.g. QUALITY EVALUATION. Empty = all steps"
+    ),
+    date_from: Optional[date] = Query(None, description="YYYY-MM-DD"),
+    date_to: Optional[date] = Query(None, description="YYYY-MM-DD"),
+    group_by: str = Query("day", regex="^(day|month|year)$"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Flat list of { unit_id, unit_name, user_id, name, date, received,
+    completed }. `received` is counted by decked date and `completed` by
+    accomplished date. Used by the Daily activity view of the Workload page.
+    """
+    return crud_monitoring.get_evaluator_daily_activity(
+        db,
+        step=step,
+        date_from=date_from,
+        date_to=date_to,
+        group_by=group_by,
+    )
+
+
+@router.get(
     "/in-progress-summary",
     summary="In-progress task count per user, with unit and application type breakdown",
 )
