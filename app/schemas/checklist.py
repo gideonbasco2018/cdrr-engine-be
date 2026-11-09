@@ -89,3 +89,11 @@ class ChecklistSummary(BaseModel):
     created_at: datetime
     label: Optional[str] = None
     item_count: int
+
+
+class ChecklistPage(BaseModel):
+    """One page of the checklist list, for the pager."""
+    items: List[ChecklistSummary]
+    total: int
+    page: int
+    page_size: int

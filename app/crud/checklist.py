@@ -29,13 +29,15 @@ def create_checklist(db: Session, username: str) -> Checklist:
 
 def list_checklists(
     db: Session,
-    limit: int = 50,
+    page: int = 1,
+    page_size: int = 50,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
-) -> List[dict]:
-    """Non-deleted checklists, newest first. date_from / date_to (inclusive,
-    Manila dates — created_at is stored in Manila time) narrow it to
-    checklists created in that range; give just one for a single day."""
+) -> Tuple[List[dict], int]:
+    """One page of non-deleted checklists, newest first, plus the total count
+    (for the pager). date_from / date_to (inclusive, Manila dates —
+    created_at is stored in Manila time) narrow it to checklists created in
+    that range; give just one for a single day."""
     query = (
         db.query(Checklist, func.count(ChecklistItem.id))
         .outerjoin(
@@ -53,16 +55,20 @@ def list_checklists(
             Checklist.created_at >= datetime.combine(start, time.min),
             Checklist.created_at < datetime.combine(end + timedelta(days=1), time.min),
         )
+    # Total before the join's grouping — counts checklists, not DTN rows.
+    total = query.with_entities(func.count(func.distinct(Checklist.id))).scalar() or 0
     rows = (
         query.group_by(Checklist.id)
         .order_by(Checklist.id.desc())
-        .limit(limit)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
         .all()
     )
-    return [
+    items = [
         {"id": c.id, "created_by": c.created_by, "created_at": c.created_at, "label": c.label, "item_count": count}
         for c, count in rows
     ]
+    return items, total
 
 
 def get_checklist(db: Session, checklist_id: int) -> Optional[Checklist]:

@@ -20,6 +20,7 @@ from app.schemas.checklist import (
     ChecklistResponse,
     ChecklistSearchResult,
     ChecklistSummary,
+    ChecklistPage,
     ChecklistUpdate,
 )
 from app.crud import checklist as crud
@@ -36,14 +37,17 @@ def _display_name(user: User) -> str:
     return (user.alias or "").strip() or user.username
 
 
-@router.get("", response_model=List[ChecklistSummary])
+@router.get("", response_model=ChecklistPage)
 def list_checklists(
-    limit: int = Query(50, ge=1, le=500),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     date_from: Optional[date] = Query(None, description="Created on/after this Manila date (YYYY-MM-DD)"),
     date_to: Optional[date] = Query(None, description="Created on/before this Manila date (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
 ):
-    return crud.list_checklists(db, limit, date_from, date_to)
+    """One page of checklists (newest first) and the total, for the pager."""
+    items, total = crud.list_checklists(db, page, page_size, date_from, date_to)
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/search", response_model=List[ChecklistSearchResult])
