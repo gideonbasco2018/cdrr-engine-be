@@ -1670,3 +1670,224 @@ def get_in_progress_summary(db: Session) -> dict:
 
     data.sort(key=lambda d: -d["in_progress"])
     return {"total_users": len(data), "data": data}
+
+
+# ── Workload drill-down (records behind a Workload number) ────────────────
+def _activity_base(db: Session, step: Optional[str] = None):
+    """Same row set used by get_evaluator_app_types / get_evaluator_daily_activity."""
+    step_expr = func.upper(_clean_text(ApplicationLogs.application_step))
+    q = _exclude_action_types(
+        db.query(
+            ApplicationLogs.user_id.label("user_id"),
+            ApplicationLogs.main_db_id.label("main_db_id"),
+            step_expr.label("step"),
+            _clean_text(MainDB.DB_PROD_CLASS_PRESCRIP).label("prescription"),
+            _processing_type_expr().label("processing_type"),
+            _entry_type_expr().label("entry_type"),
+            func.coalesce(_date_assigned_expr(), ApplicationLogs.start_date).label(
+                "decked_at"
+            ),
+            ApplicationLogs.accomplished_date.label("accomplished_at"),
+            ApplicationLogs.del_thread.label("del_thread"),
+        )
+        .join(MainDB, MainDB.DB_ID == ApplicationLogs.main_db_id)
+        .filter(ApplicationLogs.user_id.isnot(None))
+    )
+    if step:
+        q = q.filter(step_expr == step.strip().upper())
+    return q.subquery()
+
+
+def get_workload_records(
+    db: Session,
+    metric: str = "received",  # received (decked) | completed
+    user_id: Optional[int] = None,
+    unit_id: Optional[int] = None,
+    step: Optional[str] = None,
+    period: Optional[str] = None,  # YYYY-MM-DD | YYYY-MM | YYYY
+    group_by: str = "day",
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    prescription: Optional[str] = None,
+    processing_type: Optional[str] = None,
+    entry_type: Optional[str] = None,
+    open_only: bool = False,
+    require_date: bool = False,
+    page: int = 1,
+    page_size: int = 50,
+    search: Optional[str] = None,
+    status: Optional[str] = None,
+    doc_type: Optional[str] = None,
+    received_from: Optional[str] = None,
+    received_to: Optional[str] = None,
+    released_from: Optional[str] = None,
+    released_to: Optional[str] = None,
+) -> dict:
+    from app.crud.analytics import _doc_key_expr, _status_key_expr
+
+    metric = "completed" if metric == "completed" else "received"
+    fmt = {"day": "%Y-%m-%d", "month": "%Y-%m", "year": "%Y"}.get(group_by, "%Y-%m-%d")
+    base = _activity_base(db, step)
+    date_col = base.c.accomplished_at if metric == "completed" else base.c.decked_at
+
+    f = []
+    user_ids = None
+    if user_id is not None:
+        user_ids = [user_id]
+    elif unit_id is not None:
+        user_ids = [
+            r[0]
+            for r in db.query(LeadAssignment.member_user_id)
+            .filter(
+                LeadAssignment.unit_id == unit_id,
+                LeadAssignment.is_active.is_(True),
+            )
+            .all()
+        ]
+    if user_ids is not None:
+        f.append(base.c.user_id.in_(user_ids))
+
+    if require_date or metric == "completed":
+        f.append(date_col.isnot(None))
+    if period:
+        f.append(func.date_format(date_col, fmt) == period)
+    if date_from:
+        f.append(date_col >= datetime.combine(date_from, datetime.min.time()))
+    if date_to:
+        f.append(date_col <= datetime.combine(date_to, datetime.max.time()))
+    if prescription:
+        f.append(base.c.prescription == prescription)
+    if processing_type:
+        f.append(base.c.processing_type == processing_type)
+    if entry_type:
+        f.append(base.c.entry_type == entry_type)
+    if open_only:
+        f.append(func.upper(func.trim(base.c.del_thread)) == "OPEN")
+
+    # One row per (user, application, step) — the same unit the counts use.
+    g = (
+        db.query(
+            base.c.user_id.label("user_id"),
+            base.c.main_db_id.label("main_db_id"),
+            base.c.step.label("step"),
+            func.min(base.c.decked_at).label("decked_at"),
+            func.max(base.c.accomplished_at).label("accomplished_at"),
+        )
+        .filter(*f)
+        .group_by(base.c.user_id, base.c.main_db_id, base.c.step)
+        .subquery()
+    )
+
+    doc_key = _doc_key_expr()
+    status_key = _status_key_expr()
+    rec_d = func.str_to_date(func.left(MainDB.DB_DATE_RECEIVED_CENT, 10), "%Y-%m-%d")
+    rel_d = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
+
+    def scoped(q, use_status=True, use_doc=True):
+        q = (
+            q.select_from(g)
+            .join(MainDB, MainDB.DB_ID == g.c.main_db_id)
+            .outerjoin(User, User.id == g.c.user_id)
+        )
+        if search:
+            q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
+        if use_status and status:
+            q = q.filter(status_key == status)
+        if use_doc and doc_type:
+            q = q.filter(doc_key == doc_type)
+        if received_from:
+            q = q.filter(rec_d >= received_from)
+        if received_to:
+            q = q.filter(rec_d <= received_to)
+        if released_from:
+            q = q.filter(rel_d >= released_from)
+        if released_to:
+            q = q.filter(rel_d <= released_to)
+        return q
+
+    rows_q = scoped(
+        db.query(
+            MainDB.DB_ID,
+            MainDB.DB_DTN,
+            MainDB.DB_ENTRY_TYPE,
+            MainDB.DB_DATE_RECEIVED_CENT,
+            MainDB.DB_DATE_RELEASED,
+            MainDB.DB_TYPE_DOC_RELEASED,
+            MainDB.DB_APP_STATUS,
+            MainDB.DB_PROD_BR_NAME,
+            MainDB.DB_PROD_GEN_NAME,
+            MainDB.DB_SECPA_EXP_DATE,
+            g.c.step.label("step"),
+            g.c.decked_at.label("decked_at"),
+            g.c.accomplished_at.label("accomplished_at"),
+            User.username.label("username"),
+            User.first_name.label("first_name"),
+            User.surname.label("surname"),
+        )
+    )
+    total = rows_q.count()
+    rows = (
+        rows_q.order_by(g.c.decked_at.asc(), MainDB.DB_ID.asc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    status_rows = (
+        scoped(
+            db.query(status_key.label("k"), func.count(MainDB.DB_ID).label("n")),
+            use_status=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    status_counts = sorted(
+        [{"key": r.k, "count": int(r.n or 0)} for r in status_rows],
+        key=lambda x: (-x["count"], x["key"]),
+    )
+    doc_rows = (
+        scoped(
+            db.query(doc_key.label("k"), func.count(MainDB.DB_ID).label("n")),
+            use_doc=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    doc_type_counts = sorted(
+        [{"key": r.k, "count": int(r.n or 0)} for r in doc_rows],
+        key=lambda x: (-x["count"], x["key"]),
+    )
+
+    def _d(v):
+        return str(v)[:10] if v else None
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "status_counts": status_counts,
+        "doc_type_counts": doc_type_counts,
+        "data": [
+            {
+                "db_id": r.DB_ID,
+                "dtn": str(r.DB_DTN) if r.DB_DTN else None,
+                "entry_type": r.DB_ENTRY_TYPE or None,
+                "date_received_cent": _d(r.DB_DATE_RECEIVED_CENT),
+                "date_released": _d(r.DB_DATE_RELEASED),
+                "secpa_exp_date": _d(r.DB_SECPA_EXP_DATE),
+                "type_doc_released": r.DB_TYPE_DOC_RELEASED or None,
+                "app_status": r.DB_APP_STATUS or None,
+                "brand_name": r.DB_PROD_BR_NAME or None,
+                "generic_name": r.DB_PROD_GEN_NAME or None,
+                "step": r.step,
+                "decked_at": _d(r.decked_at),
+                "completed_at": _d(r.accomplished_at),
+                "evaluator": (
+                    f"{r.first_name or ''} {r.surname or ''}".strip()
+                    or r.username
+                    or None
+                ),
+            }
+            for r in rows
+        ],
+    }
