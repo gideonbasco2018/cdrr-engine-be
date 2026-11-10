@@ -607,3 +607,60 @@ def in_progress_summary_endpoint(
     the In Progress monitoring modal (Per User, Per Unit and Per Group tabs).
     """
     return crud_monitoring.get_in_progress_summary(db)
+
+
+@router.get(
+    "/evaluator-app-types/records",
+    summary="Applications behind a Workload number (decked / completed / open)",
+)
+def evaluator_records_endpoint(
+    metric: str = Query("received", regex="^(received|completed)$"),
+    user_id: Optional[int] = Query(None),
+    unit_id: Optional[int] = Query(None),
+    step: Optional[str] = Query(None),
+    period: Optional[str] = Query(None, description="YYYY-MM-DD | YYYY-MM | YYYY"),
+    group_by: str = Query("day", regex="^(day|month|year)$"),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    prescription: Optional[str] = Query(None),
+    processing_type: Optional[str] = Query(None),
+    entry_type: Optional[str] = Query(None),
+    open_only: bool = Query(False),
+    require_date: bool = Query(False),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    search: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    doc_type: Optional[str] = Query(None),
+    received_from: Optional[str] = Query(None),
+    received_to: Optional[str] = Query(None),
+    released_from: Optional[str] = Query(None),
+    released_to: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    return crud_monitoring.get_workload_records(
+        db,
+        metric=metric,
+        user_id=user_id,
+        unit_id=unit_id,
+        step=step,
+        period=period,
+        group_by=group_by,
+        date_from=date_from,
+        date_to=date_to,
+        prescription=prescription,
+        processing_type=processing_type,
+        entry_type=entry_type,
+        open_only=open_only,
+        require_date=require_date,
+        page=page,
+        page_size=page_size,
+        search=search,
+        status=status,
+        doc_type=doc_type,
+        received_from=received_from,
+        received_to=received_to,
+        released_from=released_from,
+        released_to=released_to,
+    )
