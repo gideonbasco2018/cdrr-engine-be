@@ -14,7 +14,8 @@
 #
 # Reuses the rules already used by the other analytics views:
 #   - company key      : letters and digits only (see _norm)
-#   - working days     : Mon-Fri between two dates             (Fastest Processing)
+#   - working days     : Mon-Fri between two dates             (Fastest Processing),
+#                        plus the time of day as a part of a day (12 hours = 0.5)
 #   - valid date       : readable, year 2000-2100              (Company Monitoring)
 #
 # Who handled an application: every person who has a step of the role on it
@@ -52,7 +53,6 @@ from app.crud.company_monitoring import (
     _dates,
     _full_name,
     _period,
-    _r1,
     _valid,
 )
 
@@ -88,6 +88,27 @@ R_NO_END_LOG = "No finish date (not in the application log)"
 R_BEFORE = "Finished before it started"
 
 NO_DOC_TYPE = "No document type"
+
+
+def _rt(v):
+    """A TAT in days: 1 decimal from one day up; under one day 4 decimals, so
+    the page can show it in hours (0.0042 day = 0.1 hour) and same-day work does
+    not turn into 0."""
+    if v is None:
+        return None
+    v = float(v)
+    return round(v, 4) if abs(v) < 1 else round(v, 1)
+
+
+def _tat_days(start, end):
+    """Working days (Mon-Fri) from start to end, with the time of day counted
+    as part of a day (12 hours = 0.5), so same-day work is under 1, not 0.
+    Dates without a time count from midnight."""
+
+    def secs(x):
+        return func.time_to_sec(func.time(x))
+
+    return func.greatest(_workdays(start, end) + (secs(end) - secs(start)) / 86400.0, 0)
 
 
 # ── The two sources ──────────────────────────────────────────
@@ -266,7 +287,7 @@ def _formula(roles, keys: list) -> dict:
             f"Finish = the finish of the {who}'s own {step} "
             f"step in the application log; if there is none, the Date "
             f"Released. Every application shows where its start and its "
-            f"finish came from. Same day = 0. Holidays are not deducted."
+            f"finish came from. The time of day counts as part of a day (12 hours = 0.5), so same-day work is under 1. Holidays are not deducted."
         ) + ("" if all_fb else " " + LOG_ONLY_NOTE)
     else:
         tat = (
@@ -276,7 +297,7 @@ def _formula(roles, keys: list) -> dict:
             f"Finish = the finish of the {who}'s own {step} "
             f"step in the application log. An application with no start or "
             f"no finish date in the log is skipped and listed with the "
-            f"reason. Same day = 0. Holidays are not deducted."
+            f"reason. The time of day counts as part of a day (12 hours = 0.5), so same-day work is under 1. Holidays are not deducted."
         )
     out = {
         "closed": "Closed application = an application with a valid Date Released.",
@@ -477,7 +498,7 @@ def _parts(db: Session, S, role: str, user_id: int) -> SimpleNamespace:
         end_src=end_src,
         # 1 when the TAT used the decked date and / or Date Released
         fallback=case((or_(start_src == "decked", end_src == "released"), 1), else_=0),
-        days=_workdays(start, end),
+        days=_tat_days(start, end),
         tat_ok=and_(start.isnot(None), end.isnot(None), end >= start),
     )
 
@@ -532,14 +553,14 @@ def _rank_items(items: dict) -> list:
                 "name": g["sp"][0]["name"],
                 "total_apps": g["n"],
                 "avg": g["tot"] / g["n"],
-                "fast": int(g["fast"]),
-                "slow": int(g["slow"]),
+                "fast": _rt(g["fast"]),
+                "slow": _rt(g["slow"]),
                 "fallback": g["fb"],
                 "spellings": g["sp"],
                 "by_source": g["by_source"],
             }
         )
-    rows.sort(key=lambda x: (round(x["avg"], 1), -x["total_apps"], x["name"] or ""))
+    rows.sort(key=lambda x: (_rt(x["avg"]), -x["total_apps"], x["name"] or ""))
     # every row gets its own number; equal averages are ordered by more
     # applications first, then by name
     return [
@@ -548,7 +569,7 @@ def _rank_items(items: dict) -> list:
             "key": x["key"],
             "name": x["name"],
             "total_apps": x["total_apps"],
-            "avg_tat": _r1(x["avg"]),
+            "avg_tat": _rt(x["avg"]),
             "fastest_tat": x["fast"],
             "slowest_tat": x["slow"],
             "fallback_apps": x["fallback"],
@@ -838,8 +859,9 @@ def _monitoring_one(db, S, user_id, role, year, month, source, split):
             g["n"] += int(r.n)
             g["fb"] += int(r.fb or 0)
             g["tot"] += float(r.tot or 0)
-            g["fast"] = r.fast if g["fast"] is None else min(g["fast"], r.fast)
-            g["slow"] = r.slow if g["slow"] is None else max(g["slow"], r.slow)
+            fast, slow = float(r.fast), float(r.slow)
+            g["fast"] = fast if g["fast"] is None else min(g["fast"], fast)
+            g["slow"] = slow if g["slow"] is None else max(g["slow"], slow)
             g["sp"].append({"name": r.sp, "count": int(r.n)})
         return out
 
@@ -1059,7 +1081,7 @@ def get_evaluator_monitoring(
             "closed_apps": sum(p["closed_total"] for p in parts),
             "counted_apps": counted_n,
             "skipped_apps": skipped_total,
-            "avg_tat": _r1(tat_sum / counted_n) if counted_n else None,
+            "avg_tat": _rt(tat_sum / counted_n) if counted_n else None,
             "without_company": sum(p["no_company"] for p in parts),
             "without_generic": sum(p["no_generic"] for p in parts),
             "sources": sorted(
@@ -1160,7 +1182,7 @@ def _record_row(S, r, role):
         "tat_start_src": r.start_src,
         "tat_end_src": r.end_src,
         "date_released": _d(r.rel_raw),
-        "tat": int(r.tat) if r.tat is not None else None,
+        "tat": _rt(r.tat),
     }
 
 
@@ -1183,7 +1205,7 @@ def _merge_records(results, page, page_size, sort_key):
     return {
         "spellings": spellings,
         "total": sum(r["total"] for r in results),
-        "avg_tat": _r1(sum(r["tat_sum"] for r in results) / tat_n) if tat_n else None,
+        "avg_tat": _rt(sum(r["tat_sum"] for r in results) / tat_n) if tat_n else None,
         "rows": rows,
     }
 
@@ -1292,8 +1314,8 @@ def _month_one(db, S, user_id, year, month, role):
         "tat": {
             "counted": int(tat[0] or 0),
             "sum": float(tat[1] or 0),
-            "fastest": int(tat[2]) if tat[2] is not None else None,
-            "slowest": int(tat[3]) if tat[3] is not None else None,
+            "fastest": _rt(tat[2]),
+            "slowest": _rt(tat[3]),
         },
         "received_top": tops(received_here),
         "released_top": tops(released_here),
@@ -1362,7 +1384,7 @@ def get_month_summary(
         "still_open": sum(p["still_open"] for p in per),
         "tat": {
             "counted": counted,
-            "avg": _r1(tat_sum / counted) if counted else None,
+            "avg": _rt(tat_sum / counted) if counted else None,
             "fastest": min(fast) if fast else None,
             "slowest": max(slow) if slow else None,
         },
