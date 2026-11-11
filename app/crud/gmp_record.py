@@ -134,8 +134,15 @@ GMP_ACTION_ROUTES: Dict[tuple, Optional[str]] = {
     # Action text matches CPR's identical step exactly.
     ("OD Receiving", "Endorsed to CDRR Director for signature"): GMP_SIGNATURE_FACILITATOR_STEP,
     ("OD Receiving", "Return to LRD Chief Admin"):    "LRD Chief Admin",
+    # CPR's OD-Receiving can also send an application back to the Evaluator
+    # ("Returned to Evaluator"); FGMP now matches it.
+    ("OD Receiving", "Return to Evaluator"):          "Evaluator",
 
     (GMP_SIGNATURE_FACILITATOR_STEP, "Endorsed to OD Releasing"): "OD Releasing",
+    # CPR's CDRR-OD Signature Facilitator can send it back to LRD
+    # ("Returned to LRD"); FGMP now matches it. Closing the other assignees'
+    # open logs is generic for this step (see advance_step in gmp_logs.py).
+    (GMP_SIGNATURE_FACILITATOR_STEP, "Return to LRD Chief Admin"): "LRD Chief Admin",
 
     # OD Releasing is now always the end of the workflow, for every issuance
     # type — it used to redirect NFI issuance types on to FROO instead of
