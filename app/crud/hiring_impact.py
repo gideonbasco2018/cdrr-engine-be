@@ -91,15 +91,16 @@ def get_hiring_impact_series(db: Session, date_from: str, date_to: str) -> list:
     series = []
     for ym in months:
         # "YYYY-MM" strings compare correctly as text
-        backlog = sum(n for rm, n in still_open if rm <= ym) + sum(
-            n for rm, lm, n in closed if rm <= ym < lm
-        )
+        open_part = sum(n for rm, n in still_open if rm <= ym)
+        later_part = sum(n for rm, lm, n in closed if rm <= ym < lm)
         series.append(
             {
                 "month": ym,
                 "received": received.get(ym, 0),
                 "released": released.get(ym, 0),
-                "backlog": backlog,
+                "backlog": open_part + later_part,
+                "backlog_open": open_part,
+                "backlog_released_later": later_part,
             }
         )
     return series
