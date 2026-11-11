@@ -27,6 +27,7 @@ from app.crud import company_monitoring as crud_company_monitoring
 from app.crud import evaluator_monitoring as crud_evaluator_monitoring
 from app.crud import generic_monitoring as crud_generic_monitoring
 from app.crud import drug_monitoring as crud_drug_monitoring
+from app.crud import hiring_impact as crud_hiring_impact
 
 router = APIRouter(
     prefix="/api/analytics",
@@ -120,10 +121,15 @@ def get_trend_received_released(
     years: List[int] = Query(None, description="One or more years; empty = all"),
     month: str = Query("All"),
     prescription: str = Query("All"),
+    group_by: str = Query("auto", description="auto|month|year"),
     db: Session = Depends(get_db),
 ):
     return crud_analytics.get_analytics_received_released_trend(
-        db, years=years, month=month, prescription=prescription
+        db,
+        years=years,
+        month=month,
+        prescription=prescription,
+        group_by=group_by,
     )
 
 
@@ -647,6 +653,21 @@ def get_top_country_records(
         released_from=released_from,
         released_to=released_to,
     )
+
+
+@router.get("/hiring-impact")
+def get_hiring_impact_route(
+    date_from: str = Query(..., description="First month, YYYY-MM"),
+    date_to: str = Query(..., description="Last month, YYYY-MM"),
+    db: Session = Depends(get_db),
+):
+    try:
+        data = crud_hiring_impact.get_hiring_impact_series(
+            db, date_from=date_from, date_to=date_to
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"data": data}
 
 
 @router.get("/frp-tat-trend", response_model=AnalyticsFRPTATResponse)

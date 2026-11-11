@@ -308,16 +308,28 @@ def get_analytics_received_released_trend(
     years: list = None,
     month: str = "All",
     prescription: str = "All",
+    group_by: str = "auto",  # auto | month | year
 ) -> dict:
     """
     Received : valid DB_DATE_RECEIVED_CENT, bucketed by that date.
     Released : COMPLETED with valid DB_DATE_RELEASED, bucketed by that date.
     Breakdown: received applications in scope split into
                released (COMPLETED) / in_progress / other.
-    year == "All" -> bucket by year, otherwise bucket by month.
+
+    Bucketing modes:
+      month       -> one year selected, keys 1..12
+      year        -> keys are years
+      year_month  -> several years (or all) cut by month, keys "YYYY-MM"
+    group_by="auto" keeps the old behaviour (one year -> month, else year).
     """
-    years = [int(y) for y in (years or [])]
-    by_year = len(years) != 1  # exactly one year -> months, otherwise -> years
+    years = sorted(int(y) for y in (years or []))
+    if group_by == "month":
+        mode = "month" if len(years) == 1 else "year_month"
+    elif group_by == "year":
+        mode = "year"
+    else:
+        mode = "month" if len(years) == 1 else "year"
+
     rec = func.str_to_date(func.left(MainDB.DB_DATE_RECEIVED_CENT, 10), "%Y-%m-%d")
     rel = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
     rec_valid = _valid_date_cond(MainDB.DB_DATE_RECEIVED_CENT)
@@ -334,7 +346,14 @@ def get_analytics_received_released_trend(
         return q
 
     def bucket(d):
-        return func.year(d) if by_year else func.month(d)
+        if mode == "year":
+            return func.year(d)
+        if mode == "month":
+            return func.month(d)
+        return func.date_format(d, "%Y-%m")
+
+    def norm(v):
+        return str(v) if mode == "year_month" else int(v)
 
     rec_rows = (
         scoped(
@@ -355,7 +374,6 @@ def get_analytics_received_released_trend(
         .group_by("k")
         .all()
     )
-
     ip_rows = (
         scoped(
             db.query(bucket(rec).label("k"), func.count(MainDB.DB_ID).label("n")),
@@ -385,19 +403,38 @@ def get_analytics_received_released_trend(
     # Same records as the line chart's "Released" series
     released = sum(int(r.n or 0) for r in rel_rows if r.k is not None)
 
-    rc = {int(r.k): int(r.n or 0) for r in rec_rows if r.k is not None}
-    rl = {int(r.k): int(r.n or 0) for r in rel_rows if r.k is not None}
-    ip = {int(r.k): int(r.n or 0) for r in ip_rows if r.k is not None}
+    rc = {norm(r.k): int(r.n or 0) for r in rec_rows if r.k is not None}
+    rl = {norm(r.k): int(r.n or 0) for r in rel_rows if r.k is not None}
+    ip = {norm(r.k): int(r.n or 0) for r in ip_rows if r.k is not None}
     keys = sorted(set(rc) | set(rl) | set(ip))
-    if not by_year and keys:
+
+    if mode == "month" and keys:
         keys = list(range(1, max(keys) + 1))  # no gaps between Jan and the last month
+    elif mode == "year_month" and keys:
+        lo, hi = keys[0], keys[-1]
+        pool = years or range(int(lo[:4]), int(hi[:4]) + 1)
+        # every month of the chosen years, trimmed to the range that has data
+        keys = [
+            f"{y}-{m:02d}"
+            for y in pool
+            for m in range(1, 13)
+            if lo <= f"{y}-{m:02d}" <= hi
+        ]
+
+    def label_of(k):
+        if mode == "year":
+            return str(k)
+        if mode == "month":
+            return MONTH_ABBR.get(k, str(k))
+        y, m = k.split("-")
+        return f"{MONTH_ABBR[int(m)]} {y}"
 
     return {
-        "group_by": "year" if by_year else "month",
+        "group_by": mode,
         "data": [
             {
                 "key": k,
-                "label": str(k) if by_year else MONTH_ABBR.get(k, str(k)),
+                "label": label_of(k),
                 "received": rc.get(k, 0),
                 "released": rl.get(k, 0),
                 "in_progress": ip.get(k, 0),
