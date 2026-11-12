@@ -13,6 +13,13 @@ _WHITESPACE_RE = re.compile(r"\s+")
 # Column in APPLICATION_LOGS that holds the current step of an application.
 CURRENT_STEP_COLUMN = "application_step"
 
+# Extra columns for the records drill-down. Used only by the records functions,
+# so the summary query is unaffected. IMPORTANT: verify these two column names
+# against the eServices schema (APPLICATION_INFO / PRODUCT_INFO).
+RECORD_EXTRA_SELECT = """,
+            ai.application_number       AS application_number,
+            pi.brand_name               AS brand_name"""
+
 
 def _clean_text(value: Optional[str]) -> str:
     """Collapse tabs, newlines and repeated spaces into single spaces and trim."""
@@ -25,6 +32,7 @@ def _build_query(
     group: DrugGroup,
     application_status: str,
     application_step: Optional[str] = None,
+    extra_select: str = "",
 ) -> Tuple[Any, Dict[str, str]]:
     """Build the raw rows query and its bound parameters for a drug group."""
     conditions: List[str] = []
@@ -52,7 +60,7 @@ def _build_query(
         SELECT
             ai.application_id           AS application_id,
             pi.pharmacologic_category   AS pharmacologic_category,
-            pi.generic_name             AS generic_name
+            pi.generic_name             AS generic_name{extra_select}
         FROM APPLICATION_INFO ai
         INNER JOIN APPLICATION_PRODUCT ap
                ON ap.application_id = ai.application_id
@@ -153,3 +161,103 @@ def get_drug_group_summary(
         "total_product_count": len(rows),
         "items": items,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Records drill-down (click the total in the UI)
+#  One row per product of the matching applications. Filtering, search and
+#  paging run in Python so generic names match the cleaned / aliased values
+#  that the breakdown table shows.
+# ══════════════════════════════════════════════════════════════════════
+def _fetch_product_rows(
+    db: Session,
+    group: DrugGroup,
+    application_status: str,
+    application_step: Optional[str] = None,
+) -> List[Dict[str, Optional[str]]]:
+    query, params = _build_query(
+        group, application_status, application_step, RECORD_EXTRA_SELECT
+    )
+    aliases = group["name_aliases"]
+
+    rows: List[Dict[str, Optional[str]]] = []
+    for r in db.execute(query, params).mappings().all():
+        name = _clean_text(r["generic_name"])
+        name = aliases.get(name.lower(), name)
+        app_no = r["application_number"]
+        rows.append(
+            {
+                "application_number": (
+                    None if app_no is None else str(app_no).strip() or None
+                ),
+                "generic_name": name or None,
+                "brand_name": _clean_text(r["brand_name"]) or None,
+            }
+        )
+    return rows
+
+
+def get_drug_group_generic_names(
+    db: Session,
+    group: DrugGroup,
+    application_status: str,
+    application_step: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Distinct generic names (with product counts) for the multi-select filter."""
+    rows = _fetch_product_rows(db, group, application_status, application_step)
+
+    counts: Counter = Counter()
+    variants: Dict[str, Counter] = defaultdict(Counter)
+    for row in rows:
+        name = row["generic_name"]
+        if not name:
+            continue
+        key = name.lower()
+        counts[key] += 1
+        variants[key][name] += 1
+
+    items = [
+        {"name": variants[key].most_common(1)[0][0], "count": count}
+        for key, count in counts.items()
+    ]
+    items.sort(key=lambda item: item["name"].lower())
+    return items
+
+
+def get_drug_group_records(
+    db: Session,
+    group: DrugGroup,
+    application_status: str,
+    application_step: Optional[str] = None,
+    search: Optional[str] = None,
+    generic_names: Optional[List[str]] = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> Tuple[List[Dict[str, Optional[str]]], int]:
+    rows = _fetch_product_rows(db, group, application_status, application_step)
+
+    if generic_names:
+        wanted = {_clean_text(n).lower() for n in generic_names}
+        rows = [r for r in rows if (r["generic_name"] or "").lower() in wanted]
+
+    if search and search.strip():
+        needle = search.strip().lower()
+        rows = [
+            r
+            for r in rows
+            if needle in (r["application_number"] or "").lower()
+            or needle in (r["generic_name"] or "").lower()
+            or needle in (r["brand_name"] or "").lower()
+        ]
+
+    rows.sort(
+        key=lambda r: (
+            (r["generic_name"] or "").lower(),
+            (r["brand_name"] or "").lower(),
+            r["application_number"] or "",
+        )
+    )
+
+    total = len(rows)
+    start = (page - 1) * page_size
+    return rows[start : start + page_size], total

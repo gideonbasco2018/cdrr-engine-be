@@ -37,3 +37,23 @@ class DrugGroupSummaryResponse(BaseModel):
     total_application_count: int
     total_product_count: int
     items: List[DrugGroupSummaryRow]
+
+
+class DrugGroupRecord(BaseModel):
+    application_number: Optional[str] = None
+    generic_name: Optional[str] = None
+    brand_name: Optional[str] = None
+
+
+class DrugGroupRecordsResponse(BaseModel):
+    data: List[DrugGroupRecord]
+    total: int
+
+
+class DrugGroupGenericName(BaseModel):
+    name: str
+    count: int
+
+
+class DrugGroupGenericNamesResponse(BaseModel):
+    data: List[DrugGroupGenericName]
