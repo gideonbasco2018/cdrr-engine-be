@@ -508,6 +508,7 @@ def get_analytics_trend_records(
     search: str = None,
     status: str = None,
     doc_type: str = None,
+    entry_types: str = None,
     classification: str = None,
     received_from=None,
     received_to=None,
@@ -528,7 +529,10 @@ def get_analytics_trend_records(
     status_key = _status_key_expr()
     class_key = _class_key_expr()
 
-    def narrowed(q, use_status=True, use_doc=True, use_class=True):
+    entry_key = _entry_key_expr()
+    entry_list = _entry_keys(entry_types)
+
+    def narrowed(q, use_status=True, use_doc=True, use_class=True, use_entry=True):
         if search:
             q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
         if use_status and status:
@@ -537,6 +541,8 @@ def get_analytics_trend_records(
             q = q.filter(doc_key == doc_type)
         if use_class and classification:
             q = q.filter(class_key == classification)
+        if use_entry and entry_list:
+            q = q.filter(entry_key.in_(entry_list))
         return q
 
     rows_q = narrowed(
@@ -605,6 +611,18 @@ def get_analytics_trend_records(
         key=lambda x: (-x["count"], x["key"]),
     )
 
+    entry_rows = (
+        narrowed(
+            db.query(entry_key.label("k"), func.count(MainDB.DB_ID).label("n")).filter(
+                *scope
+            ),
+            use_entry=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    entry_type_counts = _sorted_counts(entry_rows)
+
     def _d(v):
         return str(v)[:10] if v else None
 
@@ -614,6 +632,7 @@ def get_analytics_trend_records(
         "page_size": page_size,
         "status_counts": status_counts,
         "doc_type_counts": doc_type_counts,
+        "entry_type_counts": entry_type_counts,
         "class_counts": class_counts,
         "data": [
             {
@@ -647,6 +666,7 @@ def get_analytics_trend_timeline(
     search: str = None,
     status: str = None,
     doc_type: str = None,
+    entry_types: str = None,
     classification: str = None,
 ) -> dict:
     import calendar
@@ -665,6 +685,9 @@ def get_analytics_trend_timeline(
     status_key = _status_key_expr()
     class_key = _class_key_expr()
 
+    entry_key = _entry_key_expr()
+    entry_list = _entry_keys(entry_types)
+
     def narrowed(q):
         if search:
             q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
@@ -674,6 +697,8 @@ def get_analytics_trend_timeline(
             q = q.filter(doc_key == doc_type)
         if classification:
             q = q.filter(class_key == classification)
+        if entry_list:
+            q = q.filter(entry_key.in_(entry_list))
         return q
 
     if group_by == "day" and bucket_year and bucket_month:
@@ -795,6 +820,7 @@ def get_analytics_classification_records(
     search: str = None,
     status: str = None,
     doc_type: str = None,
+    entry_types: str = None,
     received_from=None,
     received_to=None,
     released_from=None,
@@ -813,13 +839,18 @@ def get_analytics_classification_records(
     status_key = _status_key_expr()
     rel_date = func.str_to_date(func.left(MainDB.DB_DATE_RELEASED, 10), "%Y-%m-%d")
 
-    def narrowed(q, use_status=True, use_doc=True):
+    entry_key = _entry_key_expr()
+    entry_list = _entry_keys(entry_types)
+
+    def narrowed(q, use_status=True, use_doc=True, use_entry=True):
         if search:
             q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
         if use_status and status:
             q = q.filter(status_key == status)
         if use_doc and doc_type:
             q = q.filter(doc_key == doc_type)
+        if use_entry and entry_list:
+            q = q.filter(entry_key.in_(entry_list))
         return q
 
     def base():
@@ -847,6 +878,18 @@ def get_analytics_classification_records(
         .limit(page_size)
         .all()
     )
+
+    entry_rows = (
+        narrowed(
+            base()
+            .with_entities(entry_key.label("k"), func.count(MainDB.DB_ID).label("n"))
+            .filter(*scope),
+            use_entry=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    entry_type_counts = _sorted_counts(entry_rows)
 
     status_rows = (
         narrowed(
@@ -887,6 +930,7 @@ def get_analytics_classification_records(
         "page_size": page_size,
         "status_counts": status_counts,
         "doc_type_counts": doc_type_counts,
+        "entry_type_counts": entry_type_counts,
         "data": [
             {
                 "db_id": r.DB_ID,
@@ -918,6 +962,7 @@ def get_analytics_classification_trend(
     search: str = None,
     status: str = None,
     doc_type: str = None,
+    entry_types: str = None,
 ) -> dict:
     date_col = (
         MainDB.DB_DATE_RELEASED if basis == "released" else MainDB.DB_DATE_RECEIVED_CENT
@@ -936,6 +981,9 @@ def get_analytics_classification_trend(
     doc_key = _doc_key_expr()
     status_key = _status_key_expr()
 
+    entry_key = _entry_key_expr()
+    entry_list = _entry_keys(entry_types)
+
     def narrowed(q):
         if search:
             q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
@@ -943,6 +991,8 @@ def get_analytics_classification_trend(
             q = q.filter(status_key == status)
         if doc_type:
             q = q.filter(doc_key == doc_type)
+        if entry_list:
+            q = q.filter(entry_key.in_(entry_list))
         return q
 
     def base():
@@ -1149,6 +1199,28 @@ def _status_key_expr():
     )
 
 
+def _entry_key_expr():
+    """Normalized entry-type key. Upper-cased, blank -> __NONE__."""
+    upper = func.upper(func.trim(MainDB.DB_ENTRY_TYPE))
+    return case(
+        (MainDB.DB_ENTRY_TYPE.is_(None), "__NONE__"),
+        (upper == "", "__NONE__"),
+        else_=upper,
+    )
+
+
+def _entry_keys(entry_types):
+    """'CORRECTION|DEC' -> ['CORRECTION', 'DEC']"""
+    return [k for k in str(entry_types or "").split("|") if k]
+
+
+def _sorted_counts(rows):
+    return sorted(
+        [{"key": r.k, "count": int(r.n or 0)} for r in rows],
+        key=lambda x: (-x["count"], str(x["key"])),
+    )
+
+
 def _date_range_conds(
     received_from=None, received_to=None, released_from=None, released_to=None
 ):
@@ -1179,6 +1251,7 @@ def get_analytics_year_records(
     search: str = None,
     status: str = None,
     doc_type: str = None,
+    entry_types: str = None,
     received_from=None,
     received_to=None,
     released_from=None,
@@ -1267,13 +1340,18 @@ def get_analytics_year_records(
     doc_key = _doc_key_expr()
     status_key = _status_key_expr()
 
-    def narrowed(q, use_status=True, use_doc=True):
+    entry_key = _entry_key_expr()
+    entry_list = _entry_keys(entry_types)
+
+    def narrowed(q, use_status=True, use_doc=True, use_entry=True):
         if search:
             q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
         if use_status and status:
             q = q.filter(status_key == status)
         if use_doc and doc_type:
             q = q.filter(doc_key == doc_type)
+        if use_entry and entry_list:
+            q = q.filter(entry_key.in_(entry_list))
         return q
 
     # ── Rows (paged) ──
@@ -1314,6 +1392,19 @@ def get_analytics_year_records(
         key=lambda x: (-x["count"], x["key"]),
     )
 
+    # ── Facet: entry type counts (ignores entry type filter) ──
+    entry_rows = (
+        narrowed(
+            db.query(entry_key.label("k"), func.count(MainDB.DB_ID).label("n")).filter(
+                *scope
+            ),
+            use_entry=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    entry_type_counts = _sorted_counts(entry_rows)
+
     # ── Facet: doc type counts (ignores doc type filter) ──
     doc_rows = (
         narrowed(
@@ -1339,6 +1430,7 @@ def get_analytics_year_records(
         "page_size": page_size,
         "status_counts": status_counts,
         "doc_type_counts": doc_type_counts,
+        "entry_type_counts": entry_type_counts,
         "data": [
             {
                 "db_id": r.DB_ID,
@@ -1369,6 +1461,7 @@ def get_analytics_summary_records(
     search: str = None,
     status: str = None,
     doc_type: str = None,
+    entry_types: str = None,
     completed_only: bool = False,
     received_from=None,
     received_to=None,
@@ -1405,13 +1498,18 @@ def get_analytics_summary_records(
     doc_key = _doc_key_expr()
     status_key = _status_key_expr()
 
-    def narrowed(q, use_status=True, use_doc=True):
+    entry_key = _entry_key_expr()
+    entry_list = _entry_keys(entry_types)
+
+    def narrowed(q, use_status=True, use_doc=True, use_entry=True):
         if search:
             q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
         if use_status and status:
             q = q.filter(status_key == status)
         if use_doc and doc_type:
             q = q.filter(doc_key == doc_type)
+        if use_entry and entry_list:
+            q = q.filter(entry_key.in_(entry_list))
         return q
 
     def base():
@@ -1458,6 +1556,19 @@ def get_analytics_summary_records(
         key=lambda x: (-x["count"], x["key"]),
     )
 
+    # ── Facet: entry type counts (ignores entry type filter) ──
+    entry_rows = (
+        narrowed(
+            base()
+            .with_entities(entry_key.label("k"), func.count(MainDB.DB_ID).label("n"))
+            .filter(*scope),
+            use_entry=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    entry_type_counts = _sorted_counts(entry_rows)
+
     # ── Facet: doc type counts (ignores doc type filter) ──
     doc_rows = (
         narrowed(
@@ -1483,6 +1594,7 @@ def get_analytics_summary_records(
         "page_size": page_size,
         "status_counts": status_counts,
         "doc_type_counts": doc_type_counts,
+        "entry_type_counts": entry_type_counts,
         "data": [
             {
                 "db_id": r.DB_ID,
@@ -1606,6 +1718,7 @@ def get_analytics_quality_records(
     search: str = None,
     status: str = None,
     doc_type: str = None,
+    entry_types: str = None,
     received_from=None,
     received_to=None,
     released_from=None,
@@ -1642,13 +1755,18 @@ def get_analytics_quality_records(
     doc_key = _doc_key_expr()
     status_key = _status_key_expr()
 
-    def narrowed(q, use_status=True, use_doc=True):
+    entry_key = _entry_key_expr()
+    entry_list = _entry_keys(entry_types)
+
+    def narrowed(q, use_status=True, use_doc=True, use_entry=True):
         if search:
             q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
         if use_status and status:
             q = q.filter(status_key == status)
         if use_doc and doc_type:
             q = q.filter(doc_key == doc_type)
+        if use_entry and entry_list:
+            q = q.filter(entry_key.in_(entry_list))
         return q
 
     # ── Rows (paged) ──
@@ -1711,6 +1829,18 @@ def get_analytics_quality_records(
     def _d(v):
         return str(v)[:10] if v else None
 
+    entry_rows = (
+        narrowed(
+            db.query(entry_key.label("k"), func.count(MainDB.DB_ID).label("n")).filter(
+                *scope
+            ),
+            use_entry=False,
+        )
+        .group_by("k")
+        .all()
+    )
+    entry_type_counts = _sorted_counts(entry_rows)
+
     def _issues(r):
         out = []
         if not r.rec_ok:
@@ -1727,6 +1857,7 @@ def get_analytics_quality_records(
         "page_size": page_size,
         "status_counts": status_counts,
         "doc_type_counts": doc_type_counts,
+        "entry_type_counts": entry_type_counts,
         "data": [
             {
                 "db_id": r.DB_ID,
@@ -1855,6 +1986,7 @@ def get_analytics_country_records(
     search: str = None,
     status: str = None,
     doc_type: str = None,
+    entry_types: str = None,
     received_from=None,
     received_to=None,
     released_from=None,
@@ -1868,18 +2000,22 @@ def get_analytics_country_records(
 
     doc_key = _doc_key_expr()
     status_key = _status_key_expr()
+    entry_key = _entry_key_expr()
+    entry_list = _entry_keys(entry_types)
     rec_date = func.str_to_date(func.left(MainDB.DB_DATE_RECEIVED_CENT, 10), "%Y-%m-%d")
 
     def base():
         return _base_query(db, year, month, prescription)
 
-    def narrowed(q, use_status=True, use_doc=True):
+    def narrowed(q, use_status=True, use_doc=True, use_entry=True):
         if search:
             q = q.filter(func.concat(MainDB.DB_DTN, "").like(f"%{search}%"))
         if use_status and status:
             q = q.filter(status_key == status)
         if use_doc and doc_type:
             q = q.filter(doc_key == doc_type)
+        if use_entry and entry_list:
+            q = q.filter(entry_key.in_(entry_list))
         return q
 
     rows_q = narrowed(
@@ -1905,7 +2041,7 @@ def get_analytics_country_records(
         .all()
     )
 
-    def facet(expr, use_status=True, use_doc=True):
+    def facet(expr, use_status=True, use_doc=True, use_entry=True):
         rs = (
             narrowed(
                 base()
@@ -1913,6 +2049,7 @@ def get_analytics_country_records(
                 .filter(*scope),
                 use_status=use_status,
                 use_doc=use_doc,
+                use_entry=use_entry,
             )
             .group_by("k")
             .all()
@@ -1931,6 +2068,7 @@ def get_analytics_country_records(
         "page_size": page_size,
         "status_counts": facet(status_key, use_status=False),
         "doc_type_counts": facet(doc_key, use_doc=False),
+        "entry_type_counts": facet(entry_key, use_entry=False),
         "data": [
             {
                 "db_id": r.DB_ID,
