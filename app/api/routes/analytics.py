@@ -76,6 +76,9 @@ def get_summary_records(
     search: str = Query(None, description="Filter by DTN"),
     status: str = Query(None, description="Normalized DB_APP_STATUS, or __NONE__"),
     doc_type: str = Query(None, description="Normalized doc type, or __NONE__"),
+    entry_types: str = Query(
+        None, description="Pipe-separated entry types; __NONE__ = blank"
+    ),
     completed_only: bool = Query(False, description="Only COMPLETED applications"),
     received_from: date = Query(None),
     received_to: date = Query(None),
@@ -95,6 +98,7 @@ def get_summary_records(
         search=search,
         status=status,
         doc_type=doc_type,
+        entry_types=entry_types,
         completed_only=completed_only,
         received_from=received_from,
         received_to=received_to,
@@ -148,6 +152,9 @@ def get_trend_records(
     search: str = Query(None, description="Filter by DTN"),
     status: str = Query(None, description="Normalized DB_APP_STATUS, or __NONE__"),
     doc_type: str = Query(None, description="Normalized doc type, or __NONE__"),
+    entry_types: str = Query(
+        None, description="Pipe-separated entry types; __NONE__ = blank"
+    ),
     classification: str = Query(None, description="Product class, or __NONE__"),
     received_from: date = Query(None),
     received_to: date = Query(None),
@@ -167,6 +174,7 @@ def get_trend_records(
         search=search,
         status=status,
         doc_type=doc_type,
+        entry_types=entry_types,
         classification=classification,
         received_from=received_from,
         received_to=received_to,
@@ -192,6 +200,9 @@ def get_trend_timeline(
     search: str = Query(None, description="Filter by DTN"),
     status: str = Query(None),
     doc_type: str = Query(None),
+    entry_types: str = Query(
+        None, description="Pipe-separated entry types; __NONE__ = blank"
+    ),
     classification: str = Query(None, description="Product class, or __NONE__"),
     db: Session = Depends(get_db),
 ):
@@ -209,6 +220,7 @@ def get_trend_timeline(
         search=search,
         status=status,
         doc_type=doc_type,
+        entry_types=entry_types,
         classification=classification,
     )
 
@@ -239,6 +251,9 @@ def get_by_classification_records(
     search: str = Query(None, description="Filter by DTN"),
     status: str = Query(None, description="Normalized DB_APP_STATUS, or __NONE__"),
     doc_type: str = Query(None, description="Normalized doc type, or __NONE__"),
+    entry_types: str = Query(
+        None, description="Pipe-separated entry types; __NONE__ = blank"
+    ),
     received_from: date = Query(None),
     received_to: date = Query(None),
     released_from: date = Query(None),
@@ -257,6 +272,7 @@ def get_by_classification_records(
         search=search,
         status=status,
         doc_type=doc_type,
+        entry_types=entry_types,
         received_from=received_from,
         received_to=received_to,
         released_from=released_from,
@@ -277,6 +293,9 @@ def get_by_classification_trend(
     search: str = Query(None, description="Filter by DTN"),
     status: str = Query(None),
     doc_type: str = Query(None),
+    entry_types: str = Query(
+        None, description="Pipe-separated entry types; __NONE__ = blank"
+    ),
     db: Session = Depends(get_db),
 ):
     return crud_analytics.get_analytics_classification_trend(
@@ -292,6 +311,7 @@ def get_by_classification_trend(
         search=search,
         status=status,
         doc_type=doc_type,
+        entry_types=entry_types,
     )
 
 
@@ -314,6 +334,9 @@ def get_year_summary_records(
     search: str = Query(None, description="Filter by DTN"),
     status: str = Query(None, description="Normalized DB_APP_STATUS, or __NONE__"),
     doc_type: str = Query(None, description="Normalized doc type, or __NONE__"),
+    entry_types: str = Query(
+        None, description="Pipe-separated entry types; __NONE__ = blank"
+    ),
     received_from: date = Query(None),
     received_to: date = Query(None),
     released_from: date = Query(None),
@@ -330,6 +353,7 @@ def get_year_summary_records(
         search=search,
         status=status,
         doc_type=doc_type,
+        entry_types=entry_types,
         received_from=received_from,
         received_to=received_to,
         released_from=released_from,
@@ -354,6 +378,9 @@ def get_data_quality_records(
     search: str = Query(None, description="Filter by DTN"),
     status: str = Query(None),
     doc_type: str = Query(None),
+    entry_types: str = Query(
+        None, description="Pipe-separated entry types; __NONE__ = blank"
+    ),
     received_from: date = Query(None),
     received_to: date = Query(None),
     released_from: date = Query(None),
@@ -369,6 +396,7 @@ def get_data_quality_records(
         search=search,
         status=status,
         doc_type=doc_type,
+        entry_types=entry_types,
         received_from=received_from,
         received_to=received_to,
         released_from=released_from,
@@ -630,6 +658,9 @@ def get_top_country_records(
     search: str = Query(None, description="Filter by DTN"),
     status: str = Query(None),
     doc_type: str = Query(None),
+    entry_types: str = Query(
+        None, description="Pipe-separated entry types; __NONE__ = blank"
+    ),
     received_from: date = Query(None),
     received_to: date = Query(None),
     released_from: date = Query(None),
@@ -648,6 +679,7 @@ def get_top_country_records(
         search=search,
         status=status,
         doc_type=doc_type,
+        entry_types=entry_types,
         received_from=received_from,
         received_to=received_to,
         released_from=released_from,
