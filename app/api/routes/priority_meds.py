@@ -1,7 +1,9 @@
 # app/api/routes/priority_meds.py
 
-from fastapi import APIRouter, Depends
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
+from typing import List, Literal, Optional
 
 from app.db.session import get_db
 from app.core.deps import get_current_active_user
@@ -11,6 +13,10 @@ import app.crud.priority_meds as crud
 from app.schemas.priority_meds import (
     PharmaCategoryBreakdownResponse,
     VaccineBreakdownResponse,
+    PriorityMedRecord,
+    PriorityMedRecordsResponse,
+    PriorityMedGenericName,
+    PriorityMedGenericNamesResponse,
 )
 
 router = APIRouter(
@@ -102,3 +108,74 @@ def tb_meds_breakdown(
     items = crud.get_tb_meds_breakdown(db)
     grand_total = sum(item.total_count for item in items)
     return VaccineBreakdownResponse(items=items, grand_total=grand_total)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  GET /monitoring/priority-meds/records
+#  In-progress applications behind the grand total of a program
+# ══════════════════════════════════════════════════════════════════════
+PriorityProgram = Literal[
+    "cancer", "rare-disease", "flu-vaccines", "pneumococcal", "tb-meds"
+]
+
+
+def _as_str(value):
+    return None if value is None else str(value)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  GET /monitoring/priority-meds/records/generic-names
+#  Options for the generic name multi-select
+# ══════════════════════════════════════════════════════════════════════
+@router.get(
+    "/records/generic-names",
+    response_model=PriorityMedGenericNamesResponse,
+    summary="Distinct generic names of a priority meds program",
+)
+def priority_med_generic_names(
+    program: PriorityProgram = Query(...),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    rows = crud.get_priority_med_generic_names(db, program=program)
+    return PriorityMedGenericNamesResponse(
+        data=[PriorityMedGenericName(name=r.name, count=r.count) for r in rows]
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  GET /monitoring/priority-meds/records
+#  In-progress applications behind the grand total of a program
+# ══════════════════════════════════════════════════════════════════════
+@router.get(
+    "/records",
+    response_model=PriorityMedRecordsResponse,
+    summary="In-progress application records of a priority meds program",
+)
+def priority_med_records(
+    program: PriorityProgram = Query(...),
+    search: Optional[str] = Query(None),
+    generic_names: Optional[List[str]] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    rows, total = crud.get_priority_med_records(
+        db,
+        program=program,
+        search=search,
+        generic_names=generic_names,
+        page=page,
+        page_size=page_size,
+    )
+    data = [
+        PriorityMedRecord(
+            db_id=_as_str(r.db_id),
+            dtn=_as_str(r.dtn),
+            generic_name=r.generic_name,
+            brand_name=r.brand_name,
+        )
+        for r in rows
+    ]
+    return PriorityMedRecordsResponse(data=data, total=total)

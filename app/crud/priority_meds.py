@@ -1,7 +1,8 @@
 # app/crud/priority_meds.py
-from sqlalchemy import case, func, or_
+from sqlalchemy import String, case, cast, func, not_, or_
 from sqlalchemy.orm import Session
 
+from typing import List, Optional
 from app.models.main_db import MainDB
 
 CANCER_CATEGORIES = [
@@ -289,3 +290,113 @@ def get_tb_meds_breakdown(db: Session):
         .order_by(total_count.desc(), MainDB.DB_PROD_GEN_NAME)
         .all()
     )
+
+
+# ── Records drill-down (click the grand total in the UI) ─────────────
+# IMPORTANT: verify these three column names against app/models/main_db.py.
+# If one is wrong, the app fails at import time instead of silently.
+_COL_ID = MainDB.DB_ID
+_COL_DTN = MainDB.DB_DTN
+_COL_BRAND = MainDB.DB_PROD_BR_NAME
+
+
+def _program_conditions(program: str):
+    """Same filters as the breakdown functions above, so counts always match."""
+    if program == "cancer":
+        type_expr = func.trim(MainDB.DB_PROD_PHARMA_CAT)
+        return [
+            MainDB.DB_APP_STATUS == "IN PROGRESS",
+            func.lower(type_expr).in_(CANCER_CATEGORIES),
+        ]
+
+    if program == "rare-disease":
+        cat_expr = func.lower(func.trim(MainDB.DB_PROD_PHARMA_CAT))
+        gen_expr = func.lower(func.trim(MainDB.DB_PROD_GEN_NAME))
+        return [
+            MainDB.DB_APP_STATUS == "IN PROGRESS",
+            (
+                cat_expr.in_(RARE_DISEASE_CATEGORIES)
+                | gen_expr.in_(RARE_DISEASE_GENERIC_NAMES)
+            ),
+        ]
+
+    if program == "flu-vaccines":
+        return [
+            (MainDB.DB_PROD_GEN_NAME.like("%influenza%"))
+            | (MainDB.DB_PROD_GEN_NAME.like("%influenzae%")),
+            func.lower(func.trim(MainDB.DB_APP_STATUS)) == "in progress",
+        ]
+
+    if program == "pneumococcal":
+        return [
+            MainDB.DB_PROD_GEN_NAME.like("%Pneumococcal%"),
+            func.lower(func.trim(MainDB.DB_APP_STATUS)) == "in progress",
+        ]
+
+    if program == "tb-meds":
+        cat = MainDB.DB_PROD_PHARMA_CAT
+        cat_conditions = [cat.like(p) for p in TB_PHARMA_CAT_PATTERNS]
+        gen_conditions = [MainDB.DB_PROD_GEN_NAME.like(p) for p in TB_GEN_NAME_PATTERNS]
+        return [
+            or_(*cat_conditions, *gen_conditions),
+            MainDB.DB_APP_STATUS == "IN PROGRESS",
+            # Mirrors the frontend rule: Dpp-4 inhibitors are diabetes meds, not TB meds
+            or_(cat.is_(None), not_(func.lower(cat).like("%(dpp-4)%inhibitor%"))),
+        ]
+
+    raise ValueError(f"Unknown priority meds program: {program}")
+
+
+def get_priority_med_generic_names(db: Session, program: str):
+    """Distinct generic names (with counts) behind a program's grand total."""
+    gen = func.trim(MainDB.DB_PROD_GEN_NAME)
+    return (
+        db.query(gen.label("name"), func.count().label("count"))
+        .filter(
+            *_program_conditions(program),
+            MainDB.DB_PROD_GEN_NAME.isnot(None),
+            gen != "",
+        )
+        .group_by(gen)
+        .order_by(gen)
+        .all()
+    )
+
+
+def get_priority_med_records(
+    db: Session,
+    program: str,
+    search: Optional[str] = None,
+    generic_names: Optional[List[str]] = None,
+    page: int = 1,
+    page_size: int = 50,
+):
+    query = db.query(
+        _COL_ID.label("db_id"),
+        _COL_DTN.label("dtn"),
+        MainDB.DB_PROD_GEN_NAME.label("generic_name"),
+        _COL_BRAND.label("brand_name"),
+    ).filter(*_program_conditions(program))
+
+    # Multi-select generic name filter (exact match on the trimmed value)
+    if generic_names:
+        query = query.filter(func.trim(MainDB.DB_PROD_GEN_NAME).in_(generic_names))
+
+    if search and search.strip():
+        like = f"%{search.strip()}%"
+        query = query.filter(
+            or_(
+                cast(_COL_DTN, String).ilike(like),
+                MainDB.DB_PROD_GEN_NAME.ilike(like),
+                _COL_BRAND.ilike(like),
+            )
+        )
+
+    total = query.count()
+    rows = (
+        query.order_by(MainDB.DB_PROD_GEN_NAME, _COL_BRAND, _COL_ID)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return rows, total
