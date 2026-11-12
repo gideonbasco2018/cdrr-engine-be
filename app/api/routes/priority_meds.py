@@ -1,6 +1,8 @@
 # app/api/routes/priority_meds.py
 
-from fastapi import APIRouter, Depends
+from typing import Literal, Optional
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -11,6 +13,8 @@ import app.crud.priority_meds as crud
 from app.schemas.priority_meds import (
     PharmaCategoryBreakdownResponse,
     VaccineBreakdownResponse,
+    PriorityMedRecord,
+    PriorityMedRecordsResponse,
 )
 
 router = APIRouter(
@@ -102,3 +106,41 @@ def tb_meds_breakdown(
     items = crud.get_tb_meds_breakdown(db)
     grand_total = sum(item.total_count for item in items)
     return VaccineBreakdownResponse(items=items, grand_total=grand_total)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  GET /monitoring/priority-meds/records
+#  In-progress applications behind the grand total of a program
+# ══════════════════════════════════════════════════════════════════════
+def _as_str(value):
+    return None if value is None else str(value)
+
+
+@router.get(
+    "/records",
+    response_model=PriorityMedRecordsResponse,
+    summary="In-progress application records of a priority meds program",
+)
+def priority_med_records(
+    program: Literal[
+        "cancer", "rare-disease", "flu-vaccines", "pneumococcal", "tb-meds"
+    ] = Query(...),
+    search: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    rows, total = crud.get_priority_med_records(
+        db, program=program, search=search, page=page, page_size=page_size
+    )
+    data = [
+        PriorityMedRecord(
+            db_id=_as_str(r.db_id),
+            dtn=_as_str(r.dtn),
+            generic_name=r.generic_name,
+            brand_name=r.brand_name,
+        )
+        for r in rows
+    ]
+    return PriorityMedRecordsResponse(data=data, total=total)

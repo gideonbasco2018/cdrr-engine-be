@@ -1,6 +1,6 @@
 # app/schemas/priority_meds.py
 from typing import List
-from pydantic import BaseModel
+from pydantic import BaseModel, Optional, List
 
 
 class PharmaCategoryBreakdownItem(BaseModel):
@@ -30,3 +30,15 @@ class PharmaCategoryBreakdownResponse(BaseModel):
 class VaccineBreakdownResponse(BaseModel):
     items: List[VaccineBreakdownItem]
     grand_total: int
+
+
+class PriorityMedRecord(BaseModel):
+    db_id: Optional[str] = None
+    dtn: Optional[str] = None
+    generic_name: Optional[str] = None
+    brand_name: Optional[str] = None
+
+
+class PriorityMedRecordsResponse(BaseModel):
+    data: List[PriorityMedRecord]
+    total: int
