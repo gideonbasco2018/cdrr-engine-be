@@ -383,7 +383,7 @@ def get_task_count_for_user(
 
 
 # Steps whose logs are created unassigned, mapped to the group allowed to claim them
-UNCLAIMED_STEP_GROUPS = {"OD-Receiving": 18}
+UNCLAIMED_STEP_GROUPS = {"OD-Receiving": 18, "OD-Releasing": 19}
 UNCLAIMED_STATUS = "UNCLAIMED"
 
 
