@@ -380,3 +380,46 @@ def get_task_count_for_user(
     )
 
     return count or 0
+
+
+# Steps whose logs are created unassigned, mapped to the group allowed to claim them
+UNCLAIMED_STEP_GROUPS = {"OD-Receiving": 18}
+UNCLAIMED_STATUS = "UNCLAIMED"
+
+
+def get_claimable_steps_for_user(user: User) -> List[str]:
+    """Steps with an Unclaimed queue that this user may claim from (group membership)."""
+    group_ids = {g.id for g in user.groups}
+    return [
+        step
+        for step, group_id in UNCLAIMED_STEP_GROUPS.items()
+        if group_id in group_ids
+    ]
+
+
+def get_unclaimed_logs_for_user(
+    db: Session,
+    user: User,
+    limit: int = 10000,
+) -> Tuple[List[str], List[ApplicationLogs], int]:
+    """
+    Unassigned open logs for every step the user can claim from.
+    Reuses get_logs_joined_with_main_db so the rows carry the same
+    sent_by / target info as the normal task list.
+    """
+    steps = get_claimable_steps_for_user(user)
+    all_logs: List[ApplicationLogs] = []
+
+    for step in steps:
+        logs, _ = get_logs_joined_with_main_db(
+            db=db,
+            skip=0,
+            limit=limit,
+            del_last_index=1,
+            del_thread="Open",
+            application_step=step,
+            application_status=UNCLAIMED_STATUS,
+        )
+        all_logs.extend(logs)
+
+    return steps, all_logs, len(all_logs)

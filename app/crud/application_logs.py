@@ -602,6 +602,35 @@ def toggle_star(db: Session, log_id: int, star: bool) -> Optional[ApplicationLog
     return db_log
 
 
+def claim_log(db: Session, log_id: int, user: User) -> Optional[ApplicationLogs]:
+    """
+    Claim an UNCLAIMED log. The conditional UPDATE is atomic: if two users
+    claim at the same time, only one UPDATE matches a row and the other gets None.
+    """
+    updated = (
+        db.query(ApplicationLogs)
+        .filter(
+            ApplicationLogs.id == log_id,
+            ApplicationLogs.application_status == "UNCLAIMED",
+            ApplicationLogs.user_id.is_(None),
+        )
+        .update(
+            {
+                "user_id": user.id,
+                "user_name": user.username,
+                "application_status": "IN PROGRESS",
+            },
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+
+    if updated == 0:
+        return None
+
+    return get_by_id(db, log_id)
+
+
 def add_task_for_selected(
     db: Session,
     main_db_ids: List[int],

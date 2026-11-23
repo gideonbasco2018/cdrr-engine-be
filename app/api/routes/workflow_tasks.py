@@ -18,8 +18,10 @@ from app.crud.workflow_tasks import (
     mark_log_as_read,
     mark_logs_as_received,
     get_task_count_for_user,
+    get_unclaimed_logs_for_user,
 )
 from app.schemas.workflow_tasks import (
+    UnclaimedTasksResponse,
     LogWithMainDBListResponse,
     LogWithMainDBResponse,
     MarkReadResponse,
@@ -214,3 +216,17 @@ def get_my_task_count(
         application_status=application_status,
     )
     return {"count": count}
+
+
+@router.get("/unclaimed", response_model=UnclaimedTasksResponse)
+def get_unclaimed_tasks(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Unassigned (UNCLAIMED) tasks the current user may claim, based on group
+    membership. Also returns the steps the user can claim from, so the
+    frontend can show the tab even when the user has no tasks of their own.
+    """
+    steps, logs, total = get_unclaimed_logs_for_user(db=db, user=current_user)
+    return {"claimable_steps": steps, "total": total, "data": logs}
