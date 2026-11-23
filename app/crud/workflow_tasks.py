@@ -1,7 +1,5 @@
-"""
-CRUD: ApplicationLogs RIGHT JOIN MainDB
-"""
-
+# app/crud/workflow_tasks.py
+import re
 from sqlalchemy.orm import Session, contains_eager
 from sqlalchemy import func, desc, or_, and_
 from typing import Optional, List, Tuple
@@ -87,12 +85,13 @@ def get_logs_joined_with_main_db(
     if user_id is not None:
         query = query.filter(ApplicationLogs.user_id == user_id)
     if dtn:
-        query = query.filter(
-            or_(
-                MainDB.DB_DTN == int(dtn),
-                MainDB.DB_OLD_RSN == dtn,
-            )
-        )
+        # Accepts a single value or several separated by commas / whitespace.
+        dtn_values = [v for v in re.split(r"[,\s]+", dtn.strip()) if v]
+        dtn_ints = [int(v) for v in dtn_values if v.isdigit()]
+        dtn_conditions = [MainDB.DB_OLD_RSN.in_(dtn_values)]
+        if dtn_ints:
+            dtn_conditions.append(MainDB.DB_DTN.in_(dtn_ints))
+        query = query.filter(or_(*dtn_conditions))
     if est_cat:
         query = query.filter(MainDB.DB_EST_CAT == est_cat)
     if app_type:

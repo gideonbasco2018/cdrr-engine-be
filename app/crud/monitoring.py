@@ -160,10 +160,9 @@ def _build_all_records_query(
         )
     if dtn:
         query = query.filter(MainDB.DB_DTN.like(f"%{dtn}%"))
-    if app_step:
-        query = query.filter(
-            func.upper(ApplicationLogs.application_step) == app_step.upper()
-        )
+    steps = [s.strip().upper() for s in (app_step or "").split(",") if s.strip()]
+    if steps:
+        query = query.filter(func.upper(ApplicationLogs.application_step).in_(steps))
     if date_from:
         query = query.filter(
             func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"))
@@ -197,9 +196,13 @@ def _build_all_records_query(
     # two applications can share the same DTN text and are still
     # counted separately.
     if first_only:
+        group_cols = [ApplicationLogs.main_db_id]
+        if steps:
+            # first occurrence per selected step, not just per application
+            group_cols.append(func.upper(ApplicationLogs.application_step))
         first_ids = (
             query.with_entities(func.min(ApplicationLogs.id).label("min_id"))
-            .group_by(ApplicationLogs.main_db_id)
+            .group_by(*group_cols)
             .subquery()
         )
         query = query.filter(ApplicationLogs.id.in_(first_ids))
