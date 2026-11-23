@@ -543,3 +543,44 @@ def star_application_log(
             detail=f"Application log with id {log_id} not found",
         )
     return log
+
+
+from app.crud.workflow_tasks import UNCLAIMED_STEP_GROUPS
+
+
+@router.patch("/{log_id}/claim", response_model=ApplicationLogResponse)
+def claim_application_log(
+    log_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Claim an unassigned task. Only members of the step's group may claim."""
+    log = crud_logs.get_by_id(db, log_id=log_id)
+    if not log:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Application log with id {log_id} not found",
+        )
+
+    required_group = UNCLAIMED_STEP_GROUPS.get(log.application_step)
+    if required_group is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Step '{log.application_step}' does not support claiming",
+        )
+
+    user_group_ids = {g.id for g in current_user.groups}
+    if required_group not in user_group_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only members of this step's group can claim this task",
+        )
+
+    claimed = crud_logs.claim_log(db, log_id=log_id, user=current_user)
+    if not claimed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This task was already claimed by someone else",
+        )
+
+    return claimed

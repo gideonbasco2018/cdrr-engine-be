@@ -279,3 +279,12 @@ class LogWithMainDBListResponse(BaseModel):
     page_size: int
     total_pages: int
     data: List[LogWithMainDBResponse]
+
+
+# ---------------------
+# Unclaimed tasks response
+# ---------------------
+class UnclaimedTasksResponse(BaseModel):
+    claimable_steps: List[str]
+    total: int
+    data: List[LogWithMainDBResponse]
