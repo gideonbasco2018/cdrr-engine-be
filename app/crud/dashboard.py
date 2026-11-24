@@ -115,8 +115,9 @@ def get_stats_summary(
 # ─────────────────────────────────────────────────────────
 def get_in_progress_by_year(db: Session, user_id: int) -> list:
     """Open IN PROGRESS entries of the user, grouped by the year of
-    MainDB.DB_DATE_RECEIVED_CENT (date received at central)."""
+    MainDB.DB_DATE_RECEIVED_CENT, with a per-step breakdown inside each year."""
     year_col = extract("year", MainDB.DB_DATE_RECEIVED_CENT).cast(Integer).label("yr")
+    step_col = ApplicationLogs.application_step.label("step")
     q = db.query(ApplicationLogs).join(
         MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID
     )
@@ -127,9 +128,28 @@ def get_in_progress_by_year(db: Session, user_id: int) -> list:
             ApplicationLogs.del_thread == "Open",
             MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
         )
-        .with_entities(year_col, func.count(ApplicationLogs.id).label("n"))
-        .group_by(year_col)
-        .order_by(year_col)
+        .with_entities(year_col, step_col, func.count(ApplicationLogs.id).label("n"))
+        .group_by(year_col, step_col)
         .all()
     )
-    return [{"year": r.yr, "count": int(r.n)} for r in rows]
+
+    by_year = {}
+    for r in rows:
+        entry = by_year.setdefault(r.yr, {"year": r.yr, "count": 0, "steps": {}})
+        n = int(r.n)
+        label = r.step or "No step"
+        entry["count"] += n
+        entry["steps"][label] = entry["steps"].get(label, 0) + n
+
+    result = []
+    for yr in sorted(by_year):
+        entry = by_year[yr]
+        steps = sorted(entry["steps"].items(), key=lambda kv: (-kv[1], kv[0]))
+        result.append(
+            {
+                "year": entry["year"],
+                "count": entry["count"],
+                "steps": [{"step": s, "count": c} for s, c in steps],
+            }
+        )
+    return result
