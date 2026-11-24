@@ -1863,3 +1863,258 @@ def get_member_supervisor_done_main_db_pairs(
         .all()
     )
     return set(rows)
+
+
+# ── Completed tasks (last N days) — monitoring ─────────────────────────
+from datetime import datetime as _dt, time as _time, timedelta as _timedelta
+
+MAX_COMPLETED_WINDOW_DAYS = 90
+
+
+def _completed_window(days: int):
+    """(clamped days, start_of_window, end_of_window_exclusive).
+    "Last 7 days" = today + the 6 days before it."""
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        days = 7
+    days = max(1, min(days, MAX_COMPLETED_WINDOW_DAYS))
+    today = date.today()
+    start = _dt.combine(today - _timedelta(days=days - 1), _time.min)
+    end = _dt.combine(today + _timedelta(days=1), _time.min)  # exclusive
+    return days, start, end
+
+
+def _parse_iso_day(value):
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _completed_conditions(
+    member_user_id: int, start, end, completed_from=None, completed_to=None
+):
+    """ApplicationLogs rows where THIS member finished their own step
+    (done status) inside the window, optionally narrowed to a day range."""
+    status_expr = func.upper(func.trim(ApplicationLogs.application_status))
+    conds = [
+        ApplicationLogs.user_id == member_user_id,
+        status_expr.in_(_DONE_STATUSES),
+        ApplicationLogs.accomplished_date.isnot(None),
+        ApplicationLogs.accomplished_date >= start,
+        ApplicationLogs.accomplished_date < end,
+    ]
+    cf = _parse_iso_day(completed_from)
+    ct = _parse_iso_day(completed_to)
+    if cf:
+        conds.append(ApplicationLogs.accomplished_date >= _dt.combine(cf, _time.min))
+    if ct:
+        conds.append(
+            ApplicationLogs.accomplished_date
+            < _dt.combine(ct + _timedelta(days=1), _time.min)
+        )
+    return conds
+
+
+def get_member_completed_tasks_paginated(
+    db: Session,
+    member_user_id: int,
+    skip: int = 0,
+    limit: int = 20,
+    *,
+    days: int = 7,
+    dtn: str | None = None,
+    date_from: str | None = None,  # Date Received Central — from
+    date_to: str | None = None,  # Date Received Central — to
+    completed_from: str | None = None,  # Date Completed — from (YYYY-MM-DD)
+    completed_to: str | None = None,  # Date Completed — to   (YYYY-MM-DD)
+    step: str | None = None,
+    app_type: str | None = None,
+    product_class: str | None = None,
+    processing_type: str | None = None,
+    entry_type: str | None = None,
+    sort_by: str | None = None,
+    sort_dir: str | None = None,
+):
+    """
+    Tasks this member COMPLETED within the last `days` days (default 7),
+    newest first. Same filter semantics as the in-progress tables.
+
+    Returns (rows, total, days, daily_counts). `daily_counts` is the
+    per-day number of completions that match every filter EXCEPT the
+    Date Completed range, so the day chips on the FE stay stable while
+    one day is selected.
+    """
+    days, start, end = _completed_window(days)
+    filter_kwargs = dict(
+        dtn=dtn,
+        date_from=date_from,
+        date_to=date_to,
+        step=step,
+        app_type=app_type,
+        product_class=product_class,
+        processing_type=processing_type,
+        entry_type=entry_type,
+    )
+
+    rows_query = (
+        db.query(ApplicationLogs, MainDB)
+        .outerjoin(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
+        .filter(
+            *_completed_conditions(
+                member_user_id, start, end, completed_from, completed_to
+            )
+        )
+    )
+    rows_query = _apply_in_progress_task_filters(rows_query, **filter_kwargs)
+    total = rows_query.count()
+
+    if sort_by == "date_accomplished":
+        col = ApplicationLogs.accomplished_date
+        rows_query = rows_query.order_by(
+            col.desc() if sort_dir == "desc" else col.asc()
+        )
+    elif sort_by and sort_by != "member_name" and sort_by in _sortable_columns():
+        rows_query = _apply_in_progress_task_sort(rows_query, sort_by, sort_dir)
+        rows_query = rows_query.order_by(ApplicationLogs.accomplished_date.desc())
+    else:
+        rows_query = rows_query.order_by(
+            ApplicationLogs.accomplished_date.desc(), ApplicationLogs.id.desc()
+        )
+
+    rows = rows_query.offset(skip).limit(limit).all()
+
+    main_db_ids = list({main.DB_ID for _, main in rows if main is not None})
+    history_map = get_application_history_map(db, main_db_ids)
+    data = [
+        _build_member_task_out_safe(
+            log,
+            main,
+            None,  # lead target — not needed for monitoring completed work
+            None,  # director's target
+            history_map.get(main.DB_ID, []) if main else [],
+        )
+        for log, main in rows
+    ]
+
+    day_expr = func.date(ApplicationLogs.accomplished_date)
+    counts_query = (
+        db.query(day_expr, func.count(ApplicationLogs.id))
+        .select_from(ApplicationLogs)
+        .outerjoin(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
+        .filter(*_completed_conditions(member_user_id, start, end))
+    )
+    counts_query = _apply_in_progress_task_filters(counts_query, **filter_kwargs)
+    daily_counts = [
+        {
+            "day": d.isoformat() if hasattr(d, "isoformat") else str(d)[:10],
+            "count": c,
+        }
+        for d, c in counts_query.group_by(day_expr).all()
+        if d is not None
+    ]
+
+    return data, total, days, daily_counts
+
+
+# ── In-progress matrix: Unit → Member × Year received by center ─────
+def get_in_progress_year_matrix(db: Session) -> dict:
+    """
+    One grouped query for the whole org: in-progress rows grouped by
+    (unit, member, year of MainDB.DB_DATE_RECEIVED_CENT). Members with
+    no in-progress rows are still listed (all zeros).
+
+    Uses the same "in progress" definition and the same row counting as
+    the Units overview, so totals match the unit cards.
+    NOTE: the year is taken from the first 4 chars of the ISO
+    'YYYY-MM-DD' string. Rows that don't start with 4 digits are
+    counted under `no_date`.
+    """
+    status_expr = func.upper(func.trim(ApplicationLogs.application_status))
+    year_expr = func.substr(MainDB.DB_DATE_RECEIVED_CENT, 1, 4)
+
+    count_rows = (
+        db.query(
+            LeadAssignment.unit_id,
+            ApplicationLogs.user_id,
+            year_expr.label("year"),
+            func.count(ApplicationLogs.id).label("count"),
+        )
+        .select_from(ApplicationLogs)
+        .join(
+            LeadAssignment,
+            (LeadAssignment.member_user_id == ApplicationLogs.user_id)
+            & (LeadAssignment.is_active == True),  # noqa: E712
+        )
+        .outerjoin(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
+        .filter(
+            or_(
+                ApplicationLogs.application_status.is_(None),
+                status_expr.notin_(_TERMINAL_STATUSES),
+            )
+        )
+        .group_by(LeadAssignment.unit_id, ApplicationLogs.user_id, year_expr)
+        .all()
+    )
+
+    # (unit_id, user_id) -> {"counts": {year: n}, "no_date": n}
+    cell = defaultdict(lambda: {"counts": defaultdict(int), "no_date": 0})
+    years_seen = set()
+    for unit_id, user_id, year, count in count_rows:
+        bucket = cell[(unit_id, user_id)]
+        if year and len(year) == 4 and year.isdigit():
+            bucket["counts"][year] += count
+            years_seen.add(year)
+        else:
+            bucket["no_date"] += count
+
+    units: dict[int, dict] = {}
+    for a in get_all_active_lead_assignments(db):
+        unit = units.setdefault(
+            a.unit_id,
+            {
+                "unit_id": a.unit_id,
+                "unit_name": a.unit.name if a.unit else "",
+                "counts": defaultdict(int),
+                "no_date": 0,
+                "total": 0,
+                "members": [],
+            },
+        )
+        bucket = cell.get((a.unit_id, a.member_user_id))
+        counts = dict(bucket["counts"]) if bucket else {}
+        no_date = bucket["no_date"] if bucket else 0
+        total = sum(counts.values()) + no_date
+
+        unit["members"].append(
+            {
+                "member_user_id": a.member_user_id,
+                "member_name": (
+                    f"{a.member.first_name} {a.member.surname}".strip()
+                    if a.member
+                    else ""
+                ),
+                "counts": counts,
+                "no_date": no_date,
+                "total": total,
+            }
+        )
+        for y, n in counts.items():
+            unit["counts"][y] += n
+        unit["no_date"] += no_date
+        unit["total"] += total
+
+    unit_list = []
+    for u in sorted(units.values(), key=lambda x: x["unit_name"] or ""):
+        u["counts"] = dict(u["counts"])
+        u["members"].sort(key=lambda m: m["member_name"] or "")
+        unit_list.append(u)
+
+    return {
+        "years": sorted(years_seen),
+        "grand_total": sum(u["total"] for u in unit_list),
+        "units": unit_list,
+    }

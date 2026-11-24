@@ -1,7 +1,7 @@
 # app/schemas/target_assignment.py
 
 from datetime import date, datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, field_validator
 
 
@@ -227,6 +227,17 @@ class MemberTaskListResponse(BaseModel):
     data: List[MemberTaskOut]
 
 
+# ── Completed tasks (last N days) ───────────────────────────────────
+class CompletedDailyCount(BaseModel):
+    day: str  # "YYYY-MM-DD"
+    count: int
+
+
+class MemberCompletedTaskListResponse(MemberTaskListResponse):
+    days: int
+    daily_counts: List[CompletedDailyCount] = []
+
+
 class UnitSummaryItem(BaseModel):
     label: str
     count: int
@@ -297,3 +308,27 @@ class DirectorsTargetListResponse(BaseModel):
     page_size: int
     total_pages: int
     data: List[DirectorsTargetDetailOut]
+
+
+# ── In-progress matrix: Unit → Member × Year received by center ─────
+class YearMatrixMember(BaseModel):
+    member_user_id: int
+    member_name: str
+    counts: Dict[str, int] = {}  # {"2023": 6, "2024": 2, ...}
+    no_date: int = 0  # in-progress rows with no usable date_received_center
+    total: int = 0
+
+
+class YearMatrixUnit(BaseModel):
+    unit_id: int
+    unit_name: str
+    counts: Dict[str, int] = {}
+    no_date: int = 0
+    total: int = 0
+    members: List[YearMatrixMember] = []
+
+
+class InProgressYearMatrix(BaseModel):
+    years: List[str]  # sorted ascending, e.g. ["2023", "2024", "2025", "2026"]
+    grand_total: int
+    units: List[YearMatrixUnit]
