@@ -234,3 +234,110 @@ def get_chart_data(
         total_completed=total_completed,
         total_on_process=total_on_process,
     )
+
+
+def _completed_by_accomplished(
+    db: Session,
+    user_id: int,
+    breakdown: str,
+    date_from: Optional[date],
+    date_to: Optional[date],
+) -> dict:
+    """{label: count} ng COMPLETED, naka-group by accomplished_date."""
+    col = ApplicationLogs.accomplished_date
+
+    if breakdown == "day":
+        exprs = [func.date(col).label("d")]
+    elif breakdown == "month":
+        exprs = [
+            extract("year", col).cast(Integer).label("yr"),
+            extract("month", col).cast(Integer).label("mo"),
+        ]
+    else:
+        exprs = [extract("year", col).cast(Integer).label("yr")]
+
+    q = apply_counting_filters(db.query(ApplicationLogs), user_id).filter(
+        ApplicationLogs.application_status == "COMPLETED",
+        col.isnot(None),
+    )
+    if date_from:
+        q = q.filter(func.date(col) >= date_from)
+    if date_to:
+        q = q.filter(func.date(col) <= date_to)
+
+    rows = (
+        q.with_entities(*exprs, func.count(ApplicationLogs.id).label("completed"))
+        .group_by(*exprs)
+        .all()
+    )
+
+    out = {}
+    for r in rows:
+        if breakdown == "day":
+            label = str(r.d.day) if hasattr(r.d, "day") else str(r.d)
+        elif breakdown == "month":
+            label = _MONTH_LABELS[r.mo]
+        else:
+            label = str(r.yr)
+        out[label] = int(r.completed or 0)
+    return out
+
+
+def _sort_key(label: str, breakdown: str) -> int:
+    return _MONTH_LABELS.index(label) if breakdown == "month" else int(label)
+
+
+def get_chart_data(
+    db: Session,
+    user_id: int,
+    username: str,
+    breakdown: str,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+) -> ChartResponse:
+    breakdown = breakdown.lower().strip()
+
+    if breakdown == "day":
+        base = get_daily_chart(db, user_id, date_from, date_to)
+    elif breakdown == "month":
+        base = get_monthly_chart(db, user_id, date_from, date_to)
+    elif breakdown == "year":
+        base = get_yearly_chart(db, user_id, date_from, date_to)
+    else:
+        raise ValueError(
+            f"Invalid breakdown '{breakdown}'. Must be 'day', 'month', or 'year'."
+        )
+
+    completed_map = _completed_by_accomplished(
+        db, user_id, breakdown, date_from, date_to
+    )
+
+    # received / on_process = by start_date, completed = by accomplished_date
+    merged = {
+        p.label: ChartDataPoint(
+            label=p.label,
+            received=p.received,
+            completed=completed_map.get(p.label, 0),
+            on_process=p.on_process,
+        )
+        for p in base
+    }
+    # araw na may completed pero walang na-start
+    for label, n in completed_map.items():
+        if label not in merged:
+            merged[label] = ChartDataPoint(
+                label=label, received=0, completed=n, on_process=0
+            )
+
+    data = sorted(merged.values(), key=lambda p: _sort_key(p.label, breakdown))
+
+    return ChartResponse(
+        username=username,
+        breakdown=breakdown,
+        date_from=date_from,
+        date_to=date_to,
+        data=data,
+        total_received=sum(p.received for p in data),
+        total_completed=sum(p.completed for p in data),
+        total_on_process=sum(p.on_process for p in data),
+    )

@@ -2092,6 +2092,7 @@ def get_in_progress_year_matrix(db: Session) -> dict:
         unit["members"].append(
             {
                 "member_user_id": a.member_user_id,
+                "lead_role": a.group.name if a.group else "",
                 "member_name": (
                     f"{a.member.first_name} {a.member.surname}".strip()
                     if a.member
