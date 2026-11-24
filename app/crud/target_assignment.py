@@ -2021,7 +2021,7 @@ def get_member_completed_tasks_paginated(
 
 
 # ── In-progress matrix: Unit → Member × Year received by center ─────
-def get_in_progress_year_matrix(db: Session) -> dict:
+def get_in_progress_year_matrix(db: Session, app_type: str | None = None) -> dict:
     """
     One grouped query for the whole org: in-progress rows grouped by
     (unit, member, year of MainDB.DB_DATE_RECEIVED_CENT). Members with
@@ -2033,8 +2033,15 @@ def get_in_progress_year_matrix(db: Session) -> dict:
     'YYYY-MM-DD' string. Rows that don't start with 4 digits are
     counted under `no_date`.
     """
+    from sqlalchemy import true as sql_true
+
     status_expr = func.upper(func.trim(ApplicationLogs.application_status))
     year_expr = func.substr(MainDB.DB_DATE_RECEIVED_CENT, 1, 4)
+    # same "contains" match as the app_type filter on the task endpoints,
+    # so the matrix numbers agree with the popup
+    app_type_clause = (
+        MainDB.DB_APP_TYPE.ilike(f"%{app_type}%") if app_type else sql_true()
+    )
 
     count_rows = (
         db.query(
@@ -2056,6 +2063,7 @@ def get_in_progress_year_matrix(db: Session) -> dict:
                 status_expr.notin_(_TERMINAL_STATUSES),
             )
         )
+        .filter(app_type_clause)
         .group_by(LeadAssignment.unit_id, ApplicationLogs.user_id, year_expr)
         .all()
     )
@@ -2114,7 +2122,30 @@ def get_in_progress_year_matrix(db: Session) -> dict:
         u["members"].sort(key=lambda m: m["member_name"] or "")
         unit_list.append(u)
 
+    # All app types that currently have in-progress work (ignores the
+    # filter, so the dropdown always lists every option)
+    type_rows = (
+        db.query(MainDB.DB_APP_TYPE)
+        .select_from(ApplicationLogs)
+        .join(
+            LeadAssignment,
+            (LeadAssignment.member_user_id == ApplicationLogs.user_id)
+            & (LeadAssignment.is_active == True),  # noqa: E712
+        )
+        .join(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
+        .filter(
+            or_(
+                ApplicationLogs.application_status.is_(None),
+                status_expr.notin_(_TERMINAL_STATUSES),
+            )
+        )
+        .distinct()
+        .all()
+    )
+    app_types = sorted({r[0].strip() for r in type_rows if r[0] and r[0].strip()})
+
     return {
+        "app_types": app_types,
         "years": sorted(years_seen),
         "grand_total": sum(u["total"] for u in unit_list),
         "units": unit_list,
@@ -2128,6 +2159,7 @@ def get_in_progress_step_summary(
     unit_id: int | None = None,
     member_user_id: int | None = None,
     year: str | None = None,
+    app_type: str | None = None,
 ) -> List[dict]:
     """
     Count of in-progress rows per step for ONE member or ONE unit,
@@ -2162,6 +2194,9 @@ def get_in_progress_step_summary(
             & (LeadAssignment.unit_id == unit_id)
             & (LeadAssignment.is_active == True),  # noqa: E712
         )
+
+    if app_type:
+        query = query.filter(MainDB.DB_APP_TYPE.ilike(f"%{app_type}%"))
 
     if year and len(year) == 4 and year.isdigit():
         query = query.filter(
