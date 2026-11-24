@@ -345,6 +345,9 @@ def get_metric_detail(
         description="Filter rows by app_step (e.g. 'Quality Evaluation')",
     ),
     dtn: Optional[str] = Query(None, description="Filter by DTN (partial match)"),
+    received_cent_year: Optional[int] = Query(
+        None, description="Filter by year of date received at central"
+    ),
     # ✅ New: sorting
     sort_by: Optional[str] = Query(
         None,
@@ -408,6 +411,7 @@ def get_metric_detail(
             accomplished_date_to=accomplished_date_to,
             app_step=app_step,
             dtn=dtn,
+            received_cent_year=received_cent_year,
             sort_by=sort_by,
             sort_dir=sort_dir,
             page=page,
@@ -526,4 +530,26 @@ def get_record_by_dtn(
         "pharmaProdCatLabel": record.DB_PHARMA_PROD_CAT_LABEL,
         "dbTimelineCitizenCharter": record.DB_TIMELINE_CITIZEN_CHARTER,
         "processingType": record.DB_PROCESSING_TYPE,
+    }
+
+
+@router.get(
+    "/in-progress-by-year",
+    summary="Open in-progress applications of the user, grouped by year",
+)
+def get_in_progress_by_year(
+    impersonate: Optional[int] = Query(
+        None, description="Admin only — user_id of target user"
+    ),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    target = _effective_user(current_user, impersonate, db)
+    years = crud_dashboard.get_in_progress_by_year(db, target.id)
+    return {
+        "username": target.username,
+        "name": getattr(target, "full_name", None) or target.username,
+        "role": getattr(target, "role", None),
+        "total": sum(y["count"] for y in years),
+        "years": years,
     }

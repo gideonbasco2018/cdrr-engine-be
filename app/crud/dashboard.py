@@ -1,11 +1,12 @@
 # app/crud/dashboard.py
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, extract, Integer
 from typing import Optional
 from datetime import date
 
 from app.models.application_logs import ApplicationLogs
+from app.models.main_db import MainDB
 from app.crud.dashboard_filters import apply_counting_filters
 
 
@@ -57,12 +58,15 @@ def get_total_completed(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
 ) -> int:
-    """Entries where application_status = 'COMPLETED'."""
-    return (
-        _base_query(db, user_id, date_from, date_to)
-        .filter(ApplicationLogs.application_status == "COMPLETED")
-        .count()
+    """COMPLETED entries na na-accomplish sa loob ng date range."""
+    q = apply_counting_filters(db.query(ApplicationLogs), user_id).filter(
+        ApplicationLogs.application_status == "COMPLETED"
     )
+    if date_from:
+        q = q.filter(func.date(ApplicationLogs.accomplished_date) >= date_from)
+    if date_to:
+        q = q.filter(func.date(ApplicationLogs.accomplished_date) <= date_to)
+    return q.count()
 
 
 # ─────────────────────────────────────────────────────────
@@ -104,3 +108,28 @@ def get_stats_summary(
         "completed": get_total_completed(db, user_id, date_from, date_to),
         "on_process": get_total_on_process(db, user_id, date_from, date_to),
     }
+
+
+# ─────────────────────────────────────────────────────────
+# In Progress per year (all-time backlog, not date-filtered)
+# ─────────────────────────────────────────────────────────
+def get_in_progress_by_year(db: Session, user_id: int) -> list:
+    """Open IN PROGRESS entries of the user, grouped by the year of
+    MainDB.DB_DATE_RECEIVED_CENT (date received at central)."""
+    year_col = extract("year", MainDB.DB_DATE_RECEIVED_CENT).cast(Integer).label("yr")
+    q = db.query(ApplicationLogs).join(
+        MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID
+    )
+    rows = (
+        apply_counting_filters(q, user_id)
+        .filter(
+            ApplicationLogs.application_status == "IN PROGRESS",
+            ApplicationLogs.del_thread == "Open",
+            MainDB.DB_DATE_RECEIVED_CENT.isnot(None),
+        )
+        .with_entities(year_col, func.count(ApplicationLogs.id).label("n"))
+        .group_by(year_col)
+        .order_by(year_col)
+        .all()
+    )
+    return [{"year": r.yr, "count": int(r.n)} for r in rows]

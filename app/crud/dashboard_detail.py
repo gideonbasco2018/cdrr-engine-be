@@ -1,7 +1,7 @@
 # app/crud/dashboard_detail.py
 
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, cast, String
+from sqlalchemy import func, cast, String, extract
 from typing import Optional
 from datetime import date
 import math
@@ -16,18 +16,7 @@ from app.crud.dashboard_filters import apply_counting_filters
 # ─────────────────────────────────────────────────────────
 
 
-def _base_query(
-    db: Session,
-    user_id: int,
-    date_from: Optional[date],
-    date_to: Optional[date],
-):
-    """
-    Base query: ApplicationLogs joined to MainDB so we can pull
-    dtn / brand_name / generic_name from the parent record.
-    Uses the same counting filters as the KPI tiles and the chart,
-    so the drill-down rows always match the numbers shown.
-    """
+def _base_query(db, user_id, date_from, date_to, metric: str = "received"):
     q = (
         db.query(ApplicationLogs)
         .join(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
@@ -35,10 +24,15 @@ def _base_query(
     )
     q = apply_counting_filters(q, user_id)
 
+    date_col = (
+        ApplicationLogs.accomplished_date
+        if metric == "completed"
+        else ApplicationLogs.start_date
+    )
     if date_from:
-        q = q.filter(ApplicationLogs.start_date >= date_from)
+        q = q.filter(func.date(date_col) >= date_from)
     if date_to:
-        q = q.filter(func.date(ApplicationLogs.start_date) <= date_to)
+        q = q.filter(func.date(date_col) <= date_to)
     return q
 
 
@@ -91,6 +85,11 @@ def _row_to_detail(row: ApplicationLogs) -> ApplicationLogDetail:
             else None
         ),
         evaluator=main.DB_EVAL if main else None,
+        date_received_cent=(
+            str(main.DB_DATE_RECEIVED_CENT)
+            if main and main.DB_DATE_RECEIVED_CENT is not None
+            else None
+        ),
         # ── from ApplicationLogs ────────────────────────────────────
         application_status=row.application_status,
         del_thread=row.del_thread,
@@ -115,6 +114,7 @@ def get_metric_detail(
     accomplished_date_to: Optional[date] = None,
     app_step: Optional[str] = None,
     dtn: Optional[str] = None,
+    received_cent_year: Optional[int] = None,
     sort_by: Optional[str] = None,
     sort_dir: str = "asc",
     page: int = 1,
@@ -131,7 +131,7 @@ def get_metric_detail(
     page = max(1, page)
     page_size = max(1, min(500, page_size))
 
-    q = _base_query(db, user_id, date_from, date_to)
+    q = _base_query(db, user_id, date_from, date_to, metric)
     q = _apply_metric_filter(q, metric)
 
     # ── Accomplished date filter ─────────────────────────────────────────────
@@ -145,6 +145,11 @@ def get_metric_detail(
     # ── Step filter ──────────────────────────────────────────────────────────
     if app_step:
         q = q.filter(ApplicationLogs.application_step == app_step)
+    # ── Year of date received at central (In Progress by Year card) ─────────
+    if received_cent_year:
+        q = q.filter(
+            extract("year", MainDB.DB_DATE_RECEIVED_CENT) == received_cent_year
+        )
 
     # ── DTN filter ──────────────────────────────────────────────────────────
     if dtn:

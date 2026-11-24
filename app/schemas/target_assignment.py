@@ -314,6 +314,7 @@ class DirectorsTargetListResponse(BaseModel):
 class YearMatrixMember(BaseModel):
     member_user_id: int
     member_name: str
+    lead_role: str = ""  # e.g. "S&E", "S&E Supervisor", "S&E Statistician"
     counts: Dict[str, int] = {}  # {"2023": 6, "2024": 2, ...}
     no_date: int = 0  # in-progress rows with no usable date_received_center
     total: int = 0
