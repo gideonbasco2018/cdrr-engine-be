@@ -2119,3 +2119,57 @@ def get_in_progress_year_matrix(db: Session) -> dict:
         "grand_total": sum(u["total"] for u in unit_list),
         "units": unit_list,
     }
+
+
+# ── In-progress step summary (drill-down popup side panel) ──────────
+def get_in_progress_step_summary(
+    db: Session,
+    *,
+    unit_id: int | None = None,
+    member_user_id: int | None = None,
+    year: str | None = None,
+) -> List[dict]:
+    """
+    Count of in-progress rows per step for ONE member or ONE unit,
+    optionally limited to a single received-by-center year. Uses the
+    same "in progress" definition as the matrix, so the numbers match
+    the cell that was clicked.
+    """
+    status_expr = func.upper(func.trim(ApplicationLogs.application_status))
+    step_label = func.coalesce(ApplicationLogs.application_step, "Unspecified")
+
+    query = (
+        db.query(
+            step_label.label("label"),
+            func.count(ApplicationLogs.id).label("count"),
+        )
+        .select_from(ApplicationLogs)
+        .outerjoin(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
+        .filter(
+            or_(
+                ApplicationLogs.application_status.is_(None),
+                status_expr.notin_(_TERMINAL_STATUSES),
+            )
+        )
+    )
+
+    if member_user_id is not None:
+        query = query.filter(ApplicationLogs.user_id == member_user_id)
+    elif unit_id is not None:
+        query = query.join(
+            LeadAssignment,
+            (LeadAssignment.member_user_id == ApplicationLogs.user_id)
+            & (LeadAssignment.unit_id == unit_id)
+            & (LeadAssignment.is_active == True),  # noqa: E712
+        )
+
+    if year and len(year) == 4 and year.isdigit():
+        query = query.filter(
+            MainDB.DB_DATE_RECEIVED_CENT >= f"{year}-01-01",
+            MainDB.DB_DATE_RECEIVED_CENT <= f"{year}-12-31",
+        )
+
+    rows = (
+        query.group_by(step_label).order_by(func.count(ApplicationLogs.id).desc()).all()
+    )
+    return [{"label": r.label, "count": r.count} for r in rows]
