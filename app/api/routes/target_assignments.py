@@ -574,11 +574,12 @@ def get_all_teams_member_completed_tasks(
     response_model=InProgressYearMatrix,
 )
 def get_in_progress_by_year(
+    app_type: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     _require_admin(current_user)
-    return crud_target_assignment.get_in_progress_year_matrix(db)
+    return crud_target_assignment.get_in_progress_year_matrix(db, app_type=app_type)
 
 
 @router.get(
@@ -589,6 +590,7 @@ def get_in_progress_step_summary(
     unit_id: int | None = None,
     member_user_id: int | None = None,
     year: str | None = None,
+    app_type: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -598,5 +600,9 @@ def get_in_progress_step_summary(
             status_code=400, detail="Provide unit_id or member_user_id."
         )
     return crud_target_assignment.get_in_progress_step_summary(
-        db, unit_id=unit_id, member_user_id=member_user_id, year=year
+        db,
+        unit_id=unit_id,
+        member_user_id=member_user_id,
+        year=year,
+        app_type=app_type,
     )

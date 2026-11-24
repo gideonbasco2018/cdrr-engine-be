@@ -331,5 +331,6 @@ class YearMatrixUnit(BaseModel):
 
 class InProgressYearMatrix(BaseModel):
     years: List[str]  # sorted ascending, e.g. ["2023", "2024", "2025", "2026"]
+    app_types: List[str] = []  # all in-progress app types (for the filter dropdown)
     grand_total: int
     units: List[YearMatrixUnit]
