@@ -183,7 +183,7 @@ def get_yearly_chart(
 
     return [
         ChartDataPoint(
-            label=str(row.yr),
+            label=str(row.yr) if row.yr is not None else "No date",
             received=row.received,
             completed=int(row.completed or 0),
             on_process=int(row.on_process or 0),
@@ -284,7 +284,10 @@ def _completed_by_accomplished(
 
 
 def _sort_key(label: str, breakdown: str) -> int:
-    return _MONTH_LABELS.index(label) if breakdown == "month" else int(label)
+    try:
+        return _MONTH_LABELS.index(label) if breakdown == "month" else int(label)
+    except (ValueError, TypeError):
+        return 10**9  # non-numeric buckets (e.g. "No date") go last
 
 
 def get_chart_data(
