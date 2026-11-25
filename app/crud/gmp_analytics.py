@@ -545,6 +545,17 @@ def get_gmp_analytics_workload(
 
 
 # ── 6b. Applications by current step ─────────────────────────────
+def _open_at_a_step():
+    """The rule for "open right now": not in a terminal status, and sitting at a
+    workflow step. Shared by the per-step counts and the per-step record list so
+    the list always holds exactly the records the count counted."""
+    has_current_step = GMPRecord.GMP_CURRENT_STEP.isnot(None) & (GMPRecord.GMP_CURRENT_STEP != "")
+    is_terminal = func.upper(func.coalesce(GMPRecord.GMP_APP_STATUS, "")).in_(
+        [s.upper() for s in GMP_TERMINAL_STATUSES]
+    )
+    return ~is_terminal & has_current_step
+
+
 def get_gmp_analytics_by_step(
     db: Session,
     year: str = "All",
@@ -556,11 +567,7 @@ def get_gmp_analytics_by_step(
     workflow step right now — queue depth per step, so a pile-up at one
     specific step is visible instead of hiding inside one "On Process" total.
     """
-    has_current_step = GMPRecord.GMP_CURRENT_STEP.isnot(None) & (GMPRecord.GMP_CURRENT_STEP != "")
-    is_terminal = func.upper(func.coalesce(GMPRecord.GMP_APP_STATUS, "")).in_(
-        [s.upper() for s in GMP_TERMINAL_STATUSES]
-    )
-    is_open = ~is_terminal & has_current_step
+    is_open = _open_at_a_step()
 
     rows = (
         _base_query(db, year, month, est_category)
@@ -579,6 +586,57 @@ def get_gmp_analytics_by_step(
     # pile-up at a specific step at a glance). Steps with zero open
     # applications still appear, at 0, so the pipeline reads as complete.
     return [{"step": step, "count": by_step.get(step, 0)} for step in STEP_ORDER]
+
+
+def get_gmp_analytics_by_step_records(
+    db: Session,
+    step: str,
+    year: str = "All",
+    month: str = "All",
+    est_category: str = "All",
+    page: int = 1,
+    page_size: int = 15,
+    search: str = None,
+) -> dict:
+    """The applications behind one step's number in "Applications by step".
+
+    Same base filters and same "open" rule as get_gmp_analytics_by_step, so
+    `total` here always equals that step's count (unless a search is typed).
+    Oldest received first — the ones that have waited longest are at the top.
+    """
+    q = _base_query(db, year, month, est_category).filter(
+        _open_at_a_step(), GMPRecord.GMP_CURRENT_STEP == step
+    )
+    if search:
+        s = f"%{search.strip()}%"
+        q = q.filter(or_(
+            cast(GMPRecord.GMP_DTN, String).like(s),
+            GMPRecord.GMP_LTO_COMPANY.like(s),
+        ))
+
+    page = max(1, page)
+    page_size = max(1, min(200, page_size))
+    total = q.count()
+    rows = (
+        q.order_by(GMPRecord.GMP_DATE_RECEIVED.is_(None), GMPRecord.GMP_DATE_RECEIVED.asc(), GMPRecord.GMP_ID.asc())
+        .offset((page - 1) * page_size).limit(page_size).all()
+    )
+    return {
+        "step": step,
+        "data": [{
+            "gmp_id":           r.GMP_ID,
+            "dtn":              str(r.GMP_DTN) if r.GMP_DTN is not None else None,
+            "reference_no":     r.GMP_REFERENCE_NO,
+            "company":          r.GMP_LTO_COMPANY,
+            "status":           r.GMP_APP_STATUS,
+            "evaluator":        r.GMP_EVALUATOR,
+            "type_of_issuance": r.GMP_TYPE_OF_ISSUANCE,
+            "date_received":    str(r.GMP_DATE_RECEIVED)[:10] if r.GMP_DATE_RECEIVED is not None else None,
+        } for r in rows],
+        "total":       total,
+        "page":        page,
+        "total_pages": max(1, -(-total // page_size)),
+    }
 
 
 # ── 7. Backlog aging ─────────────────────────────────────────────
