@@ -51,6 +51,7 @@ from app.models.e_app_email_notification_attempt import EAppEmailNotificationAtt
 from app.models.checklist import Checklist, ChecklistItem
 from app.models.sne_assignment import SneGenericAssignment
 from app.models.workflow_role_group import WorkflowRoleGroup
+from app.models.softcopy import SoftcopyDownload
 
 __all__ = [
     "MainDB",
@@ -104,4 +105,5 @@ __all__ = [
     "ChecklistItem",
     "SneGenericAssignment",
     "WorkflowRoleGroup",
+    "SoftcopyDownload",
 ]
