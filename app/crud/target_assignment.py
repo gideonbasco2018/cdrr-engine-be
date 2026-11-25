@@ -1150,8 +1150,9 @@ def _apply_in_progress_task_filters(
     if step:
         query = query.filter(ApplicationLogs.application_step.ilike(f"%{step}%"))
 
-    if app_type:
-        query = query.filter(MainDB.DB_APP_TYPE.ilike(f"%{app_type}%"))
+    app_type_clause = _multi_clause(MainDB.DB_APP_TYPE, app_type)
+    if app_type_clause is not None:
+        query = query.filter(app_type_clause)
 
     if product_class:
         query = query.filter(
@@ -1163,17 +1164,13 @@ def _apply_in_progress_task_filters(
             getattr(MainDB, "DB_PROCESSING_TYPE").ilike(f"%{processing_type}%")
         )
 
-    if entry_type:
-        # The frontend displays "ORIGINAL" whenever the underlying column
-        # is NULL (see _build_member_task_out), so a search for
-        # "original" must also match NULL rows, not just an exact stored
-        # "ORIGINAL" value, or the row would disappear from the results
-        # even though the UI shows it as a match.
-        like = f"%{entry_type}%"
-        conditions = [MainDB.DB_ENTRY_TYPE.ilike(like)]
-        if entry_type.strip().lower() in "original":
-            conditions.append(MainDB.DB_ENTRY_TYPE.is_(None))
-        query = query.filter(or_(*conditions))
+    # NULL entry type is displayed as "ORIGINAL", so selecting ORIGINAL
+    # must also match NULL rows.
+    entry_type_clause = _multi_clause(
+        MainDB.DB_ENTRY_TYPE, entry_type, null_as="ORIGINAL"
+    )
+    if entry_type_clause is not None:
+        query = query.filter(entry_type_clause)
 
     if member_name:
         like = f"%{member_name}%"
@@ -2021,7 +2018,11 @@ def get_member_completed_tasks_paginated(
 
 
 # ── In-progress matrix: Unit → Member × Year received by center ─────
-def get_in_progress_year_matrix(db: Session, app_type: str | None = None) -> dict:
+def get_in_progress_year_matrix(
+    db: Session,
+    app_type: str | None = None,
+    entry_type: str | None = None,
+) -> dict:
     """
     One grouped query for the whole org: in-progress rows grouped by
     (unit, member, year of MainDB.DB_DATE_RECEIVED_CENT). Members with
@@ -2033,15 +2034,21 @@ def get_in_progress_year_matrix(db: Session, app_type: str | None = None) -> dic
     'YYYY-MM-DD' string. Rows that don't start with 4 digits are
     counted under `no_date`.
     """
-    from sqlalchemy import true as sql_true
+    from sqlalchemy import and_, true as sql_true
 
     status_expr = func.upper(func.trim(ApplicationLogs.application_status))
     year_expr = func.substr(MainDB.DB_DATE_RECEIVED_CENT, 1, 4)
-    # same "contains" match as the app_type filter on the task endpoints,
-    # so the matrix numbers agree with the popup
-    app_type_clause = (
-        MainDB.DB_APP_TYPE.ilike(f"%{app_type}%") if app_type else sql_true()
-    )
+    # same matching as the task endpoints, so the matrix numbers agree
+    # with the popup
+    _clauses = [
+        c
+        for c in (
+            _multi_clause(MainDB.DB_APP_TYPE, app_type),
+            _multi_clause(MainDB.DB_ENTRY_TYPE, entry_type, null_as="ORIGINAL"),
+        )
+        if c is not None
+    ]
+    filter_clause = and_(*_clauses) if _clauses else sql_true()
 
     count_rows = (
         db.query(
@@ -2063,7 +2070,7 @@ def get_in_progress_year_matrix(db: Session, app_type: str | None = None) -> dic
                 status_expr.notin_(_TERMINAL_STATUSES),
             )
         )
-        .filter(app_type_clause)
+        .filter(filter_clause)
         .group_by(LeadAssignment.unit_id, ApplicationLogs.user_id, year_expr)
         .all()
     )
@@ -2125,7 +2132,7 @@ def get_in_progress_year_matrix(db: Session, app_type: str | None = None) -> dic
     # All app types that currently have in-progress work (ignores the
     # filter, so the dropdown always lists every option)
     type_rows = (
-        db.query(MainDB.DB_APP_TYPE)
+        db.query(MainDB.DB_APP_TYPE, MainDB.DB_ENTRY_TYPE)
         .select_from(ApplicationLogs)
         .join(
             LeadAssignment,
@@ -2143,9 +2150,11 @@ def get_in_progress_year_matrix(db: Session, app_type: str | None = None) -> dic
         .all()
     )
     app_types = sorted({r[0].strip() for r in type_rows if r[0] and r[0].strip()})
+    entry_types = sorted({((r[1] or "").strip() or "ORIGINAL") for r in type_rows})
 
     return {
         "app_types": app_types,
+        "entry_types": entry_types,
         "years": sorted(years_seen),
         "grand_total": sum(u["total"] for u in unit_list),
         "units": unit_list,
@@ -2160,6 +2169,7 @@ def get_in_progress_step_summary(
     member_user_id: int | None = None,
     year: str | None = None,
     app_type: str | None = None,
+    entry_type: str | None = None,
 ) -> List[dict]:
     """
     Count of in-progress rows per step for ONE member or ONE unit,
@@ -2195,8 +2205,12 @@ def get_in_progress_step_summary(
             & (LeadAssignment.is_active == True),  # noqa: E712
         )
 
-    if app_type:
-        query = query.filter(MainDB.DB_APP_TYPE.ilike(f"%{app_type}%"))
+    for clause in (
+        _multi_clause(MainDB.DB_APP_TYPE, app_type),
+        _multi_clause(MainDB.DB_ENTRY_TYPE, entry_type, null_as="ORIGINAL"),
+    ):
+        if clause is not None:
+            query = query.filter(clause)
 
     if year and len(year) == 4 and year.isdigit():
         query = query.filter(
@@ -2208,3 +2222,22 @@ def get_in_progress_step_summary(
         query.group_by(step_label).order_by(func.count(ApplicationLogs.id).desc()).all()
     )
     return [{"label": r.label, "count": r.count} for r in rows]
+
+
+# ── Multi-value filter helpers (FE joins selected checkboxes with "|") ──
+def _split_multi(value: str | None) -> List[str]:
+    if not value:
+        return []
+    return [v.strip() for v in value.split("|") if v.strip()]
+
+
+def _multi_clause(column, value: str | None, *, null_as: str | None = None):
+    """Case-insensitive EXACT match against any of the selected values.
+    `null_as`: a selected value that should also match NULL rows."""
+    values = [v.lower() for v in _split_multi(value)]
+    if not values:
+        return None
+    conds = [func.lower(func.trim(column)).in_(values)]
+    if null_as and null_as.lower() in values:
+        conds.append(column.is_(None))
+    return or_(*conds)
