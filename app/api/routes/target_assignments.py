@@ -49,6 +49,12 @@ def _require_admin(current_user: User) -> None:
         )
 
 
+def _require_monitoring_access(current_user: User) -> None:
+    # Any active logged-in user can view the In Progress by Year page.
+    # To restrict it to certain roles, check current_user.role here.
+    return None
+
+
 # ── GET /api/lead-assignments/my-team ───────────────────────────────
 @router.get("/lead-assignments/my-team", response_model=List[TeamMemberOut])
 def get_my_team(
@@ -338,7 +344,7 @@ def get_all_teams_member_in_progress_tasks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_admin(current_user)
+    _require_monitoring_access(current_user)
     skip = (page - 1) * page_size
     data, total = crud_target_assignment.get_member_in_progress_tasks_paginated(
         db,
@@ -427,7 +433,7 @@ def get_unit_in_progress_tasks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_admin(current_user)
+    _require_monitoring_access(current_user)
     skip = (page - 1) * page_size
     data, total = crud_target_assignment.get_unit_in_progress_tasks_paginated(
         db,
@@ -581,7 +587,7 @@ def get_in_progress_by_year(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_admin(current_user)
+    _require_monitoring_access(current_user)
     return crud_target_assignment.get_in_progress_year_matrix(
         db, app_type=app_type, entry_type=entry_type
     )
@@ -601,7 +607,7 @@ def get_in_progress_step_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_admin(current_user)
+    _require_monitoring_access(current_user)
     if unit_id is None and member_user_id is None:
         raise HTTPException(
             status_code=400, detail="Provide unit_id or member_user_id."
