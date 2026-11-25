@@ -584,12 +584,13 @@ def get_all_teams_member_completed_tasks(
 def get_in_progress_by_year(
     app_type: str | None = None,
     entry_type: str | None = None,
+    step: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     _require_monitoring_access(current_user)
     return crud_target_assignment.get_in_progress_year_matrix(
-        db, app_type=app_type, entry_type=entry_type
+        db, app_type=app_type, entry_type=entry_type, step=step
     )
 
 
@@ -605,6 +606,7 @@ def get_in_progress_step_summary(
     entry_type: str | None = None,
     member_ids: str | None = None,
     unit_ids: str | None = None,
+    step: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -623,6 +625,7 @@ def get_in_progress_step_summary(
         entry_type=entry_type,
         member_ids=member_ids,
         unit_ids=unit_ids,
+        step=step,
     )
 
 

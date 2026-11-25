@@ -1148,8 +1148,11 @@ def _apply_in_progress_task_filters(
     if date_to:
         query = query.filter(MainDB.DB_DATE_RECEIVED_CENT <= date_to)
 
-    if step:
-        query = query.filter(ApplicationLogs.application_step.ilike(f"%{step}%"))
+    step_clause = _multi_clause(
+        ApplicationLogs.application_step, step, null_as="Unspecified"
+    )
+    if step_clause is not None:
+        query = query.filter(step_clause)
 
     app_type_clause = _multi_clause(MainDB.DB_APP_TYPE, app_type)
     if app_type_clause is not None:
@@ -2030,6 +2033,7 @@ def get_in_progress_year_matrix(
     db: Session,
     app_type: str | None = None,
     entry_type: str | None = None,
+    step: str | None = None,
 ) -> dict:
     """
     One grouped query for the whole org: in-progress rows grouped by
@@ -2053,6 +2057,9 @@ def get_in_progress_year_matrix(
         for c in (
             _multi_clause(MainDB.DB_APP_TYPE, app_type),
             _multi_clause(MainDB.DB_ENTRY_TYPE, entry_type, null_as="ORIGINAL"),
+            _multi_clause(
+                ApplicationLogs.application_step, step, null_as="Unspecified"
+            ),
         )
         if c is not None
     ]
@@ -2140,7 +2147,9 @@ def get_in_progress_year_matrix(
     # All app types that currently have in-progress work (ignores the
     # filter, so the dropdown always lists every option)
     type_rows = (
-        db.query(MainDB.DB_APP_TYPE, MainDB.DB_ENTRY_TYPE)
+        db.query(
+            MainDB.DB_APP_TYPE, MainDB.DB_ENTRY_TYPE, ApplicationLogs.application_step
+        )
         .select_from(ApplicationLogs)
         .join(
             LeadAssignment,
@@ -2159,10 +2168,12 @@ def get_in_progress_year_matrix(
     )
     app_types = sorted({r[0].strip() for r in type_rows if r[0] and r[0].strip()})
     entry_types = sorted({((r[1] or "").strip() or "ORIGINAL") for r in type_rows})
+    steps = sorted({((r[2] or "").strip() or "Unspecified") for r in type_rows})
 
     return {
         "app_types": app_types,
         "entry_types": entry_types,
+        "steps": steps,
         "years": sorted(years_seen),
         "grand_total": sum(u["total"] for u in unit_list),
         "units": unit_list,
@@ -2180,6 +2191,7 @@ def get_in_progress_step_summary(
     entry_type: str | None = None,
     member_ids: str | None = None,
     unit_ids: str | None = None,
+    step: str | None = None,
 ) -> List[dict]:
     """
     Count of in-progress rows per step for ONE member or ONE unit,
@@ -2216,6 +2228,7 @@ def get_in_progress_step_summary(
     for clause in (
         _multi_clause(MainDB.DB_APP_TYPE, app_type),
         _multi_clause(MainDB.DB_ENTRY_TYPE, entry_type, null_as="ORIGINAL"),
+        _multi_clause(ApplicationLogs.application_step, step, null_as="Unspecified"),
     ):
         if clause is not None:
             query = query.filter(clause)
