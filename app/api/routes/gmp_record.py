@@ -1123,26 +1123,30 @@ def advance_step(
         )
     next_assignee_name = _resolve_assignee(db, next_assignee_id)
 
-    new_log = gmp_logs.advance_step(
-        db, record_id,
-        req.current_step, req.action, req.recommendation, req.remarks,
-        next_assignee_name,
-        next_assignee_id,
-        next_step_label, next_del_index,
-        next_assignees=next_assignees,
-        performed_by_name=getattr(current_user, "username", None),
-        performed_by_id=getattr(current_user, "id", None),
-        performed_by_alias=getattr(current_user, "alias", None),
-        performed_by_full_name=_full_name(current_user),
-        action_type=req.action_type,
-        decision_result=req.decision_result,
-        decision_authority_id=req.decision_authority_id,
-        decision_authority_name=req.decision_authority_name,
-        doctrack_remarks=req.doctrack_remarks,
-        deadline_date=req.deadline_date,
-        working_days=req.working_days,
-        completion_status=req.completion_status,
-    )
+    try:
+        new_log = gmp_logs.advance_step(
+            db, record_id,
+            req.current_step, req.action, req.recommendation, req.remarks,
+            next_assignee_name,
+            next_assignee_id,
+            next_step_label, next_del_index,
+            next_assignees=next_assignees,
+            performed_by_name=getattr(current_user, "username", None),
+            performed_by_id=getattr(current_user, "id", None),
+            performed_by_alias=getattr(current_user, "alias", None),
+            performed_by_full_name=_full_name(current_user),
+            action_type=req.action_type,
+            decision_result=req.decision_result,
+            decision_authority_id=req.decision_authority_id,
+            decision_authority_name=req.decision_authority_name,
+            doctrack_remarks=req.doctrack_remarks,
+            deadline_date=req.deadline_date,
+            working_days=req.working_days,
+            completion_status=req.completion_status,
+        )
+    except gmp_logs.StepAlreadyMovedError as exc:
+        # Stale screen / double submit: nothing was written.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
     if not new_log:
         raise HTTPException(

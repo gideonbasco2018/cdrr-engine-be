@@ -437,6 +437,10 @@ def update_log(
 # Advance step
 # ─────────────────────────────────────────────────────────────────────────────
 
+class StepAlreadyMovedError(Exception):
+    """The caller tried to act on a step the record has already left."""
+
+
 def advance_step(
     db: Session,
     gmp_record_id: int,
@@ -490,8 +494,31 @@ def advance_step(
     current_log = current_log_query.order_by(GMPApplicationLogs.del_index.desc()).first()
 
     # ── Auto-create the initial log if none exists ────────────────────────────
-    # This handles records uploaded via Excel that have no application logs yet.
+    # This handles records uploaded via Excel that have no application logs yet
+    # (and the first "Decking" of a record).
+    #
+    # It must NOT run when the record is already open at some OTHER step. That
+    # means the screen the user is acting from is stale: the task was already
+    # endorsed (e.g. a second click, a second tab, or an old Tasks list).
+    # Auto-creating here would invent a closed log for this step AND create a
+    # second open task at the next step, leaving the next person with two
+    # open tasks for the same application.
     if not current_log:
+        open_elsewhere = (
+            db.query(GMPApplicationLogs)
+            .filter(
+                GMPApplicationLogs.gmp_record_id == gmp_record_id,
+                GMPApplicationLogs.del_thread == "Open",
+            )
+            .order_by(GMPApplicationLogs.del_index.desc())
+            .first()
+        )
+        if open_elsewhere:
+            raise StepAlreadyMovedError(
+                f"This application is no longer at '{current_step}' — it is now "
+                f"with '{open_elsewhere.application_step}'. Reload the page; "
+                "your action was not applied."
+            )
         last_index = get_last_index(db, gmp_record_id)
         next_index = last_index + 1
         current_log = GMPApplicationLogs(
