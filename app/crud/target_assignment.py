@@ -1439,7 +1439,7 @@ def get_unit_in_progress_summary(db: Session, unit_id: int) -> dict:
 
 def get_unit_in_progress_tasks_paginated(
     db: Session,
-    unit_id: int,
+    unit_id: int | None,
     skip: int = 0,
     limit: int = 20,
     step: str | None = None,
@@ -1456,6 +1456,7 @@ def get_unit_in_progress_tasks_paginated(
     sort_by: str | None = None,
     sort_dir: str | None = None,
     member_ids: str | None = None,
+    unit_ids: str | None = None,
 ):
     """
     All in-progress tasks for an entire unit(all active members),
@@ -1475,7 +1476,7 @@ def get_unit_in_progress_tasks_paginated(
         .join(
             LeadAssignment,
             (LeadAssignment.member_user_id == ApplicationLogs.user_id)
-            & (LeadAssignment.unit_id == unit_id)
+            & (LeadAssignment.unit_id.in_(_unit_id_list(unit_id, unit_ids)))
             & (LeadAssignment.is_active == True),  # noqa: E712
         )
         .outerjoin(MainDB, ApplicationLogs.main_db_id == MainDB.DB_ID)
@@ -2178,6 +2179,7 @@ def get_in_progress_step_summary(
     app_type: str | None = None,
     entry_type: str | None = None,
     member_ids: str | None = None,
+    unit_ids: str | None = None,
 ) -> List[dict]:
     """
     Count of in-progress rows per step for ONE member or ONE unit,
@@ -2186,11 +2188,9 @@ def get_in_progress_step_summary(
     the cell that was clicked.
     """
     status_expr = func.upper(func.trim(ApplicationLogs.application_status))
-    step_label = func.coalesce(ApplicationLogs.application_step, "Unspecified")
-
     query = (
         db.query(
-            step_label.label("label"),
+            ApplicationLogs.application_step.label("label"),
             func.count(ApplicationLogs.id).label("count"),
         )
         .select_from(ApplicationLogs)
@@ -2205,11 +2205,11 @@ def get_in_progress_step_summary(
 
     if member_user_id is not None:
         query = query.filter(ApplicationLogs.user_id == member_user_id)
-    elif unit_id is not None:
+    elif unit_id is not None or unit_ids:
         query = query.join(
             LeadAssignment,
             (LeadAssignment.member_user_id == ApplicationLogs.user_id)
-            & (LeadAssignment.unit_id == unit_id)
+            & (LeadAssignment.unit_id.in_(_unit_id_list(unit_id, unit_ids)))
             & (LeadAssignment.is_active == True),  # noqa: E712
         )
 
@@ -2231,9 +2231,11 @@ def get_in_progress_step_summary(
         )
 
     rows = (
-        query.group_by(step_label).order_by(func.count(ApplicationLogs.id).desc()).all()
+        query.group_by(ApplicationLogs.application_step)
+        .order_by(func.count(ApplicationLogs.id).desc())
+        .all()
     )
-    return [{"label": r.label, "count": r.count} for r in rows]
+    return [{"label": r.label or "Unspecified", "count": r.count} for r in rows]
 
 
 # ── Multi-value filter helpers (FE joins selected checkboxes with "|") ──
@@ -2253,3 +2255,10 @@ def _multi_clause(column, value: str | None, *, null_as: str | None = None):
     if null_as and null_as.lower() in values:
         conds.append(column.is_(None))
     return or_(*conds)
+
+
+def _unit_id_list(unit_id: int | None, unit_ids: str | None) -> List[int]:
+    """One unit id, or several joined with '|'."""
+    if unit_id is not None:
+        return [unit_id]
+    return [int(v) for v in _split_multi(unit_ids) if v.isdigit()]
