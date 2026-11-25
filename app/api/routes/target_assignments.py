@@ -49,6 +49,12 @@ def _require_admin(current_user: User) -> None:
         )
 
 
+def _require_monitoring_access(current_user: User) -> None:
+    # Any active logged-in user can view the In Progress by Year page.
+    # To restrict it to certain roles, check current_user.role here.
+    return None
+
+
 # ── GET /api/lead-assignments/my-team ───────────────────────────────
 @router.get("/lead-assignments/my-team", response_model=List[TeamMemberOut])
 def get_my_team(
@@ -110,7 +116,7 @@ def get_all_teams(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_admin(current_user)
+    _require_monitoring_access(current_user)
     return crud_target_assignment.build_all_teams_overview(db)
 
 
@@ -126,7 +132,7 @@ def get_all_teams_member_tasks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_admin(current_user)
+    _require_monitoring_access(current_user)
     return crud_target_assignment.get_member_tasks(db, member_user_id)
 
 
@@ -338,7 +344,7 @@ def get_all_teams_member_in_progress_tasks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_admin(current_user)
+    _require_monitoring_access(current_user)
     skip = (page - 1) * page_size
     data, total = crud_target_assignment.get_member_in_progress_tasks_paginated(
         db,
@@ -376,7 +382,7 @@ def get_unit_in_progress_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_admin(current_user)
+    _require_monitoring_access(current_user)
     return crud_target_assignment.get_unit_in_progress_summary(db, unit_id)
 
 
@@ -391,7 +397,7 @@ def get_unit_in_progress_summary_by_member(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_admin(current_user)
+    _require_monitoring_access(current_user)
     try:
         return crud_target_assignment.get_unit_in_progress_member_breakdown(
             db, unit_id, group_by, label
@@ -427,7 +433,7 @@ def get_unit_in_progress_tasks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_admin(current_user)
+    _require_monitoring_access(current_user)
     skip = (page - 1) * page_size
     data, total = crud_target_assignment.get_unit_in_progress_tasks_paginated(
         db,
@@ -466,7 +472,7 @@ def get_directors_targets_overview(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_director(current_user)
+    _require_monitoring_access(current_user)
     return crud_target_assignment.get_directors_target_overview_summary(db)
 
 
@@ -486,7 +492,7 @@ def get_directors_targets_list(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_director(current_user)
+    _require_monitoring_access(current_user)
     skip = (page - 1) * page_size
     data, total = crud_target_assignment.get_directors_targets_list_paginated(
         db,
@@ -533,7 +539,7 @@ def get_all_teams_member_completed_tasks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_admin(current_user)
+    _require_monitoring_access(current_user)
     skip = (page - 1) * page_size
     (
         data,
@@ -581,7 +587,7 @@ def get_in_progress_by_year(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_admin(current_user)
+    _require_monitoring_access(current_user)
     return crud_target_assignment.get_in_progress_year_matrix(
         db, app_type=app_type, entry_type=entry_type
     )
@@ -601,7 +607,7 @@ def get_in_progress_step_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_admin(current_user)
+    _require_monitoring_access(current_user)
     if unit_id is None and member_user_id is None:
         raise HTTPException(
             status_code=400, detail="Provide unit_id or member_user_id."
