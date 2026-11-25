@@ -420,6 +420,7 @@ def get_unit_in_progress_tasks(
     date_to: str | None = None,
     entry_type: str | None = None,
     member_name: str | None = None,
+    member_ids: str | None = None,
     directors_target: str | None = None,
     sort_by: str | None = None,
     sort_dir: str | None = None,
@@ -442,6 +443,7 @@ def get_unit_in_progress_tasks(
         date_to=date_to,
         entry_type=entry_type,
         member_name=member_name,
+        member_ids=member_ids,
         directors_target=directors_target,
         sort_by=sort_by,
         sort_dir=sort_dir,
@@ -595,6 +597,7 @@ def get_in_progress_step_summary(
     year: str | None = None,
     app_type: str | None = None,
     entry_type: str | None = None,
+    member_ids: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -610,4 +613,5 @@ def get_in_progress_step_summary(
         year=year,
         app_type=app_type,
         entry_type=entry_type,
+        member_ids=member_ids,
     )

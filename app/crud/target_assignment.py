@@ -1120,6 +1120,7 @@ def _apply_in_progress_task_filters(
     entry_type: str | None = None,
     member_name: str | None = None,
     directors_target: str | None = None,
+    member_ids: str | None = None,
 ):
     """
     Applies every optional filter to the query. All comparisons are
@@ -1186,6 +1187,10 @@ def _apply_in_progress_task_filters(
         query = query.filter(DirectorsTarget.id.isnot(None))
     elif directors_target == "not_targeted":
         query = query.filter(DirectorsTarget.id.is_(None))
+
+    ids = [int(v) for v in _split_multi(member_ids) if v.isdigit()]
+    if ids:
+        query = query.filter(ApplicationLogs.user_id.in_(ids))
 
     return query
 
@@ -1450,9 +1455,10 @@ def get_unit_in_progress_tasks_paginated(
     directors_target: str | None = None,
     sort_by: str | None = None,
     sort_dir: str | None = None,
+    member_ids: str | None = None,
 ):
     """
-    All in-progress tasks for an entire unit (all active members),
+    All in-progress tasks for an entire unit(all active members),
     combined into one paginated list. Uses LEFT JOIN to MainDB and User
     so a row is never silently dropped just because it has no matching
     MainDB entry or User record — it still appears, with fallback
@@ -1504,6 +1510,7 @@ def get_unit_in_progress_tasks_paginated(
         entry_type=entry_type,
         member_name=member_name,
         directors_target=directors_target,
+        member_ids=member_ids,
     )
 
     total = base_query.count()
@@ -2170,6 +2177,7 @@ def get_in_progress_step_summary(
     year: str | None = None,
     app_type: str | None = None,
     entry_type: str | None = None,
+    member_ids: str | None = None,
 ) -> List[dict]:
     """
     Count of in-progress rows per step for ONE member or ONE unit,
@@ -2211,6 +2219,10 @@ def get_in_progress_step_summary(
     ):
         if clause is not None:
             query = query.filter(clause)
+
+    ids = [int(v) for v in _split_multi(member_ids) if v.isdigit()]
+    if ids:
+        query = query.filter(ApplicationLogs.user_id.in_(ids))
 
     if year and len(year) == 4 and year.isdigit():
         query = query.filter(
