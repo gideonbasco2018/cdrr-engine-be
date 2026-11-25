@@ -472,7 +472,7 @@ def get_directors_targets_overview(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_monitoring_access(current_user)
+    _require_director(current_user)
     return crud_target_assignment.get_directors_target_overview_summary(db)
 
 
@@ -492,7 +492,7 @@ def get_directors_targets_list(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_monitoring_access(current_user)
+    _require_director(current_user)
     skip = (page - 1) * page_size
     data, total = crud_target_assignment.get_directors_targets_list_paginated(
         db,
@@ -604,13 +604,15 @@ def get_in_progress_step_summary(
     app_type: str | None = None,
     entry_type: str | None = None,
     member_ids: str | None = None,
+    unit_ids: str | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     _require_monitoring_access(current_user)
-    if unit_id is None and member_user_id is None:
+    if unit_id is None and member_user_id is None and not unit_ids:
         raise HTTPException(
-            status_code=400, detail="Provide unit_id or member_user_id."
+            status_code=400,
+            detail="Provide unit_id, unit_ids or member_user_id.",
         )
     return crud_target_assignment.get_in_progress_step_summary(
         db,
@@ -620,4 +622,54 @@ def get_in_progress_step_summary(
         app_type=app_type,
         entry_type=entry_type,
         member_ids=member_ids,
+        unit_ids=unit_ids,
     )
+
+
+@router.get(
+    "/lead-assignments/all-teams/in-progress-tasks",
+    response_model=UnitTaskListResponse,
+)
+def get_all_units_in_progress_tasks(
+    unit_ids: str,
+    page: int = 1,
+    page_size: int = 20,
+    dtn: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    step: str | None = None,
+    app_type: str | None = None,
+    entry_type: str | None = None,
+    member_ids: str | None = None,
+    sort_by: str | None = None,
+    sort_dir: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """In-progress tasks across several units (Grand total drill-down)."""
+    _require_monitoring_access(current_user)
+    skip = (page - 1) * page_size
+    data, total = crud_target_assignment.get_unit_in_progress_tasks_paginated(
+        db,
+        None,
+        skip=skip,
+        limit=page_size,
+        step=step,
+        app_type=app_type,
+        dtn=dtn,
+        date_from=date_from,
+        date_to=date_to,
+        entry_type=entry_type,
+        member_ids=member_ids,
+        unit_ids=unit_ids,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+    )
+    total_pages = math.ceil(total / page_size) if total else 0
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+        "data": data,
+    }
