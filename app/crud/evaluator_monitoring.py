@@ -23,12 +23,14 @@
 #   - reassigned from A to B   -> counts for B only (A's step is marked)
 #   - reassigned to this person -> counts for this person (their step is not marked)
 #   - rerouted to someone else  -> still counts for the person who had it
-# For one person the "own step" is their latest such step on the application.
+# For one person the "own step" is their FIRST such step on the application:
+# when an app comes back for a small change and passes again, only the first
+# pass is timed (the later quick pass would make the TAT look too fast).
 # Closed application = has a valid Date Released.
 #
 # TAT = working days from a START to a FINISH, each with a fallback:
-#   START  1st: the start of the first step of the role that has a date in the
-#               application log
+#   START  1st: the start of the person's own (first) step in the application
+#               log
 #          2nd: CPR: the Date Decked of the application (DB_DATE_DECK)
 #               FGMP: the finish of the Decking step in the log
 #   FINISH 1st: the finish of the person's own step in the application log
@@ -282,20 +284,25 @@ def _formula(roles, keys: list) -> dict:
     if any_fb:
         tat = (
             f"TAT = working days (Monday to Friday) from a start to a finish. "
-            f"Start = the start of the first {step} step that has a date "
-            f"in the application log; if there is none, {fallback_start}. "
-            f"Finish = the finish of the {who}'s own {step} "
-            f"step in the application log; if there is none, the Date "
+            f"Only the {who}'s first {step} step on the application is "
+            f"timed: if it comes back for a small change and passes again, "
+            f"the later passes are not counted. "
+            f"Start = the start of that first step in the application log; "
+            f"if it has no date, {fallback_start}. "
+            f"Finish = the finish of that same first step in the application "
+            f"log; if there is none, the Date "
             f"Released. Every application shows where its start and its "
             f"finish came from. The time of day counts as part of a day (12 hours = 0.5), so same-day work is under 1. Holidays are not deducted."
         ) + ("" if all_fb else " " + LOG_ONLY_NOTE)
     else:
         tat = (
             f"TAT = working days (Monday to Friday) from a start to a finish. "
-            f"Start = the start of the first {step} step that has a date "
-            f"in the application log. "
-            f"Finish = the finish of the {who}'s own {step} "
-            f"step in the application log. An application with no start or "
+            f"Only the {who}'s first {step} step on the application is "
+            f"timed: if it comes back for a small change and passes again, "
+            f"the later passes are not counted. "
+            f"Start = the start of that first step in the application log. "
+            f"Finish = the finish of that same first step in the application "
+            f"log. An application with no start or "
             f"no finish date in the log is skipped and listed with the "
             f"reason. The time of day counts as part of a day (12 hours = 0.5), so same-day work is under 1. Holidays are not deducted."
         )
@@ -398,17 +405,20 @@ def _parts(db: Session, S, role: str, user_id: int) -> SimpleNamespace:
     pattern = S.steps[role]
     mine = db.query(fk).filter(L.user_id == user_id, L.application_step.ilike(pattern))
 
-    # this person's own step on the app: their latest step of the role that
-    # was not reassigned away from them (see the rules at the top)
+    # this person's own step on the app: their FIRST step of the role that was
+    # not reassigned away from them (see the rules at the top). Later passes of
+    # the same step (returned for a small change, then passed again) are not
+    # counted, so the TAT is the real first evaluation, not the quick re-pass.
     rn = func.row_number().over(
         partition_by=fk,
-        order_by=(L.del_index.desc(), L.id.desc()),
+        order_by=(L.del_index.asc(), L.id.asc()),
     )
     ranked_rows = (
         db.query(
             fk.label("rid"),
             L.user_id.label("user_id"),
             L.del_index.label("del_index"),
+            L.start_date.label("began"),
             L.accomplished_date.label("done"),
             rn.label("rn"),
         )
@@ -426,23 +436,13 @@ def _parts(db: Session, S, role: str, user_id: int) -> SimpleNamespace:
             ranked_rows.c.rid,
             ranked_rows.c.user_id,
             ranked_rows.c.del_index,
+            ranked_rows.c.began,
             ranked_rows.c.done,
         )
         .filter(ranked_rows.c.rn == 1)
         .subquery()
     )
 
-    # the FIRST step of the role on the app (any person)
-    first = (
-        db.query(
-            fk.label("rid"),
-            func.min(L.start_date).label("first_start"),
-            func.min(L.del_index).label("first_idx"),
-        )
-        .filter(L.application_step.ilike(pattern), fk.in_(mine))
-        .group_by(fk)
-        .subquery()
-    )
     # fallbacks that come from the application itself
     rec, rel = S.dates()
     rel_ok = S.rel_ok(rel)
@@ -467,13 +467,13 @@ def _parts(db: Session, S, role: str, user_id: int) -> SimpleNamespace:
         deck = deck_sub.c.deck
         deck_ok = deck.isnot(None)
 
-    # START: first dated step of the role in the log, else the decked date
-    # FINISH: the person's own step in the log, else Date Released
+    # START: the start of the person's first step in the log, else the decked date
+    # FINISH: the finish of that same first step, else Date Released
     if use_fallback:
-        start = func.coalesce(first.c.first_start, case((deck_ok, deck), else_=None))
+        start = func.coalesce(owner.c.began, case((deck_ok, deck), else_=None))
         end = func.coalesce(owner.c.done, case((rel_ok, rel), else_=None))
         start_src = case(
-            (first.c.first_start.isnot(None), "log"),
+            (owner.c.began.isnot(None), "log"),
             (deck_ok, "decked"),
             else_=None,
         )
@@ -483,14 +483,13 @@ def _parts(db: Session, S, role: str, user_id: int) -> SimpleNamespace:
             else_=None,
         )
     else:
-        start = first.c.first_start
+        start = owner.c.began
         end = owner.c.done
         start_src = case((start.isnot(None), "log"), else_=None)
         end_src = case((end.isnot(None), "log"), else_=None)
     return SimpleNamespace(
         S=S,
         owner=owner,
-        first=first,
         deck_sub=deck_sub,
         start=start,
         end=end,
@@ -521,7 +520,6 @@ def _handled(db: Session, pa: SimpleNamespace, user_id: int, *cols):
         db.query(*cols)
         .select_from(S.MODEL)
         .join(pa.owner, pa.owner.c.rid == S.ID)
-        .outerjoin(pa.first, pa.first.c.rid == S.ID)
     )
     if pa.deck_sub is not None:
         q = q.outerjoin(pa.deck_sub, pa.deck_sub.c.rid == S.ID)

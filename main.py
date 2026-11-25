@@ -57,6 +57,7 @@ from app.api.routes import (
     appointment_records,
     sne_assignments,
     workflow_roles,
+    softcopy,
 )
 
 # ── Scheduler setup ───────────────────────────────────────────────────
@@ -174,6 +175,7 @@ app.include_router(checklist.router)
 app.include_router(appointment_records.router)
 app.include_router(sne_assignments.router)
 app.include_router(workflow_roles.router)
+app.include_router(softcopy.router)
 
 
 @app.get("/")

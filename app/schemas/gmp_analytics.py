@@ -193,3 +193,21 @@ class GMPAnalyticsQualityRecordsResponse(BaseModel):
     total: int
     page: int
     total_pages: int
+
+
+class GMPAnalyticsStepRecord(BaseModel):
+    gmp_id: int
+    dtn: Optional[str] = None
+    reference_no: Optional[str] = None
+    company: Optional[str] = None
+    status: Optional[str] = None
+    evaluator: Optional[str] = None
+    type_of_issuance: Optional[str] = None
+    date_received: Optional[str] = None
+
+class GMPAnalyticsStepRecordsResponse(BaseModel):
+    step: str
+    data: List[GMPAnalyticsStepRecord]
+    total: int
+    page: int
+    total_pages: int

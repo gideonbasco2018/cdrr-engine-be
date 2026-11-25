@@ -1,7 +1,7 @@
 # app/api/routes/gmp_analytics.py
 
 from typing import Optional
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -22,6 +22,7 @@ from app.schemas.gmp_analytics import (
     GMPAnalyticsSparklinesResponse,
     GMPAnalyticsDataQualityResponse,
     GMPAnalyticsQualityRecordsResponse,
+    GMPAnalyticsStepRecordsResponse,
 )
 from app.crud import gmp_analytics as crud_gmp_analytics
 
@@ -106,6 +107,26 @@ def get_by_step(
 ):
     data = crud_gmp_analytics.get_gmp_analytics_by_step(db, year=year, month=month, est_category=est_category)
     return {"data": data}
+
+
+@router.get("/by-step/records", response_model=GMPAnalyticsStepRecordsResponse)
+def get_by_step_records(
+    step: str = Query(...),
+    year: str = Query("All"),
+    month: str = Query("All"),
+    est_category: str = Query("All"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(15, ge=1, le=200),
+    search: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """The applications behind one step's number in "Applications by step"."""
+    if step not in crud_gmp_analytics.STEP_ORDER:
+        raise HTTPException(status_code=400, detail=f"Unknown workflow step '{step}'.")
+    return crud_gmp_analytics.get_gmp_analytics_by_step_records(
+        db, step=step, year=year, month=month, est_category=est_category,
+        page=page, page_size=page_size, search=search,
+    )
 
 
 @router.get("/aging", response_model=GMPAnalyticsAgingResponse)
