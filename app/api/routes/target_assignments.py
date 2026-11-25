@@ -116,7 +116,7 @@ def get_all_teams(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_admin(current_user)
+    _require_monitoring_access(current_user)
     return crud_target_assignment.build_all_teams_overview(db)
 
 
@@ -132,7 +132,7 @@ def get_all_teams_member_tasks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_admin(current_user)
+    _require_monitoring_access(current_user)
     return crud_target_assignment.get_member_tasks(db, member_user_id)
 
 
@@ -382,7 +382,7 @@ def get_unit_in_progress_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_admin(current_user)
+    _require_monitoring_access(current_user)
     return crud_target_assignment.get_unit_in_progress_summary(db, unit_id)
 
 
@@ -397,7 +397,7 @@ def get_unit_in_progress_summary_by_member(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_admin(current_user)
+    _require_monitoring_access(current_user)
     try:
         return crud_target_assignment.get_unit_in_progress_member_breakdown(
             db, unit_id, group_by, label
@@ -472,7 +472,7 @@ def get_directors_targets_overview(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_director(current_user)
+    _require_monitoring_access(current_user)
     return crud_target_assignment.get_directors_target_overview_summary(db)
 
 
@@ -492,7 +492,7 @@ def get_directors_targets_list(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_director(current_user)
+    _require_monitoring_access(current_user)
     skip = (page - 1) * page_size
     data, total = crud_target_assignment.get_directors_targets_list_paginated(
         db,
@@ -539,7 +539,7 @@ def get_all_teams_member_completed_tasks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    _require_admin(current_user)
+    _require_monitoring_access(current_user)
     skip = (page - 1) * page_size
     (
         data,
