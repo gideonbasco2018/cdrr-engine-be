@@ -76,6 +76,14 @@ GMP_STEP_DEL_INDEX: Dict[str, int] = {label: idx for label, idx in GMP_LOG_STEPS
 GMP_SIGNATURE_FACILITATOR_STEP = "CDRR-OD Signature Facilitator"
 GMP_MULTI_ASSIGNEE_STEPS = {GMP_SIGNATURE_FACILITATOR_STEP}
 
+# Steps whose task is created UNASSIGNED when the previous step forwards to it:
+# nobody is picked; the task waits in the step's "Unclaimed" tab and any member
+# of the group claims it (then it is theirs, in "My Tasks"). Same two steps and
+# same groups as CPR (UNCLAIMED_STEP_GROUPS in app/crud/workflow_tasks.py —
+# group 18 / 19 are shared with CPR's identical offices).
+GMP_UNCLAIMED_STEP_GROUPS: Dict[str, int] = {"OD Receiving": 18, "OD Releasing": 19}
+GMP_UNCLAIMED_STATUS = "UNCLAIMED"
+
 # FROO's step label (group id 37) and the action it takes to hand the NFI back
 # to the Evaluator. OD Releasing no longer routes new records here (the
 # workflow now always ends at OD Releasing — see resolve_next_step below);

@@ -17,7 +17,11 @@ from datetime import datetime, timezone, timedelta
 from app.models.gmp_record import GMPApplicationLogs, GMPRecord
 from app.models.user import User
 from app.crud.notification import create_notification, already_notified_today
-from app.crud.gmp_record import GMP_MULTI_ASSIGNEE_STEPS
+from app.crud.gmp_record import (
+    GMP_MULTI_ASSIGNEE_STEPS,
+    GMP_UNCLAIMED_STEP_GROUPS,
+    GMP_UNCLAIMED_STATUS,
+)
 from app.schemas.notification import NotificationCreate
 
 _PHT = timezone(timedelta(hours=8))
@@ -234,48 +238,11 @@ def _assignee_match(username: Optional[str], user_id: Optional[int]):
     return GMPApplicationLogs.user_id == user_id
 
 
-def get_tasks_for_user(
-    db: Session,
-    username: str,
-    application_step: Optional[str] = None,
-    is_received: Optional[int] = None,
-    page: int = 1,
-    page_size: int = 10000,
-    user_id: Optional[int] = None,
-) -> Tuple[List[GMPApplicationLogs], int]:
-    """
-    Return all open tasks assigned to a user, joined with GMPRecord.
-    Matched by user_id only (see _assignee_match).
-    Defensively restricted to PRIMARY ('-01') reference numbers only —
-    sibling issuance records (added via Add Issuance) should never carry
-    their own application logs going forward (see add_gmp_issuance in
-    gmp_record.py), but this guards against any legacy/orphaned logs from
-    before that change so a DTN can never appear as more than one task.
-    """
-    query = (
-        db.query(GMPApplicationLogs)
-        .join(GMPRecord, GMPApplicationLogs.gmp_record_id == GMPRecord.GMP_ID)
-        .options(joinedload(GMPApplicationLogs.gmp_record))
-        .filter(
-            _assignee_match(username, user_id),
-            GMPApplicationLogs.del_thread == "Open",
-            GMPApplicationLogs.del_last_index == 1,
-            or_(GMPRecord.GMP_REFERENCE_NO.is_(None), GMPRecord.GMP_REFERENCE_NO.like("%-01")),
-        )
-    )
-    if application_step:
-        query = query.filter(GMPApplicationLogs.application_step == application_step)
-    if is_received is not None:
-        query = query.filter(GMPApplicationLogs.is_received == is_received)
-
-    total = query.count()
-    logs = (
-        query.order_by(GMPApplicationLogs.created_at.desc())
-        .offset((page - 1) * page_size)
-        .limit(page_size)
-        .all()
-    )
-
+def _enrich_task_logs(db: Session, logs: List[GMPApplicationLogs]) -> None:
+    """Attach the extra, non-persisted info the Tasks page needs to each log:
+    all_issuance_types, from_step, revision and the assignee's live name/alias.
+    Shared by get_tasks_for_user (My Tasks) and get_unclaimed_logs_for_user
+    (Unclaimed) so both lists carry exactly the same row shape."""
     # A DTN can have multiple GMPRecord siblings (added via Add Issuance),
     # each with its own Type of Issuance, but only the primary ('-01') one
     # ever has a task/log. So the task's own embedded record only ever shows
@@ -357,7 +324,124 @@ def get_tasks_for_user(
     # Resolve each task's owner from user_id → current username / name / alias.
     attach_assignee_info(db, logs)
 
+
+def get_tasks_for_user(
+    db: Session,
+    username: str,
+    application_step: Optional[str] = None,
+    is_received: Optional[int] = None,
+    page: int = 1,
+    page_size: int = 10000,
+    user_id: Optional[int] = None,
+) -> Tuple[List[GMPApplicationLogs], int]:
+    """
+    Return all open tasks assigned to a user, joined with GMPRecord.
+    Matched by user_id only (see _assignee_match).
+    Defensively restricted to PRIMARY ('-01') reference numbers only —
+    sibling issuance records (added via Add Issuance) should never carry
+    their own application logs going forward (see add_gmp_issuance in
+    gmp_record.py), but this guards against any legacy/orphaned logs from
+    before that change so a DTN can never appear as more than one task.
+    """
+    query = (
+        db.query(GMPApplicationLogs)
+        .join(GMPRecord, GMPApplicationLogs.gmp_record_id == GMPRecord.GMP_ID)
+        .options(joinedload(GMPApplicationLogs.gmp_record))
+        .filter(
+            _assignee_match(username, user_id),
+            GMPApplicationLogs.del_thread == "Open",
+            GMPApplicationLogs.del_last_index == 1,
+            or_(GMPRecord.GMP_REFERENCE_NO.is_(None), GMPRecord.GMP_REFERENCE_NO.like("%-01")),
+        )
+    )
+    if application_step:
+        query = query.filter(GMPApplicationLogs.application_step == application_step)
+    if is_received is not None:
+        query = query.filter(GMPApplicationLogs.is_received == is_received)
+
+    total = query.count()
+    logs = (
+        query.order_by(GMPApplicationLogs.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    _enrich_task_logs(db, logs)
+
     return logs, total
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Unclaimed tasks (OD Receiving / OD Releasing) — see GMP_UNCLAIMED_STEP_GROUPS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_claimable_steps_for_user(user: User) -> List[str]:
+    """Unclaimed-queue steps this user may claim from (group membership)."""
+    group_ids = {g.id for g in user.groups}
+    return [
+        step for step, group_id in GMP_UNCLAIMED_STEP_GROUPS.items()
+        if group_id in group_ids
+    ]
+
+
+def get_unclaimed_logs_for_user(
+    db: Session, user: User
+) -> Tuple[List[str], List[GMPApplicationLogs]]:
+    """Unassigned open tasks for every step the user can claim from, in the same
+    row shape as get_tasks_for_user. Oldest first, so what has waited longest is
+    on top. Same primary-('-01')-only guard as get_tasks_for_user."""
+    steps = get_claimable_steps_for_user(user)
+    if not steps:
+        return steps, []
+    logs = (
+        db.query(GMPApplicationLogs)
+        .join(GMPRecord, GMPApplicationLogs.gmp_record_id == GMPRecord.GMP_ID)
+        .options(joinedload(GMPApplicationLogs.gmp_record))
+        .filter(
+            GMPApplicationLogs.application_step.in_(steps),
+            GMPApplicationLogs.application_status == GMP_UNCLAIMED_STATUS,
+            GMPApplicationLogs.user_id.is_(None),
+            GMPApplicationLogs.del_thread == "Open",
+            GMPApplicationLogs.del_last_index == 1,
+            or_(GMPRecord.GMP_REFERENCE_NO.is_(None), GMPRecord.GMP_REFERENCE_NO.like("%-01")),
+        )
+        .order_by(GMPApplicationLogs.created_at.asc(), GMPApplicationLogs.id.asc())
+        .all()
+    )
+    _enrich_task_logs(db, logs)
+    return steps, logs
+
+
+def claim_log(db: Session, log_id: int, user: User) -> Optional[GMPApplicationLogs]:
+    """Claim an UNCLAIMED log. The conditional UPDATE is atomic: if two people
+    claim at once, only one UPDATE matches a row and the other gets None."""
+    updated = (
+        db.query(GMPApplicationLogs)
+        .filter(
+            GMPApplicationLogs.id == log_id,
+            GMPApplicationLogs.application_status == GMP_UNCLAIMED_STATUS,
+            GMPApplicationLogs.user_id.is_(None),
+            GMPApplicationLogs.del_thread == "Open",
+        )
+        .update(
+            {
+                "user_id": user.id,
+                "user_name": user.username,
+                "application_status": "IN PROGRESS",
+                # The claimer picked it up themselves, so it counts as received.
+                "is_received": 1,
+                "received_at": _now(),
+                "received_by": user.username,
+            },
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+    if updated == 0:
+        return None
+    return get_log_by_id(db, log_id)
+
 
 def get_task_counts_for_user_ids(db: Session, user_ids: List[int]) -> Dict[int, int]:
     """
@@ -441,6 +525,10 @@ class StepAlreadyMovedError(Exception):
     """The caller tried to act on a step the record has already left."""
 
 
+class TaskNotClaimedError(StepAlreadyMovedError):
+    """The step's task is still in the Unclaimed pool — claim it before acting."""
+
+
 def advance_step(
     db: Session,
     gmp_record_id: int,
@@ -492,6 +580,14 @@ def advance_step(
             GMPApplicationLogs.user_id == performed_by_id
         )
     current_log = current_log_query.order_by(GMPApplicationLogs.del_index.desc()).first()
+
+    # An unassigned (UNCLAIMED) task must be claimed first. The screen already
+    # keeps it closed until then; this stops the same thing through the API.
+    if current_log is not None and current_log.application_status == GMP_UNCLAIMED_STATUS:
+        raise TaskNotClaimedError(
+            f"This '{current_step}' task has not been claimed yet. "
+            "Claim it from the Unclaimed tab first."
+        )
 
     # ── Auto-create the initial log if none exists ────────────────────────────
     # This handles records uploaded via Excel that have no application logs yet
@@ -623,12 +719,22 @@ def advance_step(
         {"id": next_assignee_id, "name": next_assignee_name}
     ]
 
+    # An "Unclaimed" step (OD Receiving / OD Releasing) is created with NO
+    # assignee when none was picked: it waits in the step's Unclaimed tab until
+    # a member of the group claims it. If a caller still names a person, that
+    # is honoured and the task is assigned directly, as before.
+    unclaimed = (
+        next_step_label in GMP_UNCLAIMED_STEP_GROUPS
+        and not next_assignees
+        and next_assignee_id is None
+    )
+
     new_logs = []
     for i, target in enumerate(targets):
         log = GMPApplicationLogs(
             gmp_record_id       = gmp_record_id,
             application_step    = next_step_label,
-            application_status  = "IN PROGRESS",
+            application_status  = GMP_UNCLAIMED_STATUS if unclaimed else "IN PROGRESS",
             application_decision= "",
             application_remarks = "",
             start_date          = now,
@@ -636,9 +742,9 @@ def advance_step(
             del_previous        = current_log.del_index,
             del_last_index      = 1,
             del_thread          = "Open",
-            user_name           = target["name"],
-            user_id             = target["id"],
-            is_received         = 1,
+            user_name           = None if unclaimed else target["name"],
+            user_id             = None if unclaimed else target["id"],
+            is_received         = 0 if unclaimed else 1,
             is_starred          = 0,
             deadline_date       = deadline_date,
             working_days        = working_days,

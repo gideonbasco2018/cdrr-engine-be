@@ -358,6 +358,14 @@ class GMPTaskListResponse(BaseModel):
     data: List[GMPTaskResponse]
 
 
+class GMPUnclaimedTasksResponse(BaseModel):
+    # Steps the user may claim from (by group membership) — so the page can show
+    # the tab even when the user has no tasks of their own there.
+    claimable_steps: List[str]
+    total: int
+    data: List[GMPTaskResponse]
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Delegation
 # ─────────────────────────────────────────────────────────────────────────────
