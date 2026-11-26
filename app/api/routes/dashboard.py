@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
-from typing import Optional, Literal
+from typing import Optional, Literal, List
 from datetime import date
 
 from app.db.session import get_db
@@ -348,6 +348,10 @@ def get_metric_detail(
     received_cent_year: Optional[int] = Query(
         None, description="Filter by year of date received at central"
     ),
+    entry_types: Optional[List[str]] = Query(
+        None,
+        description="Entry types (repeat the key). ORIGINAL also includes blank entry types.",
+    ),
     # ✅ New: sorting
     sort_by: Optional[str] = Query(
         None,
@@ -412,6 +416,7 @@ def get_metric_detail(
             app_step=app_step,
             dtn=dtn,
             received_cent_year=received_cent_year,
+            entry_types=entry_types,
             sort_by=sort_by,
             sort_dir=sort_dir,
             page=page,
@@ -553,3 +558,14 @@ def get_in_progress_by_year(
         "total": sum(y["count"] for y in years),
         "years": years,
     }
+
+
+@router.get(
+    "/entry-types",
+    summary="Distinct entry types stored in the database",
+)
+def get_entry_types(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    return {"entry_types": crud_detail.get_entry_type_options(db)}

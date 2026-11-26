@@ -1,6 +1,6 @@
 # app/crud/monitoring.py
 
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session, aliased, load_only
 from sqlalchemy import (
     func,
     case,
@@ -139,15 +139,11 @@ def _build_all_records_query(
     dtn_date_to: Optional[str] = None,
     latest_only: bool = False,
     first_only: bool = False,
+    entry_type: Optional[str] = None,
 ):
     """Shared by the table (paginated) and the export (all rows)."""
     query = _exclude_action_types(
-        db.query(
-            ApplicationLogs,
-            MainDB,
-            User,
-            _date_assigned_expr().label("date_assigned"),
-        )
+        db.query(ApplicationLogs, MainDB, User)
         .join(MainDB, MainDB.DB_ID == ApplicationLogs.main_db_id)
         .outerjoin(User, User.id == ApplicationLogs.user_id)
     )
@@ -163,6 +159,12 @@ def _build_all_records_query(
     steps = [s.strip().upper() for s in (app_step or "").split(",") if s.strip()]
     if steps:
         query = query.filter(func.upper(ApplicationLogs.application_step).in_(steps))
+    entry_types = [
+        e.strip().upper() for e in (entry_type or "").split(",") if e.strip()
+    ]
+    if entry_types:
+        # Rows with no entry type are treated as ORIGINAL
+        query = query.filter(_entry_type_expr().in_(entry_types))
     if date_from:
         query = query.filter(
             func.date(func.str_to_date(MainDB.DB_DATE_RECEIVED_CENT, "%Y-%m-%d"))
@@ -214,10 +216,48 @@ def _build_all_records_query(
         "drug": MainDB.DB_PROD_BR_NAME,
         "timeline": ApplicationLogs.application_status,
         "step": ApplicationLogs.application_step,
+        "entry_type": _entry_type_expr(),
     }
     sort_column = sort_map.get(sort_col, sort_map["date"])
     return query.order_by(
         sort_column.desc() if sort_dir == "desc" else sort_column.asc()
+    )
+
+
+def _date_assigned_map(db: Session, log_ids: list) -> dict:
+    """
+    Compute Date Decked/Assigned only for the given log ids (one page),
+    instead of for every row that matches the filters.
+    """
+    result: dict = {}
+    for i in range(0, len(log_ids), 1000):
+        chunk = log_ids[i : i + 1000]
+        rows = (
+            db.query(
+                ApplicationLogs.id,
+                _date_assigned_expr().label("date_assigned"),
+            )
+            .filter(ApplicationLogs.id.in_(chunk))
+            .all()
+        )
+        result.update({r.id: r.date_assigned for r in rows})
+    return result
+
+
+def _slim_main_db(query):
+    """Load only the MainDB columns that the records table actually uses."""
+    return query.options(
+        load_only(
+            MainDB.DB_ID,
+            MainDB.DB_DTN,
+            MainDB.DB_PROD_BR_NAME,
+            MainDB.DB_PROD_GEN_NAME,
+            MainDB.DB_DATE_RECEIVED_CENT,
+            MainDB.DB_DATE_RELEASED,
+            MainDB.DB_TIMELINE_CITIZEN_CHARTER,
+            MainDB.DB_PROD_CLASS_PRESCRIP,
+            MainDB.DB_ENTRY_TYPE,
+        )
     )
 
 
@@ -257,13 +297,23 @@ def _record_row(
         "app_step": log.application_step,
         "app_status": log.application_status,
         "prescription": main.DB_PROD_CLASS_PRESCRIP,
-        "entry_type": main.DB_ENTRY_TYPE,
+        "entry_type": (main.DB_ENTRY_TYPE or "").strip().upper() or "ORIGINAL",
         "date_assigned": (
             date_assigned.strftime("%Y-%m-%d %H:%M:%S")
             if hasattr(date_assigned, "strftime")
             else (str(date_assigned) if date_assigned else None)
         ),
     }
+
+
+def get_entry_type_options(db: Session) -> list[str]:
+    """
+    Distinct entry types found in MainDB, normalized (trimmed + upper-case).
+    A missing / empty entry type counts as ORIGINAL.
+    """
+    normalized = _entry_type_expr()
+    rows = db.query(normalized).distinct().order_by(normalized).all()
+    return [r[0] for r in rows]
 
 
 def get_all_records(
@@ -282,6 +332,7 @@ def get_all_records(
     dtn_date_to: Optional[str] = None,
     latest_only: bool = False,
     first_only: bool = False,
+    entry_type: Optional[str] = None,
 ) -> dict:
     query = _build_all_records_query(
         db,
@@ -297,18 +348,27 @@ def get_all_records(
         dtn_date_to=dtn_date_to,
         latest_only=latest_only,
         first_only=first_only,
+        entry_type=entry_type,
     )
 
-    total = query.count()
+    # Lightweight count: no ordering and no wide column list
+    total = (
+        query.order_by(None).with_entities(func.count(ApplicationLogs.id)).scalar() or 0
+    )
     total_pages = max(1, -(-total // page_size))
-    rows = query.offset((page - 1) * page_size).limit(page_size).all()
+
+    rows = _slim_main_db(query).offset((page - 1) * page_size).limit(page_size).all()
+    assigned = _date_assigned_map(db, [log.id for log, _, _ in rows])
 
     return {
         "total": total,
         "page": page,
         "page_size": page_size,
         "total_pages": total_pages,
-        "data": [_record_row(log, main, user, da) for log, main, user, da in rows],
+        "data": [
+            _record_row(log, main, user, assigned.get(log.id))
+            for log, main, user in rows
+        ],
     }
 
 
@@ -326,6 +386,7 @@ def get_all_records_for_export(
     dtn_date_to: Optional[str] = None,
     latest_only: bool = False,
     first_only: bool = False,
+    entry_type: Optional[str] = None,
 ) -> list[dict]:
     """Same filters as get_all_records, but without pagination."""
     query = _build_all_records_query(
@@ -342,8 +403,13 @@ def get_all_records_for_export(
         dtn_date_to=dtn_date_to,
         latest_only=latest_only,
         first_only=first_only,
+        entry_type=entry_type,
     )
-    return [_record_row(log, main, user, da) for log, main, user, da in query.all()]
+    rows = _slim_main_db(query).all()
+    assigned = _date_assigned_map(db, [log.id for log, _, _ in rows])
+    return [
+        _record_row(log, main, user, assigned.get(log.id)) for log, main, user in rows
+    ]
 
 
 # -----------------------------
