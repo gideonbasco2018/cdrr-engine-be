@@ -40,6 +40,7 @@ from app.api.routes import (
     target_assignments,
     units,
     gmp_record,
+    gmp_closed_tasks,
     gmp_analytics,
     gmp_dashboard,
     oauth,
@@ -158,6 +159,7 @@ app.include_router(duplicate_record.router)
 app.include_router(target_assignments.router)
 app.include_router(units.router)
 app.include_router(gmp_record.router)
+app.include_router(gmp_closed_tasks.router)
 app.include_router(gmp_analytics.router)
 app.include_router(gmp_dashboard.router)
 app.include_router(oauth.router)

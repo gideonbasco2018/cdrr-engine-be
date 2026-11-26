@@ -24,6 +24,7 @@ from app.models.gmp_record import (
     GMPApplicationLogs,
     GMPFieldAuditLog,
 )
+from app.models.gmp_closed_task import GMPClosedTask
 from app.models.oauth_otp import OAuthOTP
 from app.models.e_app_history import EAppHistory
 from app.models.e_app_parties import EAppParty
@@ -80,6 +81,7 @@ __all__ = [
     "GMPDelegation",
     "GMPApplicationLogs",
     "GMPFieldAuditLog",
+    "GMPClosedTask",
     "OAuthOTP",
     "EAppHistory",
     "EAppParty",
