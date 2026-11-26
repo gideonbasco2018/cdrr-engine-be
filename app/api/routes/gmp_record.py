@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError, DataError, SQLAlchemyError
 from app.schemas.gmp_record import (
     GMPRecordCreate, GMPRecordUpdate, GMPRecordResponse, GMPRecordListResponse,
     GMPRecordSummary, GMPApplicationLogResponse, GMPFieldAuditLogResponse,
-    GMPAdvanceStepRequest, GMPTaskListResponse,
+    GMPAdvanceStepRequest, GMPTaskListResponse, GMPUnclaimedTasksResponse,
     GMPApplicationLogUpdate, GMPReassignRequest, GMPRerouteRequest,
     GMPAddIssuanceRequest, GMPIssuanceFieldsUpdate, GMPReopenRequest,
     GMPResolveOrCreateByDtnRequest, GMPResolveOrCreateByDtnResponse,
@@ -21,6 +21,7 @@ from app.crud import gmp_logs
 from app.crud.gmp_record import (
     get_gmp_records, get_gmp_logs, GMP_LOG_STEPS, GMP_STEP_DEL_INDEX,
     resolve_next_step, gmp_actions_for_step,
+    GMP_UNCLAIMED_STEP_GROUPS,
 )
 from app.models.gmp_record import GMPRecord
 from app.core.deps import get_current_active_user
@@ -754,6 +755,19 @@ def get_my_gmp_tasks(
         "total_pages": total_pages, "data": logs,
     }
 
+# ── Unclaimed tasks the current user may claim (static — before /{record_id}) ─
+# OD Receiving / OD Releasing tasks are created unassigned; any member of the
+# step's group can claim one. Also returns the steps the user can claim from so
+# the page can show those tabs even when the user has no tasks of their own.
+@router.get("/tasks/unclaimed", response_model=GMPUnclaimedTasksResponse)
+def get_unclaimed_gmp_tasks(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    steps, logs = gmp_logs.get_unclaimed_logs_for_user(db, current_user)
+    return {"claimable_steps": steps, "total": len(logs), "data": logs}
+
+
 # ── Task count for current user (static — must be before /{record_id}) ───────
 @router.get("/tasks/my-task-count")
 def get_my_gmp_task_count(
@@ -805,6 +819,41 @@ def mark_task_received(
 
 
 # ── Toggle star (static prefix /logs/) ────────────────────────────────────────
+# ── Claim an unassigned (UNCLAIMED) task ──────────────────────────────────────
+# Only members of the step's group may claim; first one wins (atomic update in
+# gmp_logs.claim_log), the rest get 409.
+@router.patch("/logs/{log_id}/claim", response_model=GMPApplicationLogResponse)
+def claim_gmp_log(
+    log_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    log = gmp_logs.get_log_by_id(db, log_id)
+    if not log:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f"Log {log_id} not found")
+
+    required_group = GMP_UNCLAIMED_STEP_GROUPS.get(log.application_step)
+    if required_group is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Step '{log.application_step}' does not support claiming.",
+        )
+    if required_group not in {g.id for g in current_user.groups}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only members of this step's group can claim this task.",
+        )
+
+    claimed = gmp_logs.claim_log(db, log_id, current_user)
+    if not claimed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This task was already claimed by someone else.",
+        )
+    return claimed
+
+
 @router.patch("/logs/{log_id}/star", response_model=GMPApplicationLogResponse)
 def toggle_task_star(
     log_id: int,
@@ -1117,7 +1166,13 @@ def advance_step(
     # application lands with the person who was working it. The frontend
     # pre-fills the same person in an editable dropdown; this is the safety net
     # for callers that don't (bulk endorse) or when the pick doesn't come through.
-    if next_assignee_id is None and next_step_label and not next_assignees:
+    # Not for an Unclaimed step (OD Receiving / OD Releasing): that task is meant
+    # to wait in the Unclaimed tab for the group to claim, not go to whoever held
+    # the step last.
+    if (
+        next_assignee_id is None and next_step_label and not next_assignees
+        and next_step_label not in GMP_UNCLAIMED_STEP_GROUPS
+    ):
         next_assignee_id = gmp_logs.previous_active_step_holder_id(
             db, record_id, next_step_label
         )
