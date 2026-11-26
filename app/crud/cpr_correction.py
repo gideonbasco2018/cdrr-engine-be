@@ -196,7 +196,11 @@ def submit_correction(
         DB_PROCESSING_TYPE=original.DB_PROCESSING_TYPE,
         DB_EST_CAT=original.DB_EST_CAT,
         DB_APP_TYPE=original.DB_APP_TYPE,
-        DB_DATE_RECEIVED_CENT=original.DB_DATE_RECEIVED_CENT,
+        DB_DATE_RECEIVED_CENT=(
+            payload.dateReceivedCent.isoformat()
+            if payload.dateReceivedCent
+            else original.DB_DATE_RECEIVED_CENT
+        ),
         DB_DATE_RECEIVED_FDAC=original.DB_DATE_RECEIVED_FDAC,
         DB_TIMELINE_CITIZEN_CHARTER=original.DB_TIMELINE_CITIZEN_CHARTER,
         DB_DATE_RELEASED=original.DB_DATE_RELEASED,
