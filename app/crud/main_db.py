@@ -203,14 +203,19 @@ def get_main_db_records(
             query = query.filter(MainDB.DB_PROCESSING_TYPE == processing_type)
         print(f"✅ Applied processing_type filter: {processing_type}")
 
-    if entry_type is not None:
-        if entry_type == "__EMPTY__":
-            query = query.filter(
-                or_(MainDB.DB_ENTRY_TYPE.is_(None), MainDB.DB_ENTRY_TYPE == "")
-            )
-        else:
-            query = query.filter(MainDB.DB_ENTRY_TYPE == entry_type)
-        print(f"✅ Applied entry_type filter: {entry_type}")
+    if entry_type:
+        # Comma-separated, e.g. "ORIGINAL,APPEAL,__EMPTY__"
+        tokens = [t.strip() for t in entry_type.split(",") if t.strip()]
+        named = [t for t in tokens if t != "__EMPTY__"]
+        conds = []
+        if named:
+            conds.append(MainDB.DB_ENTRY_TYPE.in_(named))
+        if "__EMPTY__" in tokens:
+            conds.append(MainDB.DB_ENTRY_TYPE.is_(None))
+            conds.append(MainDB.DB_ENTRY_TYPE == "")
+        if conds:
+            query = query.filter(or_(*conds))
+        print(f"✅ Applied entry_type filter: {tokens}")
 
     if dosage_form:
         query = query.filter(MainDB.DB_PROD_DOS_FORM.like(f"%{dosage_form}%"))

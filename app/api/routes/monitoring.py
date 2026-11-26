@@ -86,6 +86,9 @@ def get_all_records(
     app_step: Optional[str] = Query(
         None, description="e.g. Decking, Checking, Quality Evaluation"
     ),
+    entry_type: Optional[str] = Query(
+        None, description="Comma-separated entry types, e.g. ORIGINAL,CORRECTION"
+    ),
     dtn_date_from: Optional[str] = Query(
         None,
         description=(
@@ -118,8 +121,8 @@ def get_all_records(
     Get a paginated, sortable list of all task records across users.
 
     Supports filtering by user, date range, application status,
-    partial DTN search, application step, and a DTN-embedded date
-    range (based on the first 8 digits of DB_DTN).
+    partial DTN search, application step, entry type, and a DTN-embedded
+    date range (based on the first 8 digits of DB_DTN).
     """
     result = crud_monitoring.get_all_records(
         db=db,
@@ -133,6 +136,7 @@ def get_all_records(
         application_status=application_status,
         dtn=dtn,
         app_step=app_step,
+        entry_type=entry_type,
         dtn_date_from=dtn_date_from,
         dtn_date_to=dtn_date_to,
         latest_only=latest_only,
@@ -151,6 +155,9 @@ def export_all_records(
     application_status: Optional[str] = Query(None),
     dtn: Optional[str] = Query(None),
     app_step: Optional[str] = Query(None),
+    entry_type: Optional[str] = Query(
+        None, description="Comma-separated entry types, e.g. ORIGINAL,CORRECTION"
+    ),
     dtn_date_from: Optional[str] = Query(None, min_length=8, max_length=8),
     dtn_date_to: Optional[str] = Query(None, min_length=8, max_length=8),
     latest_only: bool = Query(False, description="Show only the latest log per DTN"),
@@ -171,6 +178,7 @@ def export_all_records(
         application_status=application_status,
         dtn=dtn,
         app_step=app_step,
+        entry_type=entry_type,
         dtn_date_from=dtn_date_from,
         dtn_date_to=dtn_date_to,
         latest_only=latest_only,
@@ -191,6 +199,18 @@ def export_all_records(
             "Content-Length": str(output.getbuffer().nbytes),
         },
     )
+
+
+@router.get(
+    "/all-records/entry-types",
+    summary="Distinct entry types for the Records filter dropdown",
+)
+def get_entry_type_options(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Entry type values that actually exist in the database."""
+    return {"entry_types": crud_monitoring.get_entry_type_options(db)}
 
 
 @router.get("/groups", summary="List all groups for filtering")

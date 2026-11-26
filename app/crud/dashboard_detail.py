@@ -1,8 +1,8 @@
 # app/crud/dashboard_detail.py
 
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, cast, String, extract
-from typing import Optional
+from sqlalchemy import func, cast, String, extract, or_
+from typing import Optional, List
 from datetime import date
 import math
 
@@ -115,6 +115,7 @@ def get_metric_detail(
     app_step: Optional[str] = None,
     dtn: Optional[str] = None,
     received_cent_year: Optional[int] = None,
+    entry_types: Optional[List[str]] = None,
     sort_by: Optional[str] = None,
     sort_dir: str = "asc",
     page: int = 1,
@@ -151,6 +152,20 @@ def get_metric_detail(
             extract("year", MainDB.DB_DATE_RECEIVED_CENT) == received_cent_year
         )
 
+    # ── Entry type filter (multi-select) ────────────────────────────────────
+    # ORIGINAL also matches records with no entry type (NULL / blank).
+    if entry_types:
+        wanted = [t.strip().upper() for t in entry_types if t and t.strip()]
+        if wanted:
+            cond = func.upper(func.trim(MainDB.DB_ENTRY_TYPE)).in_(wanted)
+            if "ORIGINAL" in wanted:
+                cond = or_(
+                    cond,
+                    MainDB.DB_ENTRY_TYPE.is_(None),
+                    func.trim(MainDB.DB_ENTRY_TYPE) == "",
+                )
+            q = q.filter(cond)
+
     # ── DTN filter ──────────────────────────────────────────────────────────
     if dtn:
         q = q.filter(cast(MainDB.DB_DTN, String).contains(dtn))
@@ -179,3 +194,21 @@ def get_metric_detail(
         total_pages=total_pages,
         data=[_row_to_detail(r) for r in rows],
     )
+
+
+def get_entry_type_options(db: Session) -> list:
+    """Distinct non-blank entry types actually stored in MainDB (upper-cased).
+    ORIGINAL is always included because blank entry types are treated as ORIGINAL."""
+    normalized = func.upper(func.trim(MainDB.DB_ENTRY_TYPE))
+    rows = (
+        db.query(normalized)
+        .filter(
+            MainDB.DB_ENTRY_TYPE.isnot(None),
+            func.trim(MainDB.DB_ENTRY_TYPE) != "",
+        )
+        .distinct()
+        .all()
+    )
+    values = {r[0] for r in rows if r[0]}
+    values.add("ORIGINAL")
+    return sorted(values)
