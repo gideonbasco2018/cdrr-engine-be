@@ -101,6 +101,8 @@ class MemberTaskOut(BaseModel):
     #    instead of erroring — that's why the columns rendered as "—"). ──
     prod_class_prescrip: Optional[str] = None
     processing_type: Optional[str] = None
+    # Latest person who handled the "S&E" step of this application
+    se_evaluator: Optional[str] = None
     date_accomplished: Optional[datetime] = None
     date_received_center: Optional[str] = None
     is_targeted: bool = False
