@@ -571,8 +571,17 @@ def get_application_history_map(db: Session, main_db_ids: List[int]) -> dict:
         .order_by(ApplicationLogs.main_db_id, ApplicationLogs.created_at.asc())
         .all()
     )
+    # Resolve each log's owner name from the User table (user_name on the
+    # log itself can be empty or just a username like "CDRR187").
+    user_ids = {h.user_id for h in history_rows if h.user_id}
+    names = {}
+    if user_ids:
+        for u in db.query(User).filter(User.id.in_(user_ids)).all():
+            names[u.id] = f"{u.first_name} {u.surname}".strip()
+
     grouped = defaultdict(list)
     for h in history_rows:
+        h._display_name = names.get(h.user_id)
         grouped[h.main_db_id].append(h)
     return grouped
 
@@ -1045,6 +1054,19 @@ def unmark_as_directors_target(db: Session, target: DirectorsTarget) -> Director
 
 _TERMINAL_STATUSES = _DONE_STATUSES | _STOPPED_STATUSES
 
+_SE_STEPS = {"S&E"}
+
+
+def latest_se_evaluator(history) -> Optional[str]:
+    """User name on the most recent S&E-step log of the application
+    (history is ordered oldest -> newest)."""
+    for h in reversed(history or []):
+        step = (h.application_step or "").strip().upper()
+        name = (getattr(h, "_display_name", None) or h.user_name or "").strip()
+        if step in _SE_STEPS and name:
+            return name
+    return None
+
 
 def _build_member_task_out(log, main, target, dtarget, history) -> MemberTaskOut:
     return MemberTaskOut(
@@ -1065,6 +1087,7 @@ def _build_member_task_out(log, main, target, dtarget, history) -> MemberTaskOut
         #    processing_type). Adjust if the actual model attrs differ. ──
         prod_class_prescrip=getattr(main, "DB_PROD_CLASS_PRESCRIP", None),
         processing_type=getattr(main, "DB_PROCESSING_TYPE", None),
+        se_evaluator=latest_se_evaluator(history),
         date_accomplished=log.accomplished_date,
         date_received_center=main.DB_DATE_RECEIVED_CENT,
         is_targeted=target is not None,
